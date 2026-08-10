@@ -20,6 +20,9 @@ flowchart LR
 5. SAS verification
 6. encrypted messages
 
+See the [Matrix bridge MCP server proposal](spec/matrix-bridge-as-mcp-server.md)
+for scheduled and other agent-initiated outbound messages.
+
 ## Installation and verification
 
 ```sh
