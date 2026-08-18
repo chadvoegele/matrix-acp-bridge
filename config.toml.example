@@ -1,0 +1,25 @@
+state_dir = "/var/lib/matrix-acp-bridge"
+
+[matrix]
+homeserver = "https://matrix.example.org"
+user_id = "@bridge:matrix.example.org"
+device_id = "MABRIDGE01"
+access_token_file = "/var/lib/matrix-acp-bridge/matrix-access-token"
+allowed_rooms = ["!private-room:matrix.example.org"]
+allowed_senders = ["@operator:matrix.example.org"]
+encryption = "disabled"     # or "required"
+
+[acp]
+cwd = "/srv/acp-agent/workspace"
+
+[limits]
+max_input_bytes = 16384
+max_output_bytes = 262144
+max_matrix_message_bytes = 32768
+max_queued_turns_per_room = 16
+max_concurrent_prompts = 4
+max_turn_seconds = 1800
+shutdown_grace_seconds = 30
+startup_timeout_seconds = 60
+max_catchup_age_seconds = 900
+max_catchup_events_per_room = 4
