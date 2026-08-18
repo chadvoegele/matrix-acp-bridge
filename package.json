@@ -1,0 +1,33 @@
+{
+  "name": "matrix-acp-bridge",
+  "version": "0.1.0",
+  "description": "A Matrix to ACP bridge daemon",
+  "type": "module",
+  "engines": {
+    "node": ">=22 <27"
+  },
+  "scripts": {
+    "clean": "rm -rf dist dist-test",
+    "build": "npm run clean && tsc --pretty false",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit --pretty false",
+    "test": "npm run build && tsc -p tsconfig.test.json --pretty false && node --test dist-test/*.test.js agent_tests/e2e-support/*.test.mjs",
+    "lint": "eslint .",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0",
+    "fake-indexeddb": "6.2.5",
+    "matrix-js-sdk": "42.0.0",
+    "smol-toml": "1.8.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/node": "22.15.21",
+    "eslint": "9.39.1",
+    "eslint-plugin-unicorn": "56.0.1",
+    "globals": "17.11.0",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.67.0"
+  }
+}
