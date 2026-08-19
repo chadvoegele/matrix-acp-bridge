@@ -343,7 +343,7 @@ It must be a separate secret from the Matrix access token.
 
 Instead of adding an MCP server to the bridge, scheduled and agent-initiated
 messages can be sent with a standalone Matrix CLI client such as
-[matrix-commander](https://github.com/matrix-commander/matrix-commander). The
+[matrix-commander](https://github.com/8go/matrix-commander). The
 scheduler or agent session invokes the CLI directly with its own credentials
 or an appservice account, and the bridge is not involved in outbound
 delivery.
