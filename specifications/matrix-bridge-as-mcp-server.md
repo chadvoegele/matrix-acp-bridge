@@ -1,5 +1,5 @@
 +++
-status = "draft"
+status = "abandoned"
 created = 2026-08-10
 last_update = 2026-08-19
 +++
@@ -336,6 +336,25 @@ The bearer token follows the Matrix access-token file's private path, owner,
 mode, symlink, and content rules. It is never accepted directly in TOML, an
 environment variable, a command-line argument, diagnostics, or tool results.
 It must be a separate secret from the Matrix access token.
+
+## Alternatives considered
+
+### Use a standalone Matrix CLI client
+
+Instead of adding an MCP server to the bridge, scheduled and agent-initiated
+messages can be sent with a standalone Matrix CLI client such as
+[matrix-commander](https://github.com/matrix-commander/matrix-commander). The
+scheduler or agent session invokes the CLI directly with its own credentials
+or an appservice account, and the bridge is not involved in outbound
+delivery.
+
+This approach was preferred and this specification is abandoned in its favor:
+
+- it adds no new attack surface, listener, or secret to the bridge;
+- it needs no bridge readiness, lifecycle, or shutdown coordination;
+- the delivery path, retry, and idempotency behavior stay in the scheduler
+  and CLI rather than the bridge;
+- the bridge keeps its single ACP-client role.
 
 ## Verification
 
