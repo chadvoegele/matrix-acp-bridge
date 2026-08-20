@@ -8,7 +8,6 @@ import {
 import {
   MatrixAdapterError,
   MatrixClientAdapterImpl,
-  CursorAwareMatrixStore,
   assertMatrixIdentity,
   classifyMatrixError,
   createMatrixClientAdapter,
@@ -18,7 +17,7 @@ import {
   type MatrixSdkEventLike,
   type MatrixSdkRoomLike,
 } from "./matrix-client.js";
-import type { MatrixConfig } from "./config.js";
+import { DEFAULT_LIMITS, type BridgeConfig, type MatrixConfig } from "./config.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
 import type {
@@ -54,6 +53,13 @@ const REQUIRED_CONFIG: MatrixConfig = {
   encryption: "required",
 };
 
+const CONFIG_WITH_INITIAL_LIMIT: BridgeConfig = {
+  stateDir: "/private/state",
+  matrix: CONFIG,
+  acp: { cwd: "/private/cwd" },
+  limits: { ...DEFAULT_LIMITS, initialSyncTimelineLimit: 7 },
+};
+
 type Listener = (...args: unknown[]) => void;
 
 class FakeSdkClient implements MatrixSdkClientLike {
@@ -78,31 +84,7 @@ class FakeSdkClient implements MatrixSdkClientLike {
   startError: unknown;
   sendError: unknown;
   startClientAction: (() => void | Promise<void>) | undefined;
-  syncToken: string | null = null;
-  savedSyncTokenCalls = 0;
-  savedSyncToken: string | null | undefined;
-  savedSyncTokenOverride: string | null | undefined;
-  consultSavedSyncToken = true;
-  readonly store = {
-    setSyncToken: (token: string): void => {
-      this.syncToken = token;
-    },
-    getSyncToken: (): string | null => this.syncToken,
-    getSavedSync: async (): Promise<null> => null,
-    getSavedSyncToken: async (): Promise<string | null> => {
-      this.savedSyncTokenCalls += 1;
-      this.savedSyncToken = this.savedSyncTokenOverride ?? this.syncToken;
-      return this.savedSyncToken;
-    },
-    resetStartupObservation: (): void => {
-      this.savedSyncTokenCalls = 0;
-      this.savedSyncToken = undefined;
-    },
-    getStartupTokenObservation: () => ({
-      consulted: this.savedSyncTokenCalls > 0,
-      value: this.savedSyncToken,
-    }),
-  };
+  startClientOptions: { readonly initialSyncLimit?: number } | undefined;
   startCalls = 0;
   stopCalls = 0;
   joinedRoomsOverride: readonly string[] | undefined;
@@ -146,13 +128,11 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return this.whoamiResponse;
   }
 
-  async startClient(): Promise<void> {
+  async startClient(options?: { readonly initialSyncLimit?: number }): Promise<void> {
     this.startCalls += 1;
+    this.startClientOptions = options;
     if (this.startError !== undefined) {
       throw this.startError;
-    }
-    if (this.consultSavedSyncToken) {
-      await this.store.getSavedSyncToken();
     }
     await this.startClientAction?.();
   }
@@ -351,6 +331,7 @@ interface RealSdkHttpHarnessOptions {
   readonly syncFailures?: number;
   readonly syncFailureStatus?: number;
   readonly syncFailureErrcode?: string;
+  readonly encryptedInitial?: boolean;
 }
 
 interface RealSdkHttpHarness {
@@ -429,8 +410,10 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
                     event_id: "$offline:example.org",
                     room_id: ROOM_ID,
                     sender: ALICE,
-                    type: "m.room.message",
-                    content: { msgtype: "m.text", body: "offline prompt" },
+                    type: options.encryptedInitial ? "m.room.encrypted" : "m.room.message",
+                    content: options.encryptedInitial
+                      ? { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "not-forwarded" }
+                      : { msgtype: "m.text", body: "offline prompt" },
                   }] : [],
                   limited: false,
                 },
@@ -459,7 +442,13 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
   };
 }
 
+let realSdkFetchLock: Promise<void> = Promise.resolve();
+
 async function withFetch<T>(fetch: typeof globalThis.fetch, action: () => Promise<T>): Promise<T> {
+  const previous = realSdkFetchLock;
+  let release!: () => void;
+  realSdkFetchLock = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
   const previousFetch = globalThis.fetch;
   const previousSetTimeout = globalThis.setTimeout;
   globalThis.fetch = fetch;
@@ -478,6 +467,7 @@ async function withFetch<T>(fetch: typeof globalThis.fetch, action: () => Promis
   } finally {
     globalThis.fetch = previousFetch;
     globalThis.setTimeout = previousSetTimeout;
+    release();
   }
 }
 
@@ -496,27 +486,17 @@ void test("constructs a token-authenticated client with the configured device", 
     accessToken: "secret-token",
     userId: CONFIG.userId,
     deviceId: CONFIG.deviceId,
+    initialSyncLimit: 100,
   });
   assert.equal(fake.startCalls, 0);
 });
 
-void test("cursor-aware store keeps SDK state in memory and exposes no cached sync", async () => {
-  const store = new CursorAwareMatrixStore();
+void test("uses the Matrix SDK public client and ordinary MemoryStore", async () => {
+  const store = new MatrixSdkMemoryStore();
   assert.equal(await store.getSavedSync(), null);
   assert.equal(store.getSyncToken(), null);
-  store.resetStartupObservation();
-  store.setSyncToken("checkpoint-S1");
-  assert.equal(await store.getSavedSyncToken(), "checkpoint-S1");
-  assert.deepEqual(store.getStartupTokenObservation(), {
-    consulted: true,
-    value: "checkpoint-S1",
-  });
-  assert.equal(await store.getSavedSync(), null);
-});
-
-void test("uses the Matrix SDK public client and MemoryStore exports", () => {
   assert.equal(typeof createMatrixSdkClient, "function");
-  assert.equal(Object.getPrototypeOf(CursorAwareMatrixStore.prototype), MatrixSdkMemoryStore.prototype);
+  assert.equal(store.constructor, MatrixSdkMemoryStore);
 });
 
 void test("loads the pinned Matrix SDK through the default factory under strict ESM", async () => {
@@ -568,7 +548,7 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
   assert.equal(sdkLogCalls, 0);
 });
 
-void test("real SDK initial startup omits since and suppresses history without a cache response", async () => {
+void test("real SDK initial startup omits since, applies the initial limit, and preserves history", async () => {
   const harness = createRealSdkHttpHarness();
   const batches: MatrixSyncBatch[] = [];
   await withFetch(harness.fetch, async () => {
@@ -579,29 +559,35 @@ void test("real SDK initial startup omits since and suppresses history without a
     assert.equal(harness.syncResponses >= 1, true);
     assert.equal(harness.syncRequests[0]?.searchParams.has("since"), false);
     assert.equal(harness.syncRequests[0]?.searchParams.has("_cacheBuster"), true);
+    const filter = JSON.parse(harness.syncRequests[0]?.searchParams.get("filter") ?? "{}") as {
+      room?: { timeline?: { limit?: number } };
+    };
+    assert.equal(filter.room?.timeline?.limit, 100);
     assert.equal(
       batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
         .some((event) => event.content.body === "offline prompt"),
-      false,
+      true,
     );
+    assert.equal(batches[0]?.phase, "initial");
+    assert.equal(batches[0]?.rooms[0]?.timeline[0]?.isLive, false);
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await adapter.stop();
   });
 });
 
-void test("real SDK restart startup sends the saved cursor and uses next_batch afterward", async () => {
+void test("real SDK startup uses the SDK next_batch boundary for later requests", async () => {
   const harness = createRealSdkHttpHarness();
   const batches: MatrixSyncBatch[] = [];
   await withFetch(harness.fetch, async () => {
     const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
     adapter.onSyncBatch((batch) => { batches.push(batch); });
     await adapter.whoAmI();
-    await adapter.start({ since: "checkpoint-S1" });
+    await adapter.start();
     const firstSync = harness.syncRequests[0];
     const secondSync = harness.syncRequests[1];
-    assert.equal(firstSync?.searchParams.get("since"), "checkpoint-S1");
+    assert.equal(firstSync?.searchParams.has("since"), false);
     assert.equal(secondSync?.searchParams.get("since"), "next-1");
-    assert.equal(batches[0]?.phase, "incremental");
+    assert.equal(batches[0]?.phase, "initial");
     assert.equal(
       batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
         .filter((event) => event.content.body === "offline prompt").length,
@@ -612,36 +598,36 @@ void test("real SDK restart startup sends the saved cursor and uses next_batch a
   });
 });
 
-void test("real SDK retries a failed first sync with the saved cursor every time", async () => {
-  const harness = createRealSdkHttpHarness({ syncFailures: 2 });
+void test("real SDK encrypted initial events remain outside disabled-mode intake", async () => {
+  const harness = createRealSdkHttpHarness({ encryptedInitial: true });
+  const batches: MatrixSyncBatch[] = [];
   await withFetch(harness.fetch, async () => {
     const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
+    adapter.onSyncBatch((batch) => { batches.push(batch); });
     await adapter.whoAmI();
-    await adapter.start({ since: "checkpoint-S1" });
-    assert.deepEqual(
-      harness.syncRequests.slice(0, 3).map((request) => request.searchParams.get("since")),
-      ["checkpoint-S1", "checkpoint-S1", "checkpoint-S1"],
+    await adapter.start();
+    assert.equal(batches[0]?.phase, "initial");
+    assert.equal(
+      batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
+        .some((event) => event.eventId === "$offline:example.org"),
+      false,
     );
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await adapter.stop();
   });
 });
 
-void test("real SDK rejects an invalid saved cursor without initial-sync fallback", async () => {
-  const harness = createRealSdkHttpHarness({
-    syncFailures: 1,
-    syncFailureStatus: 400,
-    syncFailureErrcode: "M_UNKNOWN_POS",
-  });
+void test("real SDK retries a failed initial sync without a saved cursor", async () => {
+  const harness = createRealSdkHttpHarness({ syncFailures: 2 });
   await withFetch(harness.fetch, async () => {
     const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
     await adapter.whoAmI();
-    await assert.rejects(
-      () => adapter.start({ since: "checkpoint-S1" }),
-      /Saved Matrix sync cursor was rejected; reset private bridge state before retrying/u,
+    await adapter.start();
+    assert.deepEqual(
+      harness.syncRequests.slice(0, 3).map((request) => request.searchParams.get("since")),
+      [null, null, null],
     );
-    assert.equal(harness.syncRequests.length, 1);
-    assert.equal(harness.syncRequests[0]?.searchParams.get("since"), "checkpoint-S1");
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await adapter.stop();
   });
 });
 
@@ -784,7 +770,7 @@ void test("required mode admits late decryption once and rejects plaintext", asy
   await adapter.stop();
 });
 
-void test("closes global-only encrypted catch-up at the batch cutoff", async () => {
+void test("closes global-only encrypted initial sync at the batch cutoff", async () => {
   const fake = readyClient();
   fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
   let clearContent: unknown = null;
@@ -801,7 +787,7 @@ void test("closes global-only encrypted catch-up at the batch cutoff", async () 
     // Deliberately omit Room.timeline: some SDK versions surface the first
     // ciphertext only through the global event callback.
     fake.emit(SDK_EVENT, encrypted);
-    fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "catch-up-cursor" });
+    fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "initial-cursor" });
   };
   const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
   const batches: MatrixSyncBatch[] = [];
@@ -811,10 +797,10 @@ void test("closes global-only encrypted catch-up at the batch cutoff", async () 
   });
   await adapter.initializeCrypto(CRYPTO_STATE);
   adapter.onSyncBatch((batch) => { batches.push(batch); });
-  await adapter.start({ since: "saved-cursor" });
+  await adapter.start();
 
   assert.deepEqual(batches[0]?.rooms, []);
-  assert.equal(records.some((record) => record.event === "matrix-encrypted-catch-up-omitted"), true);
+  assert.equal(records.some((record) => record.event === "matrix-encrypted-initial-event-omitted"), true);
 
   clearContent = { msgtype: "m.text", body: "late catch-up" };
   fake.emit("Event.decrypted", encrypted);
@@ -822,7 +808,7 @@ void test("closes global-only encrypted catch-up at the batch cutoff", async () 
   await adapter.stop();
 });
 
-void test("keeps catch-up decrypted events in Matrix timeline order after out-of-order completion", async () => {
+void test("keeps initial decrypted events in Matrix timeline order after out-of-order completion", async () => {
   const fake = readyClient();
   fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
   let firstClear: unknown = null;
@@ -860,7 +846,7 @@ void test("keeps catch-up decrypted events in Matrix timeline order after out-of
   const adapter = requiredAdapterFor(fake);
   await adapter.initializeCrypto(CRYPTO_STATE);
   adapter.onSyncBatch((batch) => { batches.push(batch); });
-  await adapter.start({ since: "saved-cursor" });
+  await adapter.start();
 
   assert.deepEqual(
     batches[0]?.rooms[0]?.timeline.map((inbound) => inbound.eventId),
@@ -869,7 +855,7 @@ void test("keeps catch-up decrypted events in Matrix timeline order after out-of
   await adapter.stop();
 });
 
-void test("suppresses already-decrypted first-sync encrypted history after PREPARED", async () => {
+void test("preserves already-decrypted first-sync encrypted history after PREPARED", async () => {
   const fake = readyClient();
   fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
   const encrypted = {
@@ -893,7 +879,8 @@ void test("suppresses already-decrypted first-sync encrypted history after PREPA
   fake.emit("Event.decrypted", encrypted);
 
   assert.equal(batches[0]?.phase, "initial");
-  assert.deepEqual(batches[0]?.rooms, []);
+  assert.equal(batches[0]?.rooms[0]?.timeline[0]?.eventId, "$initial-clear:example.org");
+  assert.equal(batches[0]?.rooms[0]?.timeline[0]?.isLive, false);
   await adapter.stop();
 });
 
@@ -1000,7 +987,7 @@ void test("suppresses SDK decryption-failure clear content and reports metadata 
   await adapter.stop();
 });
 
-void test("does not admit asynchronous first-sync history or post-selection catch-up decryption", async () => {
+void test("does not admit asynchronous first-sync history after the initial cutoff", async () => {
   const fake = readyClient();
   fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
   let clearContent: unknown = null;
@@ -1016,29 +1003,28 @@ void test("does not admit asynchronous first-sync history or post-selection catc
   fake.startClientAction = () => {
     fake.emit(SDK_TIMELINE, encrypted, undefined, false, false, { liveEvent: true });
     fake.emit(SDK_EVENT, encrypted);
-    fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "catch-up-cursor" });
+    fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "initial-cursor" });
   };
   const batches: MatrixSyncBatch[] = [];
   const adapter = requiredAdapterFor(fake);
   await adapter.initializeCrypto(CRYPTO_STATE);
   adapter.onSyncBatch((batch) => { batches.push(batch); });
-  await adapter.start({ since: "saved-cursor" });
+  await adapter.start();
 
-  assert.deepEqual(batches, [{ nextBatch: "catch-up-cursor", phase: "incremental", rooms: [] }]);
+  assert.deepEqual(batches, [{ nextBatch: "initial-cursor", phase: "initial", rooms: [] }]);
   clearContent = { msgtype: "m.text", body: "too late" };
   fake.emit(SDK_EVENT, encrypted);
-  assert.deepEqual(batches, [{ nextBatch: "catch-up-cursor", phase: "incremental", rooms: [] }]);
+  assert.deepEqual(batches, [{ nextBatch: "initial-cursor", phase: "initial", rooms: [] }]);
   await adapter.stop();
 });
 
-void test("suppresses initial sync events, buffers post-ready events, and preserves order", async () => {
+void test("preserves initial sync events, buffers post-ready events, and preserves order", async () => {
   const fake = readyClient();
   const initial = event({ eventId: "$initial:example.org" });
   const firstLive = event({ eventId: "$first:example.org", content: { msgtype: "m.text", body: "first" } });
   const secondLive = event({ eventId: "$second:example.org", content: { msgtype: "m.text", body: "second" } });
   const history = event({ eventId: "$history:example.org" });
   fake.startClientAction = () => {
-    fake.emit(SDK_EVENT, initial);
     fake.emit(SDK_TIMELINE, initial, undefined, false, false, { liveEvent: false });
     fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "initial-cursor" });
   };
@@ -1059,12 +1045,14 @@ void test("suppresses initial sync events, buffers post-ready events, and preser
   fake.emit(SDK_SYNC, "SYNCING", "PREPARED", { nextSyncToken: "live-cursor" });
 
   assert.deepEqual(received.map((inbound) => inbound.eventId), [
+    "$initial:example.org",
     "$first:example.org",
     "$second:example.org",
   ]);
-  assert.equal(received[0]?.isLive, true);
-  assert.equal(received[0]?.isPlaintext, true);
-  assert.deepEqual(received[0]?.content, { msgtype: "m.text", body: "first" });
+  assert.equal(received[0]?.isLive, false);
+  assert.equal(received[1]?.isLive, true);
+  assert.equal(received[1]?.isPlaintext, true);
+  assert.deepEqual(received[1]?.content, { msgtype: "m.text", body: "first" });
 
   const outsideAllowlist = event({
     eventId: "$outside:example.org",
@@ -1077,102 +1065,26 @@ void test("suppresses initial sync events, buffers post-ready events, and preser
   assert.equal(received.at(-1)?.roomId, OTHER_ROOM_ID);
 });
 
-void test("starts from an opaque cursor and emits the first incremental batch after room validation", async () => {
+void test("passes the configured initial sync limit to the SDK", async () => {
   const fake = readyClient();
+  const adapter = createMatrixClientAdapter(CONFIG_WITH_INITIAL_LIMIT, "access-token", { client: fake });
+  await adapter.start();
+  assert.deepEqual(fake.startClientOptions, { initialSyncLimit: 7 });
+  await adapter.stop();
+});
+
+void test("fails startup when the initial sync response has no next token", async () => {
+  const fake = new FakeSdkClient();
+  fake.rooms.set(ROOM_ID, room());
   fake.startClientAction = () => {
-    fake.emit(SDK_EVENT, event({ eventId: "$catch-up:example.org" }));
-    fake.emit(
-      SDK_SYNC,
-      "PREPARED",
-      null,
-      {
-        nextSyncToken: "next-opaque-cursor",
-        rooms: { join: { [ROOM_ID]: { timeline: { limited: true } } } },
-      },
-    );
-  };
-  const batches: unknown[] = [];
-  const adapter = adapterFor(fake);
-  adapter.onSyncBatch((batch) => {
-    batches.push(batch);
-  });
-  await adapter.start({ since: "saved-opaque-cursor" });
-
-  assert.equal(fake.savedSyncToken, "saved-opaque-cursor");
-  assert.equal(fake.syncToken, "saved-opaque-cursor");
-  assert.deepEqual(batches, [{
-    nextBatch: "next-opaque-cursor",
-    phase: "incremental",
-    rooms: [{
-      roomId: ROOM_ID,
-      timeline: [{
-        roomId: ROOM_ID,
-        eventId: "$catch-up:example.org",
-        sender: ALICE,
-        type: "m.room.message",
-        content: { msgtype: "m.text", body: "hello" },
-        isLive: true,
-        isCatchUp: true,
-        timeline: { phase: "incremental", isCatchUp: true, limited: true },
-        isRedacted: false,
-        isPlaintext: true,
-        isEncrypted: false,
-        isDecrypted: true,
-      }],
-      limited: true,
-    }],
-  }]);
-});
-
-void test("fails startup when the SDK does not consult the saved-token hook", async () => {
-  const fake = readyClient();
-  fake.consultSavedSyncToken = false;
-  const received: InboundMatrixEvent[] = [];
-  const adapter = adapterFor(fake);
-  adapter.onSyncBatch((batch) => {
-    for (const room of batch.rooms) {
-      received.push(...room.timeline);
-    }
-  });
-
-  await assert.rejects(
-    () => adapter.start({ since: "saved-cursor" }),
-    /did not return the expected saved cursor/u,
-  );
-  assert.deepEqual(received, []);
-  assert.equal(fake.stopCalls, 1);
-});
-
-void test("fails startup when the SDK returns a different saved token", async () => {
-  const fake = readyClient();
-  fake.savedSyncTokenOverride = "wrong-cursor";
-  const received: InboundMatrixEvent[] = [];
-  const adapter = adapterFor(fake);
-  adapter.onSyncBatch((batch) => {
-    for (const room of batch.rooms) {
-      received.push(...room.timeline);
-    }
-  });
-
-  await assert.rejects(
-    () => adapter.start({ since: "saved-cursor" }),
-    /did not return the expected saved cursor/u,
-  );
-  assert.deepEqual(received, []);
-  assert.equal(fake.stopCalls, 1);
-});
-
-void test("does not fall back to an initial sync when a saved cursor is rejected", async () => {
-  const fake = readyClient();
-  fake.startClientAction = () => {
-    throw { httpStatus: 400, errcode: "M_UNKNOWN_POS" };
+    fake.emit(SDK_SYNC, "PREPARED", null, {});
   };
   const adapter = adapterFor(fake);
   await assert.rejects(
-    () => adapter.start({ since: "expired-opaque-cursor" }),
-    /reset private bridge state before retrying/u,
+    () => adapter.start(),
+    /Matrix sync response did not establish a next sync token/u,
   );
-  assert.equal(fake.savedSyncToken, "expired-opaque-cursor");
+  assert.equal(fake.stopCalls, 1);
 });
 
 void test("requires every configured room to be joined and unencrypted", async () => {

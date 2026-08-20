@@ -254,7 +254,7 @@ function defaultAcpFactory(context: DaemonFactoryContext): AcpClient {
 }
 
 function defaultMatrixFactory(context: DaemonFactoryContext): MatrixClientAdapter {
-  return createMatrixClientAdapter(context.config.matrix, context.accessToken, {
+  return createMatrixClientAdapter(context.config, context.accessToken, {
     diagnostics: context.diagnostics,
   });
 }
