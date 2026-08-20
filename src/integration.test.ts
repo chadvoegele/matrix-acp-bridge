@@ -435,6 +435,7 @@ interface EventOptions {
   readonly eventId: string;
   readonly sender?: string;
   readonly body?: string;
+  readonly originServerTs?: number;
   readonly encrypted?: boolean;
   readonly clearContent?: unknown;
   readonly decryptionFailure?: boolean;
@@ -448,6 +449,7 @@ function sdkEvent(options: EventOptions): MatrixSdkEventLike {
   return {
     getRoomId: () => roomId,
     getId: () => options.eventId,
+    getTs: () => options.originServerTs ?? 0,
     getSender: () => sender,
     getType: () => encrypted ? "m.room.encrypted" : "m.room.message",
     getContent: () => encrypted
@@ -1216,7 +1218,7 @@ void test("M2 scenario 1: the first run establishes a completed-ID baseline and 
     await waitFor(() => first!.peer.prompts.length === 1, "M2 live prompt");
     await completePrompt(first, first.peer.prompts[0]!, "live response");
     await flushMany();
-    assert.deepEqual(first.batches.map((batch) => batch.nextBatch), ["first-cursor", "live-cursor"]);
+    assert.equal(first.batches.length, 2);
     const beforeStop = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
     assert.equal(beforeStop.initialized, true);
     assert.deepEqual(beforeStop.completedEventIds, {
@@ -1636,7 +1638,7 @@ void test("M2 scenario 8: an interrupted event remains incomplete and is retried
       body: "this prompt is intentionally lost",
     }));
     crashed.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "crash-after-admission" });
-    await waitFor(() => crashed!.batches.some((batch) => batch.nextBatch === "crash-after-admission"), "crash checkpoint");
+    await waitFor(() => crashed!.batches.length >= 2, "crash checkpoint");
     await crashed.stateStore?.flush?.();
     await waitFor(() => crashed!.peer.prompts.length === 1, "in-flight prompt before crash");
     crashed.peer.closeInput();

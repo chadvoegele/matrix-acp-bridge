@@ -168,7 +168,7 @@ class FakeMatrix implements MatrixClientAdapter {
         listener({ state: "PREPARED", previousState: null });
       }
       for (const listener of this.syncBatchListeners) {
-        await listener({ nextBatch: "test-start-cursor", phase: "initial", rooms: [] });
+        await listener({ phase: "initial", rooms: [] });
       }
     });
   }

@@ -149,7 +149,6 @@ export class MatrixSyncCoordinator {
       for (const room of batch.rooms) {
         if (room.limited) {
           emit(this.#diagnostics, "warn", "limited-matrix-timeline", {
-            roomId: room.roomId,
             eventCount: room.timeline.length,
           });
         }
@@ -168,7 +167,7 @@ export class MatrixSyncCoordinator {
           // The whole first response is the baseline.  Events that arrived
           // while the SDK crossed PREPARED are still part of that response;
           // opening live intake does not make them new prompts.
-          await this.#establishBaseline(eligible);
+          await this.#establishBaseline(this.#ledgerRooms(eligible, batch.rooms));
           emit(this.#diagnostics, "info", "completed-event-baseline-established");
           this.#bridge.openIntake();
           this.#bridge.enableDispatch();
@@ -176,9 +175,11 @@ export class MatrixSyncCoordinator {
           return;
         }
 
-        const currentTimeline = this.#ledgerRooms(eligible);
+        const currentTimeline = this.#ledgerRooms(eligible, batch.rooms);
         const selected = new Map<string, InboundMatrixEvent[]>();
-        const newlyTerminal: CompletedEventRoomInput[] = [];
+        const newlyTerminalByRoom = new Map<string, string[]>(
+          this.#terminalRooms(batch.rooms).map(({ roomId, eventIds }) => [roomId, [...eventIds]]),
+        );
         let selectedCount = 0;
         let omittedCount = 0;
         const now = this.#clock.now();
@@ -200,13 +201,15 @@ export class MatrixSyncCoordinator {
           const omitted = unseen.filter((event) => !keepIds.has(event.eventId));
           selected.set(room.roomId, keep);
           if (omitted.length > 0) {
-            newlyTerminal.push({
-              roomId: room.roomId,
-              eventIds: omitted.flatMap((event) => event.eventId === undefined ? [] : [event.eventId]),
-            });
+            const eventIds = newlyTerminalByRoom.get(room.roomId) ?? [];
+            for (const event of omitted) {
+              if (event.eventId !== undefined && !eventIds.includes(event.eventId)) {
+                eventIds.push(event.eventId);
+              }
+            }
+            newlyTerminalByRoom.set(room.roomId, eventIds);
             omittedCount += omitted.length;
             emit(this.#diagnostics, "warn", "initial-sync-events-omitted", {
-              roomId: room.roomId,
               omittedCount: omitted.length,
               ageOmittedCount: tooOld.length,
               countOmittedCount: omitted.length - tooOld.length,
@@ -217,7 +220,10 @@ export class MatrixSyncCoordinator {
           }
           selectedCount += keep.length;
         }
-        await this.#compact(currentTimeline, newlyTerminal);
+        await this.#compact(
+          currentTimeline,
+          [...newlyTerminalByRoom.entries()].map(([roomId, eventIds]) => ({ roomId, eventIds })),
+        );
         emit(this.#diagnostics, "info", "initial-sync-recovery-finished", { selectedCount, omittedCount });
         this.#bridge.openIntake();
         this.#dispatchSelected(batch, selected);
@@ -237,9 +243,9 @@ export class MatrixSyncCoordinator {
     }
   }
 
-  async #establishBaseline(eligible: ReadonlyMap<string, readonly InboundMatrixEvent[]>): Promise<void> {
+  async #establishBaseline(ledger: readonly CompletedEventRoomInput[]): Promise<void> {
     try {
-      await this.#stateStore.establishInitialBaseline(this.#ledgerRooms(eligible));
+      await this.#stateStore.establishInitialBaseline(ledger);
     } catch (error) {
       this.#stateFailure(error, "establish-baseline");
       throw new Error("Private bridge state failure");
@@ -321,18 +327,44 @@ export class MatrixSyncCoordinator {
 
   #ledgerRooms(
     events: ReadonlyMap<string, readonly InboundMatrixEvent[]>,
+    rooms: readonly MatrixSyncRoomBatch[] = [],
   ): CompletedEventRoomInput[] {
-    return [...events.entries()].map(([roomId, roomEvents]) => ({
-      roomId,
-      eventIds: roomEvents
+    const byRoom = new Map<string, string[]>();
+    for (const [roomId, roomEvents] of events) {
+      const eventIds = roomEvents
         .map((event) => event.eventId)
-        .filter((eventId): eventId is string => eventId !== undefined),
-    }));
+        .filter((eventId): eventId is string => eventId !== undefined);
+      if (eventIds.length > 0) {
+        byRoom.set(roomId, eventIds);
+      }
+    }
+    for (const room of rooms) {
+      if (room.terminalEventIds === undefined || room.terminalEventIds.length === 0) {
+        continue;
+      }
+      const eventIds = byRoom.get(room.roomId) ?? [];
+      for (const eventId of room.terminalEventIds) {
+        if (!eventIds.includes(eventId)) {
+          eventIds.push(eventId);
+        }
+      }
+      byRoom.set(room.roomId, eventIds);
+    }
+    return [...byRoom.entries()].map(([roomId, eventIds]) => ({ roomId, eventIds }));
+  }
+
+  #terminalRooms(rooms: readonly MatrixSyncRoomBatch[]): CompletedEventRoomInput[] {
+    return rooms.flatMap((room) => room.terminalEventIds === undefined || room.terminalEventIds.length === 0
+      ? []
+      : [{ roomId: room.roomId, eventIds: room.terminalEventIds }]);
   }
 
   #isTooOld(event: InboundMatrixEvent, now: number, maxAgeMs: number): boolean {
     const originServerTs = event.originServerTs;
-    return originServerTs !== undefined && Math.max(0, now - originServerTs) > maxAgeMs;
+    if (originServerTs === undefined || !Number.isFinite(originServerTs)) {
+      return true;
+    }
+    return Math.max(0, now - originServerTs) > maxAgeMs;
   }
 
   #rememberDispatched(roomId: string, eventId: string): void {

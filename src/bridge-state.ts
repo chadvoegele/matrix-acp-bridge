@@ -33,20 +33,7 @@ export interface CompletedEventRoomInput {
   readonly eventIds: readonly MatrixEventId[];
 }
 
-export interface CompletedEventRoomsInput {
-  readonly rooms: readonly CompletedEventRoomInput[];
-}
-
-export type CompletedEventLedgerInput =
-  | readonly CompletedEventRoomInput[]
-  | CompletedEventRoomsInput
-  | ReadonlyMap<MatrixRoomId, readonly MatrixEventId[]>
-  | Readonly<Record<MatrixRoomId, readonly MatrixEventId[]>>;
-
-export interface CompletedEventCompactionInput {
-  readonly currentTimeline: CompletedEventLedgerInput;
-  readonly newlyCompletedEventIds?: CompletedEventLedgerInput;
-}
+export type CompletedEventLedgerInput = readonly CompletedEventRoomInput[];
 
 /** A read-only view of the private bridge-state document. */
 export interface BridgeStateSnapshot {
@@ -65,12 +52,11 @@ export interface BridgeStateSnapshot {
 export interface BridgeStateStore {
   readonly statePath: string;
   getSnapshot(): BridgeStateSnapshot;
-  isEventCompleted(eventId: MatrixEventId): boolean;
   isEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): boolean;
   establishInitialBaseline(completedEventIds: CompletedEventLedgerInput): Promise<void>;
   markEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): Promise<boolean>;
   compactCompletedEventIds(
-    currentTimeline: CompletedEventLedgerInput | CompletedEventCompactionInput,
+    currentTimeline: CompletedEventLedgerInput,
     newlyCompletedEventIds?: CompletedEventLedgerInput,
   ): Promise<void>;
   getSessionMapping(roomId: MatrixRoomId): AcpSessionId | undefined;
@@ -250,16 +236,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     };
   }
 
-  isEventCompleted(eventId: MatrixEventId): boolean;
-  isEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): boolean;
-  isEventCompleted(roomOrEventId: string, eventId?: MatrixEventId): boolean {
-    if (eventId === undefined) {
-      this.#validateEventId(roomOrEventId);
-      return [...(this.#state?.completedEventIds.values() ?? [])].some((ids) => ids.includes(roomOrEventId));
-    }
-    this.#validateRoomId(roomOrEventId);
+  isEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): boolean {
+    this.#validateRoomId(roomId);
     this.#validateEventId(eventId);
-    return this.#state?.completedEventIds.get(roomOrEventId)?.includes(eventId) ?? false;
+    return this.#state?.completedEventIds.get(roomId)?.includes(eventId) ?? false;
   }
 
   /**
@@ -318,15 +298,12 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
    * over-retain IDs and therefore remains safe for deduplication.
    */
   async compactCompletedEventIds(
-    input: CompletedEventLedgerInput | CompletedEventCompactionInput,
+    currentTimelineInput: CompletedEventLedgerInput,
     newlyCompletedEventIds?: CompletedEventLedgerInput,
   ): Promise<void> {
     return this.#enqueue(async () => {
-      const operation = isCompactionInput(input)
-        ? input
-        : { currentTimeline: input, newlyCompletedEventIds };
-      const currentTimeline = this.#normalizeLedger(operation.currentTimeline);
-      const newlyCompleted = this.#normalizeLedger(operation.newlyCompletedEventIds ?? []);
+      const currentTimeline = this.#normalizeLedger(currentTimelineInput);
+      const newlyCompleted = this.#normalizeLedger(newlyCompletedEventIds ?? []);
       const current = this.#state;
       const compacted = new Map<MatrixRoomId, MatrixEventId[]>();
       for (const [roomId, eventIds] of currentTimeline) {
@@ -678,40 +655,19 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   }
 
   #normalizeLedger(input: CompletedEventLedgerInput): Map<MatrixRoomId, MatrixEventId[]> {
-    const entries: Array<readonly [unknown, unknown]> = [];
-    if (Array.isArray(input)) {
-      for (const room of input) {
-        if (!isRecord(room) || typeof room.roomId !== "string" || !Array.isArray(room.eventIds)) {
-          throw this.#failure("invalid-input");
-        }
-        entries.push([room.roomId, room.eventIds]);
-      }
-    } else if (isRecord(input) && Object.hasOwn(input, "rooms")) {
-      if (!Array.isArray(input.rooms)) {
-        throw this.#failure("invalid-input");
-      }
-      for (const room of input.rooms) {
-        if (!isRecord(room) || typeof room.roomId !== "string" || !Array.isArray(room.eventIds)) {
-          throw this.#failure("invalid-input");
-        }
-        entries.push([room.roomId, room.eventIds]);
-      }
-    } else if (input instanceof Map) {
-      for (const [roomId, eventIds] of input) {
-        entries.push([roomId, eventIds]);
-      }
-    } else if (isRecord(input)) {
-      for (const [roomId, eventIds] of Object.entries(input)) {
-        entries.push([roomId, eventIds]);
-      }
-    } else {
+    if (!Array.isArray(input)) {
       throw this.#failure("invalid-input");
     }
 
     const result = new Map<MatrixRoomId, MatrixEventId[]>();
-    for (const [rawRoomId, rawEventIds] of entries) {
+    for (const room of input) {
+      if (!isRecord(room) || typeof room.roomId !== "string" || !Array.isArray(room.eventIds)) {
+        throw this.#failure("invalid-input");
+      }
+      const rawRoomId = room.roomId;
+      const rawEventIds = room.eventIds;
       this.#validateRoomId(rawRoomId);
-      if (!Array.isArray(rawEventIds) || result.has(rawRoomId)) {
+      if (result.has(rawRoomId)) {
         throw this.#failure("invalid-input");
       }
       const eventIds: MatrixEventId[] = [];
@@ -857,10 +813,6 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     this.#tail = run.then(() => {}, () => {});
     return run;
   }
-}
-
-function isCompactionInput(value: unknown): value is CompletedEventCompactionInput {
-  return isRecord(value) && Object.hasOwn(value, "currentTimeline");
 }
 
 function cloneCompletedEventIds(

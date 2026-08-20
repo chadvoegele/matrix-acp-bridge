@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -44,7 +44,7 @@ function event(
   eventId: string,
   body = eventId,
   isLive = true,
-  originServerTs?: number,
+  originServerTs: number | null = 1000,
 ): InboundMatrixEvent {
   return {
     roomId: ROOM,
@@ -53,7 +53,7 @@ function event(
     type: "m.room.message",
     content: { msgtype: "m.text", body },
     isLive,
-    ...(originServerTs === undefined ? {} : { originServerTs }),
+    ...(originServerTs === null ? {} : { originServerTs }),
     isPlaintext: true,
     isDecrypted: true,
     isRedacted: false,
@@ -62,7 +62,6 @@ function event(
 
 function batch(phase: "initial" | "incremental", events: readonly InboundMatrixEvent[]): MatrixSyncBatch {
   return {
-    nextBatch: `next-${phase}`,
     phase,
     rooms: [{ roomId: ROOM, timeline: events, limited: false }],
   };
@@ -140,7 +139,7 @@ void test("restart age policy terminally omits stale events and keeps fresh even
   await withStore(async (stateDir) => {
     const identity = { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" } as const;
     const firstStore = await openBridgeStateStore({ stateDir, identity });
-    await firstStore.establishInitialBaseline({ [ROOM]: ["$already-done:example.org"] });
+    await firstStore.establishInitialBaseline([{ roomId: ROOM, eventIds: ["$already-done:example.org"] }]);
     const received: InboundMatrixEvent[] = [];
     const records: Array<{ readonly event: string; readonly fields: Readonly<Record<string, string | number | boolean | null>> }> = [];
     const { coordinator } = makeCoordinator(
@@ -170,13 +169,54 @@ void test("restart age policy terminally omits stale events and keeps fresh even
     });
     const omission = records.find(({ event: eventName }) => eventName === "initial-sync-events-omitted");
     assert.deepEqual(omission?.fields, {
-      roomId: ROOM,
       omittedCount: 1,
       ageOmittedCount: 1,
       countOmittedCount: 0,
       reason: "age",
     });
     assert.equal(JSON.stringify(omission).includes("$stale:example.org"), false);
+  });
+});
+
+void test("restart omits events without a finite origin timestamp", async () => {
+  await withStore(async (stateDir) => {
+    const identity = { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" } as const;
+    const firstStore = await openBridgeStateStore({ stateDir, identity });
+    await firstStore.establishInitialBaseline([{ roomId: ROOM, eventIds: ["$old:example.org"] }]);
+    const received: InboundMatrixEvent[] = [];
+    const records: Array<{ readonly event: string; readonly fields: Readonly<Record<string, string | number | boolean | null>> }> = [];
+    const { coordinator } = makeCoordinator(await openBridgeStateStore({ stateDir, identity }), received, {
+      now: 2000,
+      config: { ...config, limits: { ...config.limits, maxCatchupAgeSeconds: 1 } },
+      diagnostics: {
+        emit: (_level, eventName, fields = {}) => records.push({ event: eventName, fields }),
+        debug() {},
+        info() {},
+        warn() {},
+        error() {},
+      },
+    });
+    await coordinator.handleBatch(batch("initial", [
+      event("$missing-timestamp:example.org", "missing", false, null),
+      event("$non-finite-timestamp:example.org", "non-finite", false, Number.NaN),
+      event("$fresh-with-timestamp:example.org", "fresh", false, 1500),
+    ]));
+    await coordinator.flush();
+
+    assert.deepEqual(received.map((input) => input.eventId), ["$fresh-with-timestamp:example.org"]);
+    assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
+      [ROOM]: [
+        "$missing-timestamp:example.org",
+        "$non-finite-timestamp:example.org",
+        "$fresh-with-timestamp:example.org",
+      ],
+    });
+    assert.deepEqual(records.find(({ event: eventName }) => eventName === "initial-sync-events-omitted")?.fields, {
+      omittedCount: 2,
+      ageOmittedCount: 2,
+      countOmittedCount: 0,
+      reason: "age",
+    });
   });
 });
 
@@ -203,7 +243,6 @@ void test("limited initial timelines remain bounded and diagnostics contain coun
     });
     assert.deepEqual(received, []);
     assert.deepEqual(records.find(({ event: eventName }) => eventName === "limited-matrix-timeline")?.fields, {
-      roomId: ROOM,
       eventCount: 1,
     });
     assert.equal(JSON.stringify(records).includes("$limited-history:example.org"), false);
@@ -214,7 +253,10 @@ void test("restart initial sync admits unseen events, suppresses completed IDs, 
   await withStore(async (stateDir) => {
     const identity = { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" } as const;
     const firstStore = await openBridgeStateStore({ stateDir, identity });
-    await firstStore.establishInitialBaseline({ [ROOM]: ["$done:example.org", "$expired:example.org"] });
+    await firstStore.establishInitialBaseline([{
+      roomId: ROOM,
+      eventIds: ["$done:example.org", "$expired:example.org"],
+    }]);
     const received: InboundMatrixEvent[] = [];
     const { coordinator } = makeCoordinator(await openBridgeStateStore({ stateDir, identity }), received);
     await coordinator.handleBatch(batch("initial", [
@@ -227,6 +269,50 @@ void test("restart initial sync admits unseen events, suppresses completed IDs, 
     assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
       [ROOM]: ["$done:example.org", "$expired:example.org", "$new:example.org"],
     });
+  });
+});
+
+void test("terminal encrypted IDs survive fresh and initialized recovery without retaining content", async () => {
+  await withStore(async (stateDir) => {
+    const identity = { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" } as const;
+    const terminalId = "$encrypted-pending:example.org";
+    const firstCoordinatorReceived: InboundMatrixEvent[] = [];
+    const firstCoordinator = makeCoordinator(
+      await openBridgeStateStore({ stateDir, identity }),
+      firstCoordinatorReceived,
+    ).coordinator;
+    await firstCoordinator.handleBatch({
+      phase: "initial",
+      rooms: [{ roomId: ROOM, timeline: [], terminalEventIds: [terminalId], limited: false }],
+    });
+    assert.deepEqual(firstCoordinatorReceived, []);
+    assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
+      [ROOM]: [terminalId],
+    });
+
+    const secondTerminalId = "$encrypted-pending-next:example.org";
+    const secondCoordinator = makeCoordinator(
+      await openBridgeStateStore({ stateDir, identity }),
+      [],
+    ).coordinator;
+    await secondCoordinator.handleBatch({
+      phase: "initial",
+      rooms: [{ roomId: ROOM, timeline: [], terminalEventIds: [secondTerminalId], limited: false }],
+    });
+    const state = await openBridgeStateStore({ stateDir, identity });
+    assert.deepEqual(state.getSnapshot().completedEventIds, { [ROOM]: [secondTerminalId] });
+    const raw = await readFile(state.statePath, "utf8");
+    assert.equal(raw.includes("ciphertext"), false);
+    assert.equal(raw.includes("decrypted body"), false);
+
+    const restartedReceived: InboundMatrixEvent[] = [];
+    const restarted = makeCoordinator(
+      await openBridgeStateStore({ stateDir, identity }),
+      restartedReceived,
+    ).coordinator;
+    await restarted.handleBatch(batch("initial", [event(secondTerminalId, "decrypted body", false, 1000)]));
+    await restarted.flush();
+    assert.deepEqual(restartedReceived, []);
   });
 });
 

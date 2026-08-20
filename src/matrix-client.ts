@@ -100,7 +100,6 @@ export type MatrixDecryptionFailureListener = (
     readonly roomId: MatrixRoomId;
     readonly eventId: MatrixEventId;
     readonly sender: MatrixUserId;
-    readonly isCatchUp: boolean;
   }>,
 ) => void;
 
@@ -121,12 +120,12 @@ export interface MatrixTimelineMetadata {
 export interface MatrixSyncRoomBatch {
   readonly roomId: MatrixRoomId;
   readonly timeline: readonly InboundMatrixEvent[];
+  /** IDs terminally omitted at the adapter cutoff; no event content is retained. */
+  readonly terminalEventIds?: readonly MatrixEventId[];
   readonly limited: boolean;
 }
 
 export interface MatrixSyncBatch {
-  /** The SDK response boundary retained for internal sync validation. */
-  readonly nextBatch: string;
   readonly phase: MatrixSyncPhase;
   readonly rooms: readonly MatrixSyncRoomBatch[];
 }
@@ -320,7 +319,7 @@ export interface MatrixSdkClientLike {
       readonly left?: readonly string[];
     }): Promise<void>;
     onSyncCompleted?(
-      syncState: { readonly nextSyncToken?: string; readonly catchingUp?: boolean },
+      syncState: { readonly nextSyncToken?: string },
     ): void | Promise<void>;
     requestDeviceVerification?(userId: string, deviceId: string): Promise<unknown>;
     getVerificationRequestsToDeviceInProgress?(userId: string): readonly unknown[];
@@ -1198,8 +1197,6 @@ interface EventContext {
   readonly order: number;
   readonly isLive: boolean;
   readonly isInitial: boolean;
-  readonly isCatchUp: boolean;
-  readonly limited: boolean;
 }
 
 type EncryptedEventStatus = "pending" | "completed" | "omitted";
@@ -1213,8 +1210,6 @@ type EncryptedEventStatus = "pending" | "completed" | "omitted";
 interface EncryptedEventRecord {
   readonly status: EncryptedEventStatus;
   readonly roomId?: string;
-  readonly sender?: string;
-  readonly isCatchUp: boolean;
 }
 
 interface SdkSubscription {
@@ -1257,7 +1252,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   #firstBatch = true;
   #nextEventOrder = 0;
   #syncBatchInFlight = false;
-  #pendingNextBatch: string | undefined;
+  #pendingBatchReady = false;
 
   #resolvePrepared: (() => void) | undefined;
   #rejectPrepared: ((error: unknown) => void) | undefined;
@@ -1480,7 +1475,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     this.#encryptedEvents.clear();
     this.#eventContexts.clear();
     this.#nextEventOrder = 0;
-    this.#pendingNextBatch = undefined;
+    this.#pendingBatchReady = false;
     this.#registerSdkListeners();
     this.#startPromise = this.#runStart();
     return this.#startPromise;
@@ -1639,7 +1634,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         );
       }
       await this.validateConfiguredRooms();
-      if (this.#pendingNextBatch === undefined) {
+      if (!this.#pendingBatchReady) {
         throw new MatrixAdapterError(
           "start",
           "Matrix sync response did not establish a next sync token",
@@ -1650,7 +1645,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#resolvePrepared = undefined;
       this.#rejectPrepared = undefined;
       this.#lifecycle = "ready";
-      if (this.#pendingNextBatch !== undefined) {
+      if (this.#pendingBatchReady) {
         void this.#emitPendingBatch().catch(() => {});
       }
     } catch (error) {
@@ -1745,8 +1740,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
           data?.liveEvent !== false &&
           this.#phaseAllowsLiveEvents(),
         isInitial: this.#firstBatch,
-        isCatchUp: false,
-        limited: data?.limited === true,
       });
     }
     // During the first SDK response, Room.timeline is also a valid source of
@@ -1766,50 +1759,63 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   };
 
   async #emitPendingBatch(): Promise<void> {
-    if (this.#syncBatchInFlight || this.#pendingNextBatch === undefined) {
+    if (this.#syncBatchInFlight || !this.#pendingBatchReady) {
       return;
     }
     this.#syncBatchInFlight = true;
     const phase = this.#firstBatch ? "initial" : "incremental";
-    const isCatchUp = false;
     const events = this.#pendingBatchEvents.splice(0);
     events.sort((left, right) => this.#eventOrderFor(left) - this.#eventOrderFor(right));
-    if (phase === "initial") {
-      // Initial events are forwarded to the coordinator for baseline and
-      // ledger handling. Only encrypted events still awaiting clear content
-      // are closed here, so a later retry cannot enter the initial batch.
-      this.#closeInitialEncryptedEvents();
-    }
+    const terminalEventIds = phase === "initial"
+      ? this.#closeInitialEncryptedEvents()
+      : new Map<string, string[]>();
     const limitedRooms = new Set(this.#pendingBatchLimitedRooms);
     this.#pendingBatchLimitedRooms.clear();
-    const rooms = new Map<string, { timeline: InboundMatrixEvent[]; limited: boolean }>();
+    const rooms = new Map<string, {
+      timeline: InboundMatrixEvent[];
+      terminalEventIds: string[];
+      limited: boolean;
+    }>();
     for (const event of events) {
       let room = rooms.get(event.roomId);
       if (room === undefined) {
-        room = { timeline: [], limited: limitedRooms.has(event.roomId) };
+        room = {
+          timeline: [],
+          terminalEventIds: [],
+          limited: limitedRooms.has(event.roomId),
+        };
         rooms.set(event.roomId, room);
       }
       room.timeline.push({
         ...event,
-        ...(isCatchUp ? { isCatchUp: true } : { isCatchUp: false }),
-        timeline: { phase, isCatchUp, limited: room.limited },
+        isCatchUp: false,
+        timeline: { phase, isCatchUp: false, limited: room.limited },
       });
+    }
+    for (const [roomId, eventIds] of terminalEventIds) {
+      const room = rooms.get(roomId) ?? {
+        timeline: [],
+        terminalEventIds: [],
+        limited: limitedRooms.has(roomId),
+      };
+      room.terminalEventIds.push(...eventIds);
+      rooms.set(roomId, room);
     }
     for (const roomId of limitedRooms) {
       if (!rooms.has(roomId)) {
-        rooms.set(roomId, { timeline: [], limited: true });
+        rooms.set(roomId, { timeline: [], terminalEventIds: [], limited: true });
       }
     }
     const batch = {
-      nextBatch: this.#pendingNextBatch,
       phase,
       rooms: [...rooms.entries()].map(([roomId, room]) => ({
         roomId,
         timeline: room.timeline,
+        ...(room.terminalEventIds.length === 0 ? {} : { terminalEventIds: room.terminalEventIds }),
         limited: room.limited,
       })),
     } satisfies MatrixSyncBatch;
-    this.#pendingNextBatch = undefined;
+    this.#pendingBatchReady = false;
     try {
       for (const listener of this.#syncBatchListeners) {
         await listener(batch);
@@ -1817,7 +1823,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#firstBatch = false;
     } finally {
       this.#syncBatchInFlight = false;
-      if (this.#lifecycle === "ready" && this.#pendingNextBatch !== undefined) {
+      if (this.#lifecycle === "ready" && this.#pendingBatchReady) {
         void this.#emitPendingBatch().catch(() => {});
       }
     }
@@ -1849,8 +1855,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       context = this.#rememberEventContext(eventId, {
         isLive: this.#phaseAllowsLiveEvents(),
         isInitial: this.#firstBatch,
-        isCatchUp: false,
-        limited: false,
       });
     }
     const encrypted = this.#isEncryptedEvent(event);
@@ -1874,13 +1878,13 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
           // A successfully decrypted but unsupported clear event is still
           // complete. Retrying it on every SDK callback would keep it in the
           // pending registry forever and violate at-most-once observation.
-          this.#rememberEncryptedCompleted(eventId, context, metadata);
+          this.#rememberEncryptedCompleted(eventId, metadata);
           this.#rememberEventId(eventId);
         } else {
-          this.#rememberEncryptedPending(eventId, context, metadata);
+          this.#rememberEncryptedPending(eventId, metadata);
         }
         if (this.#isDecryptionFailure(event)) {
-          this.#emitDecryptionFailure(event, eventId, context);
+          this.#emitDecryptionFailure(event, eventId);
         }
       } else if (encrypted) {
         // Disabled mode rejects encrypted events at the SDK boundary. This
@@ -1896,10 +1900,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     // The dedup index is populated only after required-mode ciphertext has
     // yielded authenticated clear content. This permits late decryption.
     if (normalized.isEncrypted === true) {
-      this.#rememberEncryptedCompleted(eventId, context, {
-        roomId: normalized.roomId,
-        sender: normalized.sender,
-      });
+      this.#rememberEncryptedCompleted(eventId, { roomId: normalized.roomId });
     }
     this.#rememberEventId(eventId);
     if (normalized.isEncrypted === true && normalized.isDecrypted === true) {
@@ -2014,7 +2015,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       content: { ...content },
       ...(originServerTs === undefined ? {} : { originServerTs }),
       isLive: context.isLive,
-      ...(context.isCatchUp ? { isCatchUp: true } : {}),
       isRedacted: redacted,
       isPlaintext: !encrypted,
       isEncrypted: encrypted,
@@ -2045,14 +2045,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
 
   #eventMetadata(event: MatrixSdkEventLike): {
     readonly roomId?: string;
-    readonly sender?: string;
   } {
     try {
       const roomId = event.getRoomId();
-      const sender = event.getSender();
       return {
         ...(typeof roomId === "string" ? { roomId } : {}),
-        ...(typeof sender === "string" ? { sender } : {}),
       };
     } catch {
       return {};
@@ -2080,7 +2077,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   #emitDecryptionFailure(
     event: MatrixSdkEventLike,
     eventId: string,
-    context: EventContext,
   ): void {
     let roomId: string | undefined;
     let sender: string | undefined;
@@ -2094,14 +2090,12 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return;
     }
     const failure = classifyCryptoFailure("decrypt", "decryption_failed");
-    const metadata = { roomId, eventId, sender, isCatchUp: context.isCatchUp } as const;
+    const metadata = { roomId, eventId, sender } as const;
     try {
       this.#diagnostics?.warn("matrix-decryption-failed", {
-        roomId,
-        eventId,
-        sender,
-        isCatchUp: context.isCatchUp,
         reason: failure.reason,
+        phase: "decryption",
+        count: 1,
       });
     } catch {
       // Diagnostics must never affect event handling.
@@ -2127,8 +2121,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       order: previous.order,
       isLive: previous.isLive && context.isLive,
       isInitial: previous.isInitial || context.isInitial,
-      isCatchUp: previous.isCatchUp || context.isCatchUp,
-      limited: previous.limited || context.limited,
     };
     this.#eventContexts.set(eventId, next);
     while (this.#eventContexts.size > 10_000) {
@@ -2152,30 +2144,38 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
   }
 
-  #closeInitialEncryptedEvents(): void {
+  #closeInitialEncryptedEvents(): Map<string, string[]> {
+    const terminalEventIds = new Map<string, string[]>();
+    let omittedCount = 0;
     for (const [eventId, encrypted] of this.#encryptedEvents) {
       if (encrypted.status !== "pending") {
         continue;
       }
       this.#encryptedEvents.set(eventId, { ...encrypted, status: "omitted" });
+      omittedCount += 1;
+      if (encrypted.roomId !== undefined) {
+        const eventIds = terminalEventIds.get(encrypted.roomId) ?? [];
+        eventIds.push(eventId);
+        terminalEventIds.set(encrypted.roomId, eventIds);
+      }
+    }
+    if (omittedCount > 0) {
       try {
         this.#diagnostics?.warn("matrix-encrypted-initial-event-omitted", {
-          ...(encrypted.roomId === undefined ? {} : { roomId: encrypted.roomId }),
-          ...(encrypted.sender === undefined ? {} : { sender: encrypted.sender }),
-          eventId,
-          isCatchUp: false,
           reason: "decryption_pending_at_initial_sync_cutoff",
+          phase: "initial",
+          count: omittedCount,
         });
       } catch {
         // Diagnostics are observational and never affect the cutoff.
       }
     }
+    return terminalEventIds;
   }
 
   #rememberEncryptedPending(
     eventId: string,
-    context: EventContext,
-    metadata: { readonly roomId?: string; readonly sender?: string },
+    metadata: { readonly roomId?: string },
   ): void {
     const previous = this.#encryptedEvents.get(eventId);
     if (previous?.status === "completed" || previous?.status === "omitted") {
@@ -2183,22 +2183,17 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
     this.#rememberEncryptedEvent(eventId, {
       status: "pending",
-      isCatchUp: previous?.isCatchUp === true || context.isCatchUp,
       ...(metadata.roomId === undefined ? {} : { roomId: metadata.roomId }),
-      ...(metadata.sender === undefined ? {} : { sender: metadata.sender }),
     });
   }
 
   #rememberEncryptedCompleted(
     eventId: string,
-    context: EventContext,
-    metadata: { readonly roomId?: string; readonly sender?: string },
+    metadata: { readonly roomId?: string },
   ): void {
     this.#rememberEncryptedEvent(eventId, {
       status: "completed",
-      isCatchUp: context.isCatchUp,
       ...(metadata.roomId === undefined ? {} : { roomId: metadata.roomId }),
-      ...(metadata.sender === undefined ? {} : { sender: metadata.sender }),
     });
   }
 
@@ -2243,7 +2238,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         (state === SDK_SYNC_STATES.prepared ||
           state === SDK_SYNC_STATES.syncing ||
           state === SDK_SYNC_STATES.catchup)) {
-      this.#pendingNextBatch = nextSyncToken;
+      this.#pendingBatchReady = true;
     }
     const joinedRooms = data === undefined ? undefined : own(data, "rooms");
     if (isRecord(joinedRooms)) {

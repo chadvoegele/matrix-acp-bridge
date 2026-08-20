@@ -799,8 +799,19 @@ void test("closes global-only encrypted initial sync at the batch cutoff", async
   adapter.onSyncBatch((batch) => { batches.push(batch); });
   await adapter.start();
 
-  assert.deepEqual(batches[0]?.rooms, []);
-  assert.equal(records.some((record) => record.event === "matrix-encrypted-initial-event-omitted"), true);
+  assert.deepEqual(batches[0]?.rooms, [{
+    roomId: ROOM_ID,
+    timeline: [],
+    terminalEventIds: ["$global-only-catch-up:example.org"],
+    limited: false,
+  }]);
+  const omission = records.find((record) => record.event === "matrix-encrypted-initial-event-omitted");
+  assert.deepEqual(omission?.fields, {
+    reason: "decryption_pending_at_initial_sync_cutoff",
+    phase: "initial",
+    count: 1,
+  });
+  assert.doesNotMatch(JSON.stringify(omission), /global-only-catch-up|room:example|alice|not-forwarded/u);
 
   clearContent = { msgtype: "m.text", body: "late catch-up" };
   fake.emit("Event.decrypted", encrypted);
@@ -909,7 +920,12 @@ void test("suppresses unresolved first-sync ciphertext after the initial cutoff"
 
   clearContent = { msgtype: "m.text", body: "history must stay hidden" };
   fake.emit("Event.decrypted", encrypted);
-  assert.deepEqual(batches[0]?.rooms, []);
+  assert.deepEqual(batches[0]?.rooms, [{
+    roomId: ROOM_ID,
+    timeline: [],
+    terminalEventIds: ["$initial-ciphertext:example.org"],
+    limited: false,
+  }]);
   await adapter.stop();
 });
 
@@ -957,7 +973,11 @@ void test("bounds encrypted pending state and removes SDK retry listeners on sto
 void test("suppresses SDK decryption-failure clear content and reports metadata only", async () => {
   const fake = readyClient();
   fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
-  const adapter = requiredAdapterFor(fake);
+  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const adapter = createMatrixClientAdapter(REQUIRED_CONFIG, "access-token", {
+    client: fake,
+    diagnostics: captureDiagnostics(records),
+  });
   await adapter.initializeCrypto(CRYPTO_STATE);
   const received: InboundMatrixEvent[] = [];
   const failures: Array<{ readonly eventId: string; readonly reason: string }> = [];
@@ -984,6 +1004,13 @@ void test("suppresses SDK decryption-failure clear content and reports metadata 
 
   assert.deepEqual(received, []);
   assert.deepEqual(failures, [{ eventId: "$undecryptable:example.org", reason: "decryption_failed" }]);
+  const diagnostic = records.find((record) => record.event === "matrix-decryption-failed");
+  assert.deepEqual(diagnostic?.fields, {
+    reason: "decryption_failed",
+    phase: "decryption",
+    count: 1,
+  });
+  assert.doesNotMatch(JSON.stringify(diagnostic), /undecryptable|room:example|alice|secret-ciphertext|sdk error details/u);
   await adapter.stop();
 });
 
@@ -1011,10 +1038,26 @@ void test("does not admit asynchronous first-sync history after the initial cuto
   adapter.onSyncBatch((batch) => { batches.push(batch); });
   await adapter.start();
 
-  assert.deepEqual(batches, [{ nextBatch: "initial-cursor", phase: "initial", rooms: [] }]);
+  assert.deepEqual(batches, [{
+    phase: "initial",
+    rooms: [{
+      roomId: ROOM_ID,
+      timeline: [],
+      terminalEventIds: ["$catch-up-late:example.org"],
+      limited: false,
+    }],
+  }]);
   clearContent = { msgtype: "m.text", body: "too late" };
   fake.emit(SDK_EVENT, encrypted);
-  assert.deepEqual(batches, [{ nextBatch: "initial-cursor", phase: "initial", rooms: [] }]);
+  assert.deepEqual(batches, [{
+    phase: "initial",
+    rooms: [{
+      roomId: ROOM_ID,
+      timeline: [],
+      terminalEventIds: ["$catch-up-late:example.org"],
+      limited: false,
+    }],
+  }]);
   await adapter.stop();
 });
 

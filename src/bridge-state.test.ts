@@ -97,7 +97,7 @@ void test("absent private state is fresh and the strict schema round-trips sessi
     });
 
     await store.setSessionMapping(ROOM_ONE, "acp-session");
-    await store.establishInitialBaseline({ [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] }]);
 
     const raw = JSON.parse(await readFile(store.statePath, "utf8")) as Record<string, unknown>;
     assert.deepEqual(Object.keys(raw).sort(), [
@@ -143,7 +143,7 @@ void test("baseline establishment is atomic and a failed first commit remains fr
       },
     });
     await expectStateError(
-      () => store.establishInitialBaseline({ [ROOM_ONE]: [EVENT_ONE] }),
+      () => store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]),
       "rename",
     );
     assert.equal(store.getSnapshot().initialized, false);
@@ -152,7 +152,7 @@ void test("baseline establishment is atomic and a failed first commit remains fr
     const reopened = await openStore(stateDir);
     assert.equal(reopened.getSnapshot().initialized, false);
     assert.deepEqual(reopened.getSnapshot().completedEventIds, {});
-    await reopened.establishInitialBaseline({ [ROOM_ONE]: [EVENT_ONE] });
+    await reopened.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
     assert.equal(reopened.getSnapshot().initialized, true);
   });
 });
@@ -161,7 +161,7 @@ void test("completion is durable, room-scoped, idempotent, and preserves session
   await withStateDir(async (stateDir) => {
     const store = await openStore(stateDir);
     await store.setSessionMapping(ROOM_ONE, "session-one");
-    await store.establishInitialBaseline({ [ROOM_ONE]: [EVENT_ONE] });
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
 
     assert.equal(await store.markEventCompleted(ROOM_ONE, EVENT_TWO), true);
     assert.equal(await store.markEventCompleted(ROOM_ONE, EVENT_TWO), false);
@@ -177,18 +177,21 @@ void test("completion is durable, room-scoped, idempotent, and preserves session
 void test("compaction retains the current window and newly terminal IDs only", async () => {
   await withStateDir(async (stateDir) => {
     const store = await openStore(stateDir);
-    await store.establishInitialBaseline({
-      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO],
-      [ROOM_TWO]: ["$old:example"],
-    });
+    await store.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] },
+      { roomId: ROOM_TWO, eventIds: ["$old:example"] },
+    ]);
     await store.markEventCompleted(ROOM_ONE, "$outside:example");
 
     await store.compactCompletedEventIds(
-      {
-        [ROOM_ONE]: [EVENT_TWO, "$not-completed:example"],
-        [ROOM_TWO]: [],
-      },
-      { [ROOM_ONE]: ["$new-terminal:example"], [ROOM_TWO]: ["$omitted:example"] },
+      [
+        { roomId: ROOM_ONE, eventIds: [EVENT_TWO, "$not-completed:example"] },
+        { roomId: ROOM_TWO, eventIds: [] },
+      ],
+      [
+        { roomId: ROOM_ONE, eventIds: ["$new-terminal:example"] },
+        { roomId: ROOM_TWO, eventIds: ["$omitted:example"] },
+      ],
     );
 
     assert.deepEqual(store.getSnapshot().completedEventIds, {
@@ -208,10 +211,10 @@ void test("a compaction failure leaves the previous ledger intact and therefore 
         }
       },
     });
-    await store.establishInitialBaseline({ [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] }]);
     fail = true;
     await expectStateError(
-      () => store.compactCompletedEventIds({ [ROOM_ONE]: [EVENT_TWO] }),
+      () => store.compactCompletedEventIds([{ roomId: ROOM_ONE, eventIds: [EVENT_TWO] }]),
       "write",
     );
     assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
@@ -256,7 +259,7 @@ void test("session mutations are independent of ledger mutations and are seriali
     const store = await openStore(stateDir);
     const rooms = Array.from({ length: 12 }, (_, index) => `!room-${index}:example`);
     await Promise.all(rooms.map((roomId, index) => store.setSessionMapping(roomId, `session-${index}`)));
-    await store.establishInitialBaseline({ [ROOM_ONE]: [EVENT_ONE] });
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
     assert.equal(store.getSessionMappings().size, rooms.length);
     assert.equal(await store.removeSessionMapping(rooms[0]!), true);
     assert.deepEqual(
@@ -327,7 +330,7 @@ void test("state diagnostics expose only sanitized metadata", async () => {
         }
       },
     });
-    await store.establishInitialBaseline({ [ROOM_ONE]: [EVENT_ONE] });
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
     enabled = true;
     await expectStateError(() => store.markEventCompleted(ROOM_ONE, EVENT_TWO), "write");
     const record = records.at(-1);
