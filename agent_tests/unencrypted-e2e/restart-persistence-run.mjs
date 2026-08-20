@@ -72,10 +72,13 @@ function assertSchemaV12State(state, label) {
   }
 }
 
-function assertCleanDiagnostics(pair, requiredEvents) {
+function assertCleanDiagnostics(pair, requiredEvents, forbiddenEvents = []) {
   const records = parseDiagnostics(pair.bridgeDiagnostics());
   for (const event of requiredEvents) {
     assert(records.some((record) => record.event === event), `missing ${event} diagnostic`);
+  }
+  for (const event of forbiddenEvents) {
+    assert(!records.some((record) => record.event === event), `unexpected ${event} diagnostic`);
   }
   const failures = records.filter((record) => record.level === "error" ||
     /(?:failed|failure|protocol|lock)/u.test(String(record.event)));
@@ -113,10 +116,9 @@ try {
   assert(pair.observer.newSessionId === originalSessionId, "persisted room mapping does not match created ACP session");
   assert(matchingPrompts(pair, firstPrompt).length === 1, "initial prompt must reach ACP exactly once");
   assertCleanDiagnostics(pair, [
-    "completed-event-ledger-loaded",
     "completed-event-baseline-established",
     "startup-ready",
-  ]);
+  ], ["completed-event-ledger-loaded"]);
   await stopBridgePair(pair);
   pair = undefined;
 
