@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
 
+import { installLiveDecryptionFailureHandler } from "./decryption-failure-gate.mjs";
 import { createAdapter, readEnvironment, readToken } from "./lib.mjs";
 
 function argument(name) {
@@ -26,7 +27,7 @@ const exchange = new Promise((resolve, reject) => {
 const timer = setTimeout(() => rejectExchange(new Error("encrypted exchange timed out")), timeoutMs);
 
 adapter.onFatalError(() => rejectExchange(new Error("Matrix sender reported a fatal error")));
-adapter.onDecryptionFailure(() => rejectExchange(new Error("Matrix sender saw an undecryptable event")));
+const beginLiveExchange = installLiveDecryptionFailureHandler(adapter, rejectExchange);
 adapter.onSyncBatch((batch) => {
   // Initial history is not part of this exchange. Inspect only the normalized
   // timelines from later live batches.
@@ -63,6 +64,7 @@ function assertEncrypted(event, label) {
 
 try {
   await adapter.start();
+  beginLiveExchange();
   promptEvent = undefined;
   responseEvents.length = 0;
   process.stderr.write("Sender is ready; sending encrypted prompt.\n");
