@@ -155,6 +155,8 @@ export interface InboundMatrixEvent {
   readonly sender: MatrixUserId;
   readonly type: string;
   readonly content: Readonly<Record<string, unknown>>;
+  /** Matrix event origin timestamp in milliseconds, when supplied by the SDK. */
+  readonly originServerTs?: number;
   readonly isLive: boolean;
   /** True when the event came from the bounded restart catch-up response. */
   readonly isCatchUp?: boolean;
@@ -273,6 +275,7 @@ export interface MatrixFailureClassification {
 export interface MatrixSdkEventLike {
   getRoomId(): string | undefined;
   getId(): string | undefined;
+  getTs?(): number | undefined;
   getSender(): string | undefined;
   getType(): string;
   getContent(): unknown;
@@ -1992,12 +1995,24 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       }
     })();
 
+    const originServerTs = (() => {
+      try {
+        const timestamp = event.getTs?.();
+        return typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp >= 0
+          ? timestamp
+          : undefined;
+      } catch {
+        return;
+      }
+    })();
+
     return {
       roomId,
       eventId,
       sender,
       type,
       content: { ...content },
+      ...(originServerTs === undefined ? {} : { originServerTs }),
       isLive: context.isLive,
       ...(context.isCatchUp ? { isCatchUp: true } : {}),
       isRedacted: redacted,

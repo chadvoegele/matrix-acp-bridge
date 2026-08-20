@@ -920,7 +920,6 @@ export class BridgeCoordinator {
         // not an unresolved event that can remain in the completed-event ledger.
         this.#diagnostic("warn", "catch-up-event-omitted", {
           roomId,
-          eventId,
           reason: "room-queue-bound",
         });
         await this.#completeTerminal(terminalCompletion);

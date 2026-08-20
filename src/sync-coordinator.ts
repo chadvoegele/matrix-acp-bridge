@@ -71,6 +71,10 @@ function eligibleEvents(
         values.push(catchUp
           ? {
               ...event,
+              // Initial-sync events are history at the adapter boundary, but
+              // selected restart events are intentionally admitted through
+              // the ordinary live authorization path.
+              isLive: true,
               isCatchUp: true,
               timeline: {
                 phase: "incremental",
@@ -94,7 +98,6 @@ export class MatrixSyncCoordinator {
   readonly #clock: Clock;
   readonly #onFatal: (error: FatalError) => void;
   readonly #dispatchedEventIds = new Set<string>();
-  readonly #roomDispatchTails = new Map<string, Promise<void>>();
   #startupBatch = true;
   #handling = false;
   #inFlight: Promise<void> | undefined;
@@ -145,7 +148,10 @@ export class MatrixSyncCoordinator {
     try {
       for (const room of batch.rooms) {
         if (room.limited) {
-          emit(this.#diagnostics, "warn", "limited-matrix-timeline", { roomId: room.roomId });
+          emit(this.#diagnostics, "warn", "limited-matrix-timeline", {
+            roomId: room.roomId,
+            eventCount: room.timeline.length,
+          });
         }
       }
 
@@ -159,23 +165,13 @@ export class MatrixSyncCoordinator {
 
       if (this.#startupBatch && batch.phase === "initial") {
         if (!this.#stateStore.getSnapshot().initialized) {
-          const history = new Map<string, InboundMatrixEvent[]>(
-            [...eligible.entries()].map(([roomId, events]) => [
-              roomId,
-              events.filter((event) => !event.isLive),
-            ]),
-          );
-          const live = new Map<string, InboundMatrixEvent[]>(
-            [...eligible.entries()].map(([roomId, events]) => [
-              roomId,
-              events.filter((event) => event.isLive),
-            ]),
-          );
-          await this.#establishBaseline(history);
+          // The whole first response is the baseline.  Events that arrived
+          // while the SDK crossed PREPARED are still part of that response;
+          // opening live intake does not make them new prompts.
+          await this.#establishBaseline(eligible);
           emit(this.#diagnostics, "info", "completed-event-baseline-established");
           this.#bridge.openIntake();
           this.#bridge.enableDispatch();
-          this.#dispatchSelected(batch, live);
           this.#startupBatch = false;
           return;
         }
@@ -185,6 +181,8 @@ export class MatrixSyncCoordinator {
         const newlyTerminal: CompletedEventRoomInput[] = [];
         let selectedCount = 0;
         let omittedCount = 0;
+        const now = this.#clock.now();
+        const maxAgeMs = this.#config.limits.maxCatchupAgeSeconds * 1000;
         const selectedLimit = Math.min(
           this.#config.limits.maxCatchupEventsPerRoom,
           1 + this.#config.limits.maxQueuedTurnsPerRoom,
@@ -192,7 +190,12 @@ export class MatrixSyncCoordinator {
         for (const room of batch.rooms) {
           const events = (eligible.get(room.roomId) ?? []).filter((event) => event.eventId !== undefined);
           const unseen = events.filter((event) => !this.#stateStore.isEventCompleted(room.roomId, event.eventId!));
-          const keep = unseen.slice(Math.max(0, unseen.length - selectedLimit));
+          const tooOld = unseen.filter((event) => this.#isTooOld(event, now, maxAgeMs));
+          const recent = unseen.filter((event) => !this.#isTooOld(event, now, maxAgeMs));
+          // The initial timeline is ordered oldest to newest.  Keep the most
+          // recent bounded suffix, while dispatching that suffix in its
+          // original Matrix order.
+          const keep = recent.slice(Math.max(0, recent.length - selectedLimit));
           const keepIds = new Set(keep.map((event) => event.eventId));
           const omitted = unseen.filter((event) => !keepIds.has(event.eventId));
           selected.set(room.roomId, keep);
@@ -205,6 +208,11 @@ export class MatrixSyncCoordinator {
             emit(this.#diagnostics, "warn", "initial-sync-events-omitted", {
               roomId: room.roomId,
               omittedCount: omitted.length,
+              ageOmittedCount: tooOld.length,
+              countOmittedCount: omitted.length - tooOld.length,
+              reason: tooOld.length === omitted.length
+                ? "age"
+                : (tooOld.length === 0 ? "count" : "age-and-count"),
             });
           }
           selectedCount += keep.length;
@@ -255,7 +263,6 @@ export class MatrixSyncCoordinator {
     selected: ReadonlyMap<string, readonly InboundMatrixEvent[]>,
   ): void {
     for (const room of batch.rooms) {
-      let terminalTail = this.#roomDispatchTails.get(room.roomId) ?? Promise.resolve();
       const selectedById = new Map(
         (selected.get(room.roomId) ?? [])
           .filter((event): event is InboundMatrixEvent & { readonly eventId: string } => event.eventId !== undefined)
@@ -272,19 +279,24 @@ export class MatrixSyncCoordinator {
         if (selectedEvent === undefined) {
           continue;
         }
-        terminalTail = terminalTail.then(() => this.#dispatchEvent(selectedEvent));
+        // #dispatchEvent invokes the bridge synchronously before its first
+        // await. Calling each one directly admits the complete room batch to
+        // the bridge FIFO without serializing on ACP completion.
+        void this.#dispatchEvent(selectedEvent).catch(() => {});
       }
-      this.#roomDispatchTails.set(room.roomId, terminalTail);
-      void terminalTail.catch(() => {});
     }
   }
 
   async #dispatchEvent(event: InboundMatrixEvent): Promise<void> {
     const eventId = event.eventId;
-    if (eventId === undefined || this.#dispatchedEventIds.has(eventId)) {
+    if (eventId === undefined) {
       return;
     }
-    this.#rememberDispatched(eventId);
+    const dispatchKey = `${event.roomId}\u0000${eventId}`;
+    if (this.#dispatchedEventIds.has(dispatchKey)) {
+      return;
+    }
+    this.#rememberDispatched(event.roomId, eventId);
     let terminalCalled = false;
     const terminalCompletion: BridgeTerminalCompletion = async () => {
       terminalCalled = true;
@@ -318,8 +330,14 @@ export class MatrixSyncCoordinator {
     }));
   }
 
-  #rememberDispatched(eventId: string): void {
-    this.#dispatchedEventIds.add(eventId);
+  #isTooOld(event: InboundMatrixEvent, now: number, maxAgeMs: number): boolean {
+    const originServerTs = event.originServerTs;
+    return originServerTs !== undefined && Math.max(0, now - originServerTs) > maxAgeMs;
+  }
+
+  #rememberDispatched(roomId: string, eventId: string): void {
+    const key = `${roomId}\u0000${eventId}`;
+    this.#dispatchedEventIds.add(key);
     if (this.#dispatchedEventIds.size <= 10_000) {
       return;
     }

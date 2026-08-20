@@ -6,6 +6,7 @@ import test from "node:test";
 
 import type { BridgeConfig } from "./config.js";
 import { openBridgeStateStore } from "./bridge-state.js";
+import type { DiagnosticSink } from "./diagnostics.js";
 import type { InboundMatrixEvent, MatrixSyncBatch } from "./matrix-client.js";
 import { MatrixSyncCoordinator } from "./sync-coordinator.js";
 
@@ -39,7 +40,12 @@ const config: BridgeConfig = {
   },
 };
 
-function event(eventId: string, body = eventId, isLive = true): InboundMatrixEvent {
+function event(
+  eventId: string,
+  body = eventId,
+  isLive = true,
+  originServerTs?: number,
+): InboundMatrixEvent {
   return {
     roomId: ROOM,
     eventId,
@@ -47,6 +53,7 @@ function event(eventId: string, body = eventId, isLive = true): InboundMatrixEve
     type: "m.room.message",
     content: { msgtype: "m.text", body },
     isLive,
+    ...(originServerTs === undefined ? {} : { originServerTs }),
     isPlaintext: true,
     isDecrypted: true,
     isRedacted: false,
@@ -73,6 +80,11 @@ async function withStore(run: (stateDir: string) => Promise<void>): Promise<void
 function makeCoordinator(
   stateStore: Awaited<ReturnType<typeof openBridgeStateStore>>,
   received: InboundMatrixEvent[],
+  options: {
+    readonly config?: BridgeConfig;
+    readonly now?: number;
+    readonly diagnostics?: DiagnosticSink;
+  } = {},
 ) {
   const bridge = {
     opened: false,
@@ -89,11 +101,12 @@ function makeCoordinator(
     },
   };
   const coordinator = new MatrixSyncCoordinator({
-    config,
+    config: options.config ?? config,
     bridge,
     stateStore,
+    ...(options.diagnostics === undefined ? {} : { diagnostics: options.diagnostics }),
     clock: {
-      now: () => 1000,
+      now: () => options.now ?? 1000,
       setTimeout: () => null,
       clearTimeout: () => {},
     },
@@ -112,7 +125,7 @@ void test("first initial sync establishes a durable baseline and suppresses hist
     });
     const received: InboundMatrixEvent[] = [];
     const { coordinator, bridge } = makeCoordinator(stateStore, received);
-    await coordinator.handleBatch(batch("initial", [event("$history-one:example.org", "$history-one:example.org", false), event("$history-two:example.org", "$history-two:example.org", false)]));
+    await coordinator.handleBatch(batch("initial", [event("$history-one:example.org", "$history-one:example.org", true), event("$history-two:example.org", "$history-two:example.org", false)]));
     assert.deepEqual(received, []);
     assert.equal(bridge.opened, true);
     assert.equal(bridge.enabled, true);
@@ -120,6 +133,80 @@ void test("first initial sync establishes a durable baseline and suppresses hist
     assert.deepEqual(stateStore.getSnapshot().completedEventIds, {
       [ROOM]: ["$history-one:example.org", "$history-two:example.org"],
     });
+  });
+});
+
+void test("restart age policy terminally omits stale events and keeps fresh events in Matrix order", async () => {
+  await withStore(async (stateDir) => {
+    const identity = { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" } as const;
+    const firstStore = await openBridgeStateStore({ stateDir, identity });
+    await firstStore.establishInitialBaseline({ [ROOM]: ["$already-done:example.org"] });
+    const received: InboundMatrixEvent[] = [];
+    const records: Array<{ readonly event: string; readonly fields: Readonly<Record<string, string | number | boolean | null>> }> = [];
+    const { coordinator } = makeCoordinator(
+      await openBridgeStateStore({ stateDir, identity }),
+      received,
+      {
+        now: 2000,
+        config: { ...config, limits: { ...config.limits, maxCatchupAgeSeconds: 1 } },
+        diagnostics: {
+          emit: (_level, eventName, fields = {}) => records.push({ event: eventName, fields }),
+          debug() {},
+          info() {},
+          warn() {},
+          error() {},
+        },
+      },
+    );
+    await coordinator.handleBatch(batch("initial", [
+      event("$stale:example.org", "stale", false, 0),
+      event("$fresh:example.org", "fresh", false, 1500),
+    ]));
+    await coordinator.flush();
+
+    assert.deepEqual(received.map((input) => input.eventId), ["$fresh:example.org"]);
+    assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
+      [ROOM]: ["$stale:example.org", "$fresh:example.org"],
+    });
+    const omission = records.find(({ event: eventName }) => eventName === "initial-sync-events-omitted");
+    assert.deepEqual(omission?.fields, {
+      roomId: ROOM,
+      omittedCount: 1,
+      ageOmittedCount: 1,
+      countOmittedCount: 0,
+      reason: "age",
+    });
+    assert.equal(JSON.stringify(omission).includes("$stale:example.org"), false);
+  });
+});
+
+void test("limited initial timelines remain bounded and diagnostics contain counts, not event IDs", async () => {
+  await withStore(async (stateDir) => {
+    const stateStore = await openBridgeStateStore({
+      stateDir,
+      identity: { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" },
+    });
+    const received: InboundMatrixEvent[] = [];
+    const records: Array<{ readonly event: string; readonly fields: Readonly<Record<string, string | number | boolean | null>> }> = [];
+    const { coordinator } = makeCoordinator(stateStore, received, {
+      diagnostics: {
+        emit: (_level, eventName, fields = {}) => records.push({ event: eventName, fields }),
+        debug() {},
+        info() {},
+        warn() {},
+        error() {},
+      },
+    });
+    await coordinator.handleBatch({
+      ...batch("initial", [event("$limited-history:example.org", "history", false)]),
+      rooms: [{ roomId: ROOM, timeline: [event("$limited-history:example.org", "history", false)], limited: true }],
+    });
+    assert.deepEqual(received, []);
+    assert.deepEqual(records.find(({ event: eventName }) => eventName === "limited-matrix-timeline")?.fields, {
+      roomId: ROOM,
+      eventCount: 1,
+    });
+    assert.equal(JSON.stringify(records).includes("$limited-history:example.org"), false);
   });
 });
 

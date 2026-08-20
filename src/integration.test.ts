@@ -948,7 +948,7 @@ async function completeAbandonedPrompt(
   );
 }
 
-void test("integration suppresses first sync, buffers startup, delivers live text, and rejects self-loop input", async () => {
+void test("integration suppresses the complete first sync, delivers live text, and rejects self-loop input", async () => {
   const rig = createRig();
   const initial = sdkEvent({
     eventId: "$initial:example.org",
@@ -969,16 +969,18 @@ void test("integration suppresses first sync, buffers startup, delivers live tex
       { liveEvent: false },
     );
     rig.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "startup-cursor" });
-    // This is accepted by the Matrix adapter but remains buffered until the
-    // room and encryption checks finish and the lifecycle opens dispatch.
+    // This event is still part of the complete first batch and must join the
+    // durable baseline rather than becoming an ACP prompt.
     rig.matrixSdk.emitInbound(buffered);
   };
 
   const { run } = await startRig(rig);
   try {
-    await waitFor(() => rig.peer.prompts.length === 1, "startup-buffered ACP prompt");
-    assert.equal(rig.peer.prompts[0]?.text, "startup-buffered");
-    await completePrompt(rig, rig.peer.prompts[0], "buffered reply");
+    assert.equal(rig.peer.prompts.length, 0);
+    assert.deepEqual(
+      rig.batches[0]?.rooms[0]?.timeline.map((event) => event.eventId),
+      ["$initial:example.org", "$buffered:example.org"],
+    );
 
     const live = sdkEvent({ eventId: "$live:example.org", body: "live text" });
     const self = sdkEvent({
@@ -990,27 +992,24 @@ void test("integration suppresses first sync, buffers startup, delivers live tex
     rig.matrixSdk.emitInbound(self);
     rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "live-cursor" });
 
-    await waitFor(() => rig.peer.prompts.length === 2, "post-ready live ACP prompt");
-    assert.deepEqual(
-      rig.peer.prompts.map((prompt) => prompt.text),
-      ["startup-buffered", "live text"],
-    );
-    await completePrompt(rig, rig.peer.prompts[1]!, "live reply");
+    await waitFor(() => rig.peer.prompts.length === 1, "post-ready live ACP prompt");
+    assert.deepEqual(rig.peer.prompts.map((prompt) => prompt.text), ["live text"]);
+    await completePrompt(rig, rig.peer.prompts[0]!, "live reply");
 
-    const bufferedSend = rig.matrixSdk.sent.find(
-      (attempt) => attempt.content.body === "buffered reply",
+    const liveSend = rig.matrixSdk.sent.find(
+      (attempt) => attempt.content.body === "live reply",
     );
-    assert.ok(bufferedSend);
-    assert.equal(bufferedSend.roomId, ROOM_ONE);
-    assert.deepEqual(bufferedSend.content, {
+    assert.ok(liveSend);
+    assert.equal(liveSend.roomId, ROOM_ONE);
+    assert.deepEqual(liveSend.content, {
       msgtype: "m.text",
-      body: "buffered reply",
+      body: "live reply",
     });
     assert.equal(
-      bufferedSend.transactionId,
+      liveSend.transactionId,
       computeMatrixTransactionId({
         roomId: ROOM_ONE,
-        inboundEventId: "$buffered:example.org",
+        inboundEventId: "$live:example.org",
         responseKind: "agent",
         oneBasedPartNumber: 1,
       }),
@@ -1032,7 +1031,7 @@ void test("integration suppresses first sync, buffers startup, delivers live tex
         ((frame.params as Record<string, unknown> | undefined)?.prompt as Array<Record<string, unknown>> | undefined)?.[0]?.text === "live text",
     );
     assert.deepEqual(livePrompt?.params, {
-      sessionId: rig.peer.prompts[1]?.sessionId,
+      sessionId: rig.peer.prompts[0]?.sessionId,
       prompt: [{ type: "text", text: "live text" }],
     });
   } finally {
@@ -1188,9 +1187,7 @@ void test("integration reconnects Matrix, retries transient sends with one trans
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M2 scenario 1: the first run suppresses history and saves a cursor", async () => {
+void test("M2 scenario 1: the first run establishes a completed-ID baseline and restarts without replay", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m2-composition-"));
   const config: BridgeConfig = { ...CONFIG, stateDir };
   let first: IntegrationRig | undefined;
@@ -1221,12 +1218,19 @@ void test.skip("M2 scenario 1: the first run suppresses history and saves a curs
     await flushMany();
     assert.deepEqual(first.batches.map((batch) => batch.nextBatch), ["first-cursor", "live-cursor"]);
     const beforeStop = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
-    assert.equal(beforeStop.cursor, "live-cursor");
+    assert.equal(beforeStop.initialized, true);
+    assert.deepEqual(beforeStop.completedEventIds, {
+      [ROOM_ONE]: ["$initial-m2:example.org", "$live-m2:example.org"],
+    });
     await stopRig(first, firstRun);
     firstRun = undefined;
 
     const saved = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
-    assert.equal(saved.cursor, "live-cursor");
+    assert.equal(saved.initialized, true);
+    assert.deepEqual(saved.completedEventIds, {
+      [ROOM_ONE]: ["$initial-m2:example.org", "$live-m2:example.org"],
+    });
+    assert.equal(Object.hasOwn(saved, "cursor"), false);
     assert.deepEqual(saved.sessions, { [ROOM_ONE]: "session-1" });
 
     second = createRig(config, { advertiseLoadSession: true });
@@ -1263,9 +1267,7 @@ void test.skip("M2 scenario 1: the first run suppresses history and saves a curs
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M2 scenario 2: a short restart submits a bounded offline message to ACP", async () => {
+void test("M2 scenario 2: a short restart submits a bounded offline message through normal initial sync", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m2-short-restart-"));
   const config: BridgeConfig = { ...CONFIG, stateDir };
   let seed: IntegrationRig | undefined;
@@ -1292,14 +1294,18 @@ void test.skip("M2 scenario 2: a short restart submits a bounded offline message
     ({ run: restartRun } = await startRig(restart));
 
     assert.deepEqual(restart.matrixSdk.startupInitialSyncLimits, [100]);
-    assert.equal(restart.batches[0]?.phase, "incremental");
-    assert.equal(restart.batches[0]?.rooms[0]?.timeline[0]?.isCatchUp, true);
+    assert.equal(restart.batches[0]?.phase, "initial");
+    assert.equal(restart.batches[0]?.rooms[0]?.timeline[0]?.isCatchUp, false);
     await waitFor(() => restart!.peer.prompts.length === 1, "short restart ACP prompt");
     assert.equal(restart.peer.prompts[0]?.text, "bounded offline work");
     await completePrompt(restart, restart.peer.prompts[0], "offline response");
 
     const saved = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
-    assert.equal(saved.cursor, "after-outage");
+    assert.equal(saved.initialized, true);
+    assert.deepEqual(saved.completedEventIds, {
+      [ROOM_ONE]: ["$short-offline:example.org"],
+    });
+    assert.equal(Object.hasOwn(saved, "cursor"), false);
     assert.equal(restart.matrixSdk.sent.some((attempt) => attempt.content.body === "The room queue is full. Try again later."), false);
   } finally {
     if (seedRun !== undefined && seed !== undefined) {
@@ -1312,9 +1318,7 @@ void test.skip("M2 scenario 2: a short restart submits a bounded offline message
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M2 scenario 3: a long or high-volume interruption does not overwhelm ACP", async () => {
+void test("M2 scenario 3: a long or high-volume interruption stays within bounded initial sync recovery", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m2-bounded-"));
   const config: BridgeConfig = { ...CONFIG, stateDir };
   let seed: IntegrationRig | undefined;
@@ -1565,9 +1569,7 @@ void test("M2 scenario 6: typing spans only an active ACP turn", async () => {
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M2 scenario 7: receipts acknowledge eligible dispositions but not omitted catch-up events", async () => {
+void test("M2 scenario 7: receipts acknowledge selected dispositions but not omitted initial-sync events", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m2-receipts-"));
   const config: BridgeConfig = { ...CONFIG, stateDir };
   let seed: IntegrationRig | undefined;
@@ -1616,9 +1618,7 @@ void test.skip("M2 scenario 7: receipts acknowledge eligible dispositions but no
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M2 scenario 8: an interrupted event remains pending and is retried after restart", async () => {
+void test("M2 scenario 8: an interrupted event remains incomplete and is retried after restart", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m2-crash-boundary-"));
   const config: BridgeConfig = { ...CONFIG, stateDir };
   let crashed: IntegrationRig | undefined;
@@ -1649,16 +1649,10 @@ void test.skip("M2 scenario 8: an interrupted event remains pending and is retri
     await crashed.stateStore?.flush?.();
 
     const saved = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
-    assert.equal(saved.cursor, "crash-start");
-    assert.deepEqual(saved.pendingBatches, [{
-      fromCursor: "crash-start",
-      nextBatch: "crash-after-admission",
-      rooms: [{
-        roomId: ROOM_ONE,
-        eventIds: ["$lost-in-memory:example.org"],
-        completedEventIds: [],
-      }],
-    }]);
+    assert.equal(saved.initialized, true);
+    assert.deepEqual(saved.completedEventIds, {});
+    assert.equal(Object.hasOwn(saved, "cursor"), false);
+    assert.equal(Object.hasOwn(saved, "pendingBatches"), false);
     assert.deepEqual(saved.sessions, {});
 
     restart = createRig(config, { clockStartAt: 1000 });
@@ -1684,9 +1678,7 @@ void test.skip("M2 scenario 8: an interrupted event remains pending and is retri
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M2 scenario 9: completion is durable before a lost Matrix response and ACP is not replayed", async () => {
+void test("M2 scenario 9: completion precedes a lost Matrix response and ACP is not replayed", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m2-response-loss-"));
   const config: BridgeConfig = { ...CONFIG, stateDir };
   let first: IntegrationRig | undefined;
@@ -1719,14 +1711,20 @@ void test.skip("M2 scenario 9: completion is durable before a lost Matrix respon
     await waitFor(() => !first!.bridge.isRoomActive(ROOM_ONE), "response-loss bridge completion");
 
     const saved = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
-    assert.equal(saved.cursor, "response-loss-next");
-    assert.deepEqual(saved.pendingBatches, []);
+    assert.equal(saved.initialized, true);
+    assert.deepEqual(saved.completedEventIds, { [ROOM_ONE]: ["$response-loss:example.org"] });
+    assert.equal(Object.hasOwn(saved, "cursor"), false);
+    assert.equal(Object.hasOwn(saved, "pendingBatches"), false);
     assert.equal(first.matrixSdk.sent.some((attempt) => attempt.content.body === "lost response"), false);
     await stopRig(first, firstRun);
     firstRun = undefined;
 
     restart = createRig(config);
     restart.matrixSdk.startClientAction = () => {
+      restart!.matrixSdk.emitInbound(sdkEvent({
+        eventId: "$response-loss:example.org",
+        body: "response-loss prompt",
+      }));
       restart!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "response-loss-restart" });
     };
     ({ run: restartRun } = await startRig(restart));
@@ -1743,9 +1741,7 @@ void test.skip("M2 scenario 9: completion is durable before a lost Matrix respon
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M2 graceful shutdown flushes accepted recovery work before releasing the state lock", async () => {
+void test("M2 graceful shutdown flushes accepted completed-ID work before releasing the state lock", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m2-shutdown-"));
   const config: BridgeConfig = { ...CONFIG, stateDir };
   let releaseFlush!: () => void;
@@ -1782,16 +1778,12 @@ void test.skip("M2 graceful shutdown flushes accepted recovery work before relea
     run = undefined;
     assert.equal(rig.lock.released, true);
     const saved = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
-    assert.equal(saved.cursor, "startup-cursor");
-    assert.deepEqual(saved.pendingBatches, [{
-      fromCursor: "startup-cursor",
-      nextBatch: "shutdown-cursor",
-      rooms: [{
-        roomId: ROOM_ONE,
-        eventIds: ["$shutdown-checkpoint-m2:example.org"],
-        completedEventIds: [],
-      }],
-    }]);
+    assert.equal(saved.initialized, true);
+    assert.deepEqual(saved.completedEventIds, {
+      [ROOM_ONE]: ["$shutdown-checkpoint-m2:example.org"],
+    });
+    assert.equal(Object.hasOwn(saved, "cursor"), false);
+    assert.equal(Object.hasOwn(saved, "pendingBatches"), false);
   } finally {
     if (run !== undefined && rig !== undefined) {
       releaseFlush();
@@ -1885,9 +1877,7 @@ void test("M3 scenario 3: a live encrypted message reaches ACP once and gets an 
   }
 });
 
-// TEMPORARY CURSOR-ERA SCENARIO: reassigned to tt-recover-unseen-initial-sync-events-with-completed-ids
-// and tt-adapt-resilient-recovery-to-cursorless-startup for the cursorless restart contract.
-void test.skip("M3 scenario 4: a short restart restores the device and catches up one bounded encrypted event", async () => {
+void test("M3 scenario 4: a short restart restores the device and catches up one bounded encrypted event", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m3-restart-catchup-"));
   const config = requiredConfig(stateDir);
   const seedCrypto = new HermeticCrypto();
