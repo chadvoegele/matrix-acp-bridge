@@ -392,7 +392,7 @@ responses are permanent.
 ### Milestone 1
 
 State is in memory. Every process start suppresses initial-history events in
-the first cursor-bearing sync batch and accepts only later events, including
+the first normal initial-sync batch and accepts only later events, including
 those buffered during post-ready startup validation. It does not catch up
 messages sent while the bridge was stopped, resume ACP sessions, or promise
 delivery across a crash.
@@ -407,8 +407,8 @@ A duplicate cannot produce another diagnostic, prompt, or response.
 
 The durable `pending`/`claimed`/`replying`/`completed` inbox design that was
 formerly described here was superseded before implementation. The accepted M2
-contract is the smaller best-effort cursor, bounded catch-up, optional
-`session/load`, `/reset`, typing, receipt, and private-state design in
+contract is the smaller completed-ID ledger, bounded initial-sync recovery,
+optional `session/load`, `/reset`, typing, receipt, and private-state design in
 [spec/m2-persistence.md](m2-persistence.md). It does not provide durable event bodies, prompt replay,
 exactly-once delivery, or automatic history pagination.
 
@@ -525,10 +525,11 @@ operator action, not an automatic new-device fallback.
 
 ### Milestone 2 — accepted reliability and operator controls
 
-The accepted M2 scope is defined by [spec/m2-persistence.md](m2-persistence.md): private sync cursor,
-bounded best-effort offline catch-up, optional session restoration, `/reset`,
-typing, receipts, and explicit state diagnostics. Durable inbox delivery and
-automatic prompt/reply recovery remain deferred.
+The accepted M2 scope is defined by [spec/m2-persistence.md](m2-persistence.md):
+normal initial sync, a private completed-ID ledger, bounded best-effort offline
+recovery, optional session restoration, `/reset`, typing, receipts, and
+explicit state diagnostics. Durable inbox delivery and automatic prompt/reply
+recovery remain deferred.
 
 ### Milestone 3 — accepted required E2EE
 

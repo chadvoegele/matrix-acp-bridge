@@ -29,7 +29,7 @@ adapter.onFatalError(() => rejectExchange(new Error("Matrix sender reported a fa
 adapter.onDecryptionFailure(() => rejectExchange(new Error("Matrix sender saw an undecryptable event")));
 adapter.onSyncBatch((batch) => {
   // Initial history is not part of this exchange. Inspect only the normalized
-  // timelines from subsequent cursor-bearing batches.
+  // timelines from later live batches.
   if (batch.phase === "initial") return;
   for (const room of batch.rooms) {
     for (const event of room.timeline) {

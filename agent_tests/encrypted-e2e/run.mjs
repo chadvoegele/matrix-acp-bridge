@@ -18,8 +18,8 @@ const firstPrompt = `Reply with exactly: ${firstExpected}`;
 const secondExpected = `ENCRYPTED_E2E_OK_OK_${runId}`;
 const secondPrompt = `Reply with exactly: ${secondExpected}`;
 
-async function startPair(expectedPrompt) {
-  const counter = { total: 0, matching: 0 };
+async function startPair(expectedPrompt, suppressedPrompt) {
+  const counter = { total: 0, matching: 0, suppressed: 0 };
   const pair = await startBridgePair(environment, {
     onOutbound(message) {
       if (message?.method !== "session/prompt") return;
@@ -28,13 +28,11 @@ async function startPair(expectedPrompt) {
       if (Array.isArray(prompt) && prompt.some((part) => part?.type === "text" && part.text === expectedPrompt)) {
         counter.matching += 1;
       }
+      if (suppressedPrompt !== undefined && Array.isArray(prompt) && prompt.some((part) => part?.type === "text" && part.text === suppressedPrompt)) {
+        counter.suppressed += 1;
+      }
     },
   });
-  // Catch-up is complete at startup-ready. Count only the live prompt this
-  // test sends after readiness, not best-effort replay from an interrupted
-  // earlier invocation.
-  counter.total = 0;
-  counter.matching = 0;
   return { ...pair, counter };
 }
 
@@ -61,6 +59,7 @@ async function runSender(prompt, expected) {
       result.promptWireType !== "m.room.encrypted" || result.responseWireType !== "m.room.encrypted") {
     throw new Error("sender did not report a valid encrypted exchange");
   }
+  return result;
 }
 
 async function fingerprints() {
@@ -69,6 +68,21 @@ async function fingerprints() {
     throw new Error("bridge crypto manifest is not bootstrapped and SAS verified");
   }
   return [manifest.ed25519Fingerprint, manifest.curve25519Fingerprint];
+}
+
+async function bridgeState() {
+  return JSON.parse(await readFile(join(environment.bridge.stateDir, "bridge-state.json"), "utf8"));
+}
+
+function assertSchemaV12State(state, label) {
+  if (state.initialized !== true || Object.hasOwn(state, "cursor") || Object.hasOwn(state, "pendingBatches")) {
+    throw new Error(`${label} bridge state is not schema-v12 completed-ID state`);
+  }
+  const ids = state.completedEventIds?.[environment.roomId];
+  if (!Array.isArray(ids) || new Set(ids).size !== ids.length || ids.length > 100) {
+    throw new Error(`${label} completed-ID ledger is missing, duplicate, or unbounded`);
+  }
+  return ids;
 }
 
 async function assertNoTemporarySnapshot() {
@@ -91,19 +105,38 @@ try {
   process.stdout.write("Starting first encrypted exchange...\n");
   pair = await startPair(firstPrompt);
   process.stdout.write("Bridge is ready; starting sender...\n");
-  await runSender(firstPrompt, firstExpected);
+  const first = await runSender(firstPrompt, firstExpected);
+  if (pair.counter.matching !== 1 || pair.counter.suppressed !== 0) {
+    throw new Error(`first encrypted prompt count was matching=${pair.counter.matching}, suppressed=${pair.counter.suppressed}`);
+  }
+  const firstState = await bridgeState();
+  assertSchemaV12State(firstState, "first");
+  if (!firstState.completedEventIds[environment.roomId].includes(first.promptEventId)) {
+    throw new Error("first encrypted prompt was not recorded as completed");
+  }
   await stopPair(pair);
   pair = undefined;
   await assertNoTemporarySnapshot();
 
   process.stdout.write("Starting post-restart encrypted exchange...\n");
-  pair = await startPair(secondPrompt);
+  pair = await startPair(secondPrompt, firstPrompt);
   process.stdout.write("Restarted bridge is ready; starting sender...\n");
+  if (pair.counter.suppressed !== 0) {
+    throw new Error(`completed encrypted prompt was replayed ${pair.counter.suppressed} time(s) after restart`);
+  }
   const restoredFingerprints = await fingerprints();
   if (JSON.stringify(restoredFingerprints) !== JSON.stringify(originalFingerprints)) {
     throw new Error("bridge device fingerprints changed after restart");
   }
-  await runSender(secondPrompt, secondExpected);
+  const second = await runSender(secondPrompt, secondExpected);
+  if (pair.counter.matching !== 1 || pair.counter.suppressed !== 0) {
+    throw new Error(`second encrypted prompt count was matching=${pair.counter.matching}, suppressed=${pair.counter.suppressed}`);
+  }
+  const secondState = await bridgeState();
+  const completedIds = assertSchemaV12State(secondState, "second");
+  if (!completedIds.includes(second.promptEventId)) {
+    throw new Error("second encrypted prompt was not recorded as completed");
+  }
   await stopPair(pair);
   pair = undefined;
   await assertNoTemporarySnapshot();

@@ -250,8 +250,8 @@ After configuration validation and lock acquisition, required-mode startup is:
 3. call `whoami` and require the configured user and device IDs;
 4. compare the restored device public keys with the manifest;
 5. register listeners with bridge intake and ACP dispatch closed;
-6. start sync from the Milestone-2 cursor, if present;
-7. perform ordinary first-sync suppression or bounded restart catch-up;
+6. start the SDK's normal initial sync with the configured timeline limit;
+7. perform ordinary first-run suppression or bounded completed-ID recovery;
 8. query current configured-room membership and encryption state;
 9. require every configured room to be joined and encrypted; and
 10. open intake and ACP dispatch using the existing M2 ordering.
@@ -289,21 +289,23 @@ of encrypted events awaiting or completing decryption.
 
 ### Late decryption and catch-up
 
-M3 retains M2's best-effort checkpoint contract:
+M3 retains M2's best-effort completed-ID contract:
 
-- a sync cursor may advance while an encrypted event remains undecryptable;
+- the SDK may advance its in-process sync position while an encrypted event
+  remains undecryptable;
 - while the process remains alive, a live event that later decrypts
   successfully may be admitted once under the normal policy and queue limits;
-- a restart may lose such an unresolved event after its cursor was committed;
+- a restart may lose such an unresolved event after it was absent from the
+  completed-ID ledger;
   and
 - no ciphertext or pending-decryption record is persisted by bridge code.
 
-For the first incremental catch-up response, only events successfully decrypted
-by the time that sync batch is classified are candidates for M2's age and
-newest-event count selection. An unresolved event is omitted, receives no busy
-or error response, and is not admitted if it decrypts after startup catch-up
+For the first initialized initial-sync response, only events successfully
+decrypted by the time that batch is classified are candidates for M2's age and
+newest-event admission selection. An unresolved event is omitted, receives no
+busy or error response, and is not admitted if it decrypts after startup
 selection closes. Emit a metadata-only omission diagnostic. This preserves the
-bounded catch-up contract without retaining message ciphertext or extending
+bounded recovery contract without retaining message ciphertext or extending
 startup indefinitely.
 
 First-run history remains suppressed whether it is plaintext, ciphertext, or

@@ -84,9 +84,25 @@ max_concurrent_prompts = 4
 max_turn_seconds = 1800
 shutdown_grace_seconds = 30
 startup_timeout_seconds = 60
-max_catchup_age_seconds = 900
-max_catchup_events_per_room = 4
+initial_sync_timeline_limit = 100  # SDK initial-sync timeline per room
+max_catchup_age_seconds = 900      # age bound for unseen ACP admission
+max_catchup_events_per_room = 4     # unseen ACP admissions per room
 ```
+
+`initial_sync_timeline_limit` controls how much normal Matrix initial-sync
+history the SDK returns per room. It is not an age or ACP queue limit. The
+`max_catchup_*` settings apply only to unseen, eligible events selected from
+that returned timeline for ACP after an initialized bridge restarts; the
+ordinary queue and prompt limits remain separate.
+
+## Resetting bridge state
+
+This version does not migrate older cursor-based bridge state. Stop the
+daemon, preserve the required-mode crypto files, and move or remove only
+`bridge-state.json` before starting with the same configuration. The next
+normal initial sync establishes a fresh completed-event baseline and does not
+send its existing room history to ACP. Do not delete the Rust crypto database
+or `crypto-state.json` unless intentionally replacing the Matrix device.
 
 ## Encryption Setup
 

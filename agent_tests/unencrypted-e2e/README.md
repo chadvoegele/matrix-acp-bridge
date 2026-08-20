@@ -1,6 +1,6 @@
 # Unencrypted Matrix end-to-end test helpers
 
-These test-only programs provision bridge and sender devices on two existing Matrix accounts. They send two plaintext exchanges across a bridge restart and verify both wire events are `m.room.message`.
+These test-only programs provision bridge and sender devices on two existing Matrix accounts. They send two plaintext exchanges across a bridge restart, verify both wire events are `m.room.message`, and assert that the completed first prompt is suppressed by normal initial-sync recovery.
 
 Generated configuration and tokens live under ignored private paths.
 
@@ -44,13 +44,13 @@ Run the exact `/reset` control test:
 agent_tests/unencrypted-e2e/test-reset.sh
 ```
 
-Run the required early-cursor replay recovery test:
+Run the required completed-ID recovery test:
 
 ```sh
 npm run test:recovery
 ```
 
-This command invokes `agent_tests/unencrypted-e2e/early-cursor-event-replay-test.sh`.
+This command invokes `agent_tests/unencrypted-e2e/completed-id-recovery-test.sh`.
 
 Each entry point installs dependencies, runs checks, provisions two devices, runs its exchanges, deletes test-created ACP sessions, revokes both devices, and removes local private state. Matrix room events remain.
 
@@ -60,8 +60,8 @@ The `/reset` test records both observed ACP session IDs in ignored private state
 
 The stronger persistence entry point sends a memory turn, stops both bridge and
 ACP proxy, sends a second Matrix event while they are down, and verifies that
-restart catch-up loads the original ACP session and returns the remembered
-value exactly:
+normal initial-sync recovery loads the original ACP session and returns the
+remembered value exactly:
 
 ```sh
 agent_tests/unencrypted-e2e/restart-persistence-test.sh
@@ -69,25 +69,26 @@ agent_tests/unencrypted-e2e/restart-persistence-test.sh
 
 The real ACP endpoint must advertise `loadSession`. The test observes the ACP
 NDJSON stream to assert `session/new`, `session/load`, and `session/prompt`
-counts and ordering without changing protocol frames. It also checks the saved
-cursor and room mapping before and after restart. See
+counts and ordering without changing protocol frames. It checks that the
+completed-ID ledger suppresses the prior prompt, that the offline prompt is
+admitted once, and that state remains bounded and free of legacy fields. See
 [`../test_restart_persistence/README.md`](../test_restart_persistence/README.md)
 for the full contract.
 
-## Early-cursor replay test
+## Completed-ID recovery test
 
-The recovery test sends two events while the bridge is stopped, completes the
-first while holding the second before ACP, then kills and restarts the bridge
-from a deterministic early-cursor fixture. The fixture reads the current
-eligible event IDs from the bridge's original cursor, using the held event as
-the explicit completed-ID boundary. A live FIFO probe proves the per-room
-completed prefix suppresses the first event instead of replaying it:
+The recovery test establishes a normal initial-sync baseline, completes one
+prompt, sends another while the bridge is stopped, and holds that unseen event
+before ACP. It then interrupts the process and restarts normally. The
+completed ID is suppressed, while the incomplete ID is retried once and
+completed before its Matrix response. The final state is bounded and contains
+only structural event IDs:
 
 ```sh
-agent_tests/unencrypted-e2e/early-cursor-event-replay-test.sh
+agent_tests/unencrypted-e2e/completed-id-recovery-test.sh
 ```
 
-See [`../test_early_cursor_event_replay/README.md`](../test_early_cursor_event_replay/README.md)
+See [`../test_completed_id_recovery/README.md`](../test_completed_id_recovery/README.md)
 for the full contract.
 
 ## Retained setup for debugging

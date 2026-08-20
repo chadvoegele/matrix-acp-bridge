@@ -2,7 +2,7 @@
 
 Date: 2026-08-19
 
-Status: Root cause identified; fix not yet applied.
+Status: Resolved by normal initial-sync completed-ID recovery.
 
 ## Summary
 
@@ -119,19 +119,21 @@ This reproduction requires a plaintext Matrix room, a bridge account, a sender a
 
 ### Expected behavior after the fix
 
-The first post-restart request must contain:
+Every process start uses the SDK's normal initial sync with the configured
+timeline limit. On the first run, eligible history is committed as a
+completed-ID baseline and is not sent to ACP. On later starts, IDs already in
+that ledger are suppressed; unseen eligible IDs are bounded by event age,
+per-room admission count, and the ordinary ACP queue capacity. A terminal
+completion is persisted before its Matrix response, while an interrupted turn
+remains eligible for retry.
 
-```text
-/sync?since=<persisted-cursor>
-```
+## Resolution
 
-Only events after that cursor may enter catch-up. If no messages arrived while the bridge was stopped, no old prompt should reach ACP.
-
-## Corrective actions
-
-1. Make the default factory inject the bridge cursor through the SDK store's one-shot `getSavedSyncToken()` path.
-2. Stop modeling `since` as an option supported by the real SDK `startClient()` API.
-3. Add a real-SDK startup test that asserts the first `/sync` query contains the saved cursor.
-4. Add an assertion to restart E2E tests that no previously completed prompt reaches ACP again.
-5. Run the early-cursor replay test in CI or make it part of the documented required recovery suite.
-6. Add diagnostics or request-level test instrumentation that distinguishes initial sync from cursor-based sync.
+The bridge now uses schema-v12 state containing only the initialized marker,
+ACP session mappings, and bounded per-room completed event IDs. The SDK's
+normal initial-sync timeline is the recovery input, so the adapter cannot
+misclassify an initial response as cursor-based catch-up. The restart,
+plaintext, encrypted, and required `npm run test:recovery` harnesses assert
+that completed IDs are not submitted to ACP again and that state contains no
+legacy cursor fields. Older state is intentionally reset by the operator; no
+migration code was added.

@@ -4,10 +4,10 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
+  parseDiagnostics,
   runSender as runSenderProcess,
   startBridgePair,
   stopBridgePair,
-  parseDiagnostics,
   waitFor,
 } from "../e2e-support/acp.mjs";
 import {
@@ -19,15 +19,18 @@ import { defaultEnvironmentPath, readEnvironment, testDir } from "./lib.mjs";
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const runId = randomBytes(12).toString("hex").toUpperCase();
-const offlineCorrelation = randomBytes(12).toString("hex").toUpperCase();
 const rememberedValue = `MATRIX_RESTART_MEMORY_${runId}`;
-const acknowledgement = `MATRIX_RESTART_ACK_${runId}`;
-const firstPrompt = `Remember this exact value for a later turn: ${rememberedValue}. Do not include the value in your response. Reply with exactly: ${acknowledgement}`;
-const offlinePrompt = `For correlation ${offlineCorrelation}, return only the exact value I asked you to remember in the previous turn. Do not add punctuation, formatting, or explanation.`;
+const firstAcknowledgement = `MATRIX_RESTART_ACK_${runId}`;
+const firstPrompt = `Remember this exact value for a later turn: ${rememberedValue}. Do not include the value in your response. Reply with exactly: ${firstAcknowledgement}`;
+const offlinePrompt = `Return only the exact value I asked you to remember in the previous turn for run ${runId}.`;
 const statePath = join(environment.bridge.stateDir, "bridge-state.json");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function readState() {
+  return JSON.parse(await readFile(statePath, "utf8"));
 }
 
 async function startPair() {
@@ -37,14 +40,6 @@ async function startPair() {
     onInbound: observer.inbound,
   });
   return { ...pair, observer };
-}
-
-async function stopPair(pair) {
-  await stopBridgePair(pair);
-}
-
-async function readState() {
-  return JSON.parse(await readFile(statePath, "utf8"));
 }
 
 async function runSender(arguments_) {
@@ -65,58 +60,72 @@ function promptText(request) {
   return Array.isArray(parts) ? parts.find((part) => part?.type === "text")?.text : undefined;
 }
 
+function assertSchemaV12State(state, label) {
+  assert(state.initialized === true, `${label} state is not initialized`);
+  assert(Object.hasOwn(state, "cursor") === false, `${label} state contains a legacy cursor`);
+  assert(Object.hasOwn(state, "pendingBatches") === false, `${label} state contains legacy pending batches`);
+  assert(state.completedEventIds !== null && typeof state.completedEventIds === "object",
+    `${label} state has no completed-event ledger`);
+  for (const ids of Object.values(state.completedEventIds)) {
+    assert(Array.isArray(ids) && new Set(ids).size === ids.length,
+      `${label} completed-event ledger is not unique`);
+  }
+}
+
 function assertCleanDiagnostics(pair, requiredEvents) {
   const records = parseDiagnostics(pair.bridgeDiagnostics());
-  for (const event of requiredEvents) assert(records.some((record) => record.event === event), `missing ${event} diagnostic`);
-  const verified = records.findIndex((record) => record.event === "saved-sync-token-verified");
-  const catchup = records.findIndex((record) => record.event === "catch-up-started");
-  if (requiredEvents.includes("saved-sync-token-verified") && requiredEvents.includes("catch-up-started")) {
-    assert(verified !== -1 && catchup !== -1 && verified < catchup,
-      "saved-token verification must precede restart catch-up");
+  for (const event of requiredEvents) {
+    assert(records.some((record) => record.event === event), `missing ${event} diagnostic`);
   }
   const failures = records.filter((record) => record.level === "error" ||
     /(?:failed|failure|protocol|lock)/u.test(String(record.event)));
-  assert(failures.length === 0, `unexpected bridge diagnostics: ${failures.map((record) => record.event).join(", ")}`);
+  assert(failures.length === 0,
+    `unexpected bridge diagnostics: ${failures.map((record) => record.event).join(", ")}`);
   assert(!/(?:private bridge state failure|state-checkpoint-failure|state-lock|acp[_ -]protocol)/iu.test(pair.bridgeDiagnostics()),
     "bridge stderr reported a state, lock, or ACP protocol failure");
 }
 
+function matchingPrompts(pair, text) {
+  return requests(pair, "session/prompt").filter((request) => promptText(request) === text);
+}
+
 let pair;
 try {
-  process.stdout.write("Starting initial bridge/ACP pair and memory turn...\n");
+  process.stdout.write("Starting normal initial sync and first memory turn...\n");
   pair = await startPair();
   assert(pair.observer.loadSession === true,
     "restart-persistence prerequisite failed: the configured ACP agent does not advertise loadSession");
-  const firstExchange = await runSender(["--prompt", firstPrompt, "--expect", acknowledgement]);
+  const firstExchange = await runSender(["--prompt", firstPrompt, "--expect", firstAcknowledgement]);
   assert(firstExchange.event === "exchange-complete" && firstExchange.responseCount === 1,
     "initial exchange did not produce exactly one response");
   await waitFor(async () => {
     try {
       const state = await readState();
-      return typeof state.cursor === "string" && typeof state.sessions?.[environment.roomId] === "string";
+      return state.initialized === true && typeof state.sessions?.[environment.roomId] === "string";
     } catch { return false; }
-  }, "initial cursor and room mapping persistence", 30_000, pair);
+  }, "initial completed-ID state and room mapping", 30_000, pair);
   const firstState = await readState();
+  assertSchemaV12State(firstState, "initial");
   const originalSessionId = firstState.sessions[environment.roomId];
+  assert(firstState.completedEventIds[environment.roomId]?.includes(firstExchange.promptEventId),
+    "the first prompt was not durably completed");
   assert(requests(pair, "session/new").length === 1, "first run must issue exactly one session/new");
   assert(pair.observer.newSessionId === originalSessionId, "persisted room mapping does not match created ACP session");
-  const firstPrompts = requests(pair, "session/prompt").filter((request) => promptText(request) === firstPrompt);
-  assert(firstPrompts.length === 1, "initial prompt must reach ACP exactly once");
-  assert(firstPrompts[0].params?.sessionId === originalSessionId, "initial prompt used the wrong ACP session");
-  assert(pair.observer.stateAtPrompts[0]?.sessions?.[environment.roomId] === originalSessionId,
-    "room mapping was not persisted before the initial prompt");
-  assert(requests(pair, "session/new")[0].sequence < firstPrompts[0].sequence,
-    "session/new must precede the initial prompt");
-  assertCleanDiagnostics(pair, ["startup-ready", "first-cursor-established"]);
-  await stopPair(pair);
+  assert(matchingPrompts(pair, firstPrompt).length === 1, "initial prompt must reach ACP exactly once");
+  assertCleanDiagnostics(pair, [
+    "completed-event-ledger-loaded",
+    "completed-event-baseline-established",
+    "startup-ready",
+  ]);
+  await stopBridgePair(pair);
   pair = undefined;
 
-  process.stdout.write("Bridge is stopped; sending the offline Matrix event...\n");
+  process.stdout.write("Bridge is stopped; sending one offline Matrix event...\n");
   const offline = await runSender(["--mode", "send-only", "--prompt", offlinePrompt]);
   assert(offline.event === "prompt-sent" && offline.promptWireType === "m.room.message",
     "offline prompt was not sent as a top-level plaintext m.room.message");
 
-  process.stdout.write("Restarting bridge/ACP pair from the saved cursor and session...\n");
+  process.stdout.write("Restarting with normal initial sync and the completed-ID ledger...\n");
   pair = await startPair();
   assert(pair.observer.loadSession === true,
     "restart-persistence prerequisite failed: the configured ACP agent no longer advertises loadSession");
@@ -128,35 +137,45 @@ try {
     "Matrix did not receive exactly one response to the offline event");
   assert(watched.responseWireType === "m.room.message",
     "offline response was not a top-level plaintext m.room.message");
-  await waitFor(() => requests(pair, "session/prompt").some((request) => promptText(request) === offlinePrompt),
-    "caught-up ACP prompt", 30_000, pair);
+  await waitFor(() => matchingPrompts(pair, offlinePrompt).length === 1,
+    "one caught-up ACP prompt", 30_000, pair);
   await waitFor(() => pair.observer.loadOutcome !== undefined, "session/load response", 30_000, pair);
+
   const loads = requests(pair, "session/load");
   const news = requests(pair, "session/new");
-  const caughtUp = requests(pair, "session/prompt").filter((request) => promptText(request) === offlinePrompt);
-  process.stdout.write(`Restart ACP counts: session/load=${loads.length}, load-outcome=${pair.observer.loadOutcome.kind}, session/new=${news.length}, caught-up session/prompt=${caughtUp.length}.\n`);
+  const caughtUp = matchingPrompts(pair, offlinePrompt);
+  const replayedCompleted = matchingPrompts(pair, firstPrompt);
   assert(loads.length === 1, `restart must issue exactly one session/load (observed ${loads.length})`);
   assert(loads[0].params?.sessionId === originalSessionId, "restart loaded a different ACP session");
   assert(pair.observer.loadOutcome.kind === "success", describeLoadFailure(pair.observer.loadOutcome));
-  assert(news.length === 0, `restart issued ${news.length} replacement session/new request(s) after confirmed successful load`);
-  assert(caughtUp.length === 1, `offline Matrix event must reach session/prompt exactly once (observed ${caughtUp.length})`);
-  assert(caughtUp[0].params?.sessionId === originalSessionId, "caught-up prompt did not use the loaded session ID");
+  assert(news.length === 0, `restart issued ${news.length} replacement session/new request(s)`);
+  assert(caughtUp.length === 1, `offline Matrix event must reach ACP exactly once (observed ${caughtUp.length})`);
+  assert(replayedCompleted.length === 0, "completed initial-sync event was submitted to ACP again");
   assert(loads[0].sequence < caughtUp[0].sequence, "session/load must precede the caught-up prompt");
+
   await waitFor(async () => {
     const state = await readState();
-    return state.cursor !== firstState.cursor;
-  },
-    "saved cursor advancement across restart", 30_000, pair);
+    return state.completedEventIds?.[environment.roomId]?.includes(offline.promptEventId) === true;
+  }, "offline event completion", 30_000, pair);
   const restartState = await readState();
+  assertSchemaV12State(restartState, "restart");
   assert(restartState.sessions?.[environment.roomId] === originalSessionId,
     "room mapping did not remain on the loaded ACP session");
-  assertCleanDiagnostics(pair, ["saved-cursor-loaded", "saved-sync-token-verified", "catch-up-started", "catch-up-finished", "startup-ready"]);
-  await stopPair(pair);
+  const completedIds = restartState.completedEventIds[environment.roomId] ?? [];
+  assert(completedIds.includes(firstExchange.promptEventId), "completed first ID was compacted before suppression");
+  assert(completedIds.includes(offline.promptEventId), "offline ID was not retained after completion");
+  assert(completedIds.length <= 100, `completed-ID ledger exceeded initial-sync bound: ${completedIds.length}`);
+  assertCleanDiagnostics(pair, [
+    "completed-event-ledger-loaded",
+    "initial-sync-recovery-finished",
+    "startup-ready",
+  ]);
+  await stopBridgePair(pair);
   pair = undefined;
-  process.stdout.write("Restart-persistence Matrix E2E test passed.\n");
+  process.stdout.write("Restart-persistence Matrix E2E test passed with normal initial-sync recovery.\n");
 } finally {
   if (pair !== undefined) {
-    await stopPair(pair).catch(() => {
+    await stopBridgePair(pair).catch(() => {
       pair.bridge.kill("SIGKILL");
       pair.acp.kill("SIGKILL");
     });
