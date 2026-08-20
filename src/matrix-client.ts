@@ -2269,9 +2269,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         ? transientFailure()
         : permanentFailure();
     }
-    if (this.#isSavedCursorRejection(error)) {
-      return permanentFailure();
-    }
     return classifyMatrixError(error);
   }
 
@@ -2398,7 +2395,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     ) {
       this.#handleStartupOrRuntimeFailure(new MatrixAdapterError(
         "start",
-        "Matrix sync response did not establish a cursor",
+        "Matrix sync response did not establish a next sync token",
         permanentFailure(),
       ));
       return;

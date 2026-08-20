@@ -1262,6 +1262,21 @@ void test("fails startup when the initial sync response has no next token", asyn
   assert.equal(fake.stopCalls, 1);
 });
 
+void test("treats a malformed runtime sync boundary as fatal", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const fatal: FatalErrorRecord[] = [];
+  adapter.onFatalError((error) => fatal.push(error));
+  await adapter.start();
+
+  fake.emit(SDK_SYNC, "SYNCING", "SYNCING", {});
+  assert.deepEqual(fatal, [{
+    code: "matrix_transport",
+    message: "Matrix sync response did not establish a next sync token",
+  }]);
+  await adapter.stop();
+});
+
 void test("requires every configured room to be joined and unencrypted", async () => {
   for (const [configuredRoom, expected] of [
     [null, /is not joined/u],
@@ -1598,6 +1613,12 @@ void test("runtime transient failures, including repeated SDK error states, pres
     "matrix-reconnect-retry",
     "matrix-connection-restored",
   ]);
+  const diagnosticText = JSON.stringify(records);
+  assert.equal(diagnosticText.includes("https://"), false);
+  assert.equal(diagnosticText.includes("recovered-cursor"), false);
+  assert.equal(diagnosticText.includes("$recovered"), false);
+  assert.equal(diagnosticText.includes("temporary"), false);
+  assert.equal(diagnosticText.includes("Error"), false);
   assert.equal(records.at(-1)?.fields.failureCount, 3);
   await adapter.stop();
   assert.equal(fake.stopCalls, 1);
@@ -1608,13 +1629,15 @@ void test("does not clear an outage when another failure arrives during durable 
   const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
   let releaseBatch: (() => void) | undefined;
   let batchStarted: (() => void) | undefined;
+  let batchCount = 0;
   const batchEntered = new Promise<void>((resolve) => { batchStarted = resolve; });
   const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
     client: fake,
     diagnostics: captureDiagnostics(records),
   });
-  adapter.onSyncBatch(async (batch) => {
-    if (batch.nextBatch === "first-recovery") {
+  adapter.onSyncBatch(async () => {
+    batchCount += 1;
+    if (batchCount === 2) {
       batchStarted?.();
       await new Promise<void>((resolve) => { releaseBatch = resolve; });
     }
