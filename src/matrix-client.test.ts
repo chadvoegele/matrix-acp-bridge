@@ -1407,17 +1407,14 @@ void test("exposes reconnect state without taking over SDK backoff and shuts dow
   const fake = readyClient();
   const adapter = adapterFor(fake);
   const states: string[] = [];
-  const reconnects: string[] = [];
   const fatal: FatalErrorRecord[] = [];
   adapter.onSyncState((change) => states.push(change.state));
-  adapter.onReconnect((change) => reconnects.push(change.state));
   adapter.onFatalError((error) => fatal.push(error));
   await adapter.start();
 
   fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING");
   fake.emit(SDK_SYNC, "CATCHUP", "RECONNECTING");
   assert.deepEqual(states, ["PREPARED", "RECONNECTING", "CATCHUP"]);
-  assert.deepEqual(reconnects, ["RECONNECTING"]);
   assert.deepEqual(fatal, []);
 
   adapter.stopIntake();

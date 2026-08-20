@@ -300,7 +300,6 @@ export interface MatrixSdkRoomLike {
 }
 
 export interface MatrixSdkStoreLike {
-  getSyncToken?(): string | null;
   setSyncToken?(token: string): void;
   getSavedSync?(): Promise<unknown>;
   getSavedSyncToken?(): Promise<string | null>;
@@ -308,7 +307,7 @@ export interface MatrixSdkStoreLike {
   getStartupTokenObservation?(): MatrixSyncTokenObservation;
 }
 
-export interface MatrixSyncTokenObservation {
+interface MatrixSyncTokenObservation {
   readonly consulted: boolean;
   readonly value: string | null | undefined;
 }
@@ -1487,16 +1486,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   onSyncBatch(listener: MatrixSyncBatchListener): Unsubscribe {
     this.#syncBatchListeners.add(listener);
     return () => unsubscribeFrom(this.#syncBatchListeners, listener);
-  }
-
-  /** Convenience subscription for the SDK's nonfatal reconnect transition. */
-  onReconnect(listener: MatrixSyncStateListener): Unsubscribe {
-    const wrapped: MatrixSyncStateListener = (change) => {
-      if (change.state === "RECONNECTING") {
-        listener(change);
-      }
-    };
-    return this.onSyncState(wrapped);
   }
 
   onFatalError(listener: FatalErrorListener): Unsubscribe {

@@ -11,6 +11,7 @@
     "build": "npm run clean && tsc --pretty false",
     "typecheck": "tsc -p tsconfig.test.json --noEmit --pretty false",
     "test": "npm run build && tsc -p tsconfig.test.json --pretty false && node --test dist-test/*.test.js agent_tests/e2e-support/*.test.mjs",
+    "test:recovery": "agent_tests/unencrypted-e2e/early-cursor-event-replay-test.sh",
     "lint": "eslint .",
     "check": "npm run lint && npm run typecheck && npm test",
     "start": "node dist/main.js"

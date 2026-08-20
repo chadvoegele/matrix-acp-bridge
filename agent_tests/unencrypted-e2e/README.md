@@ -44,11 +44,13 @@ Run the exact `/reset` control test:
 agent_tests/unencrypted-e2e/test-reset.sh
 ```
 
-Run the early-cursor replay recovery test:
+Run the required early-cursor replay recovery test:
 
 ```sh
-agent_tests/unencrypted-e2e/early-cursor-event-replay-test.sh
+npm run test:recovery
 ```
+
+This command invokes `agent_tests/unencrypted-e2e/early-cursor-event-replay-test.sh`.
 
 Each entry point installs dependencies, runs checks, provisions two devices, runs its exchanges, deletes test-created ACP sessions, revokes both devices, and removes local private state. Matrix room events remain.
 
