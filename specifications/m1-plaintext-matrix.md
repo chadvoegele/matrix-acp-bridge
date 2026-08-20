@@ -37,7 +37,7 @@ allowing bounded concurrency between room sessions.
 
 ACP v2 and non-stdio transports are out of scope until deliberately adopted.
 Milestone 1 supports Node.js 22 through 26 (`>=22 <27`),
-`@agentclientprotocol/sdk` 1.3.0, and `matrix-js-sdk` 42.0.0. Package manifests
+`@agentclientprotocol/sdk` 1.3.0, and `matrix-js-sdk` 42.2.0. Package manifests
 use exact versions without ranges, the lockfile is committed, and automated
 installs use the frozen lockfile. ACP initialization must negotiate protocol version 1 exactly.
 

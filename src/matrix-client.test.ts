@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createClient as createMatrixSdkClient,
+  MemoryStore as MatrixSdkMemoryStore,
+} from "matrix-js-sdk";
+import {
   MatrixAdapterError,
   MatrixClientAdapterImpl,
   CursorAwareMatrixStore,
@@ -508,6 +512,11 @@ void test("cursor-aware store keeps SDK state in memory and exposes no cached sy
     value: "checkpoint-S1",
   });
   assert.equal(await store.getSavedSync(), null);
+});
+
+void test("uses the Matrix SDK public client and MemoryStore exports", () => {
+  assert.equal(typeof createMatrixSdkClient, "function");
+  assert.equal(Object.getPrototypeOf(CursorAwareMatrixStore.prototype), MatrixSdkMemoryStore.prototype);
 });
 
 void test("loads the pinned Matrix SDK through the default factory under strict ESM", async () => {

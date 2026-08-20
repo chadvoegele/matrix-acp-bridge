@@ -1,6 +1,9 @@
-import { register } from "node:module";
-
-import { calculateRetryBackoff } from "matrix-js-sdk/lib/http-api/utils.js";
+import {
+  calculateRetryBackoff,
+  createClient,
+  MemoryStore,
+} from "matrix-js-sdk";
+import { logger as matrixSdkRootLogger } from "matrix-js-sdk/lib/logger.js";
 import {
   classifyCryptoFailure,
   SAS_VERIFICATION_METHOD,
@@ -21,12 +24,6 @@ import type {
 } from "./crypto-contracts.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
-
-// The pinned SDK has extensionless internal imports. Register the repository's
-// narrow resolver before loading its public module so the store subclass uses
-// the exact exported MemoryStore class without patching node_modules.
-register("./matrix-sdk-loader.js", import.meta.url);
-const { MemoryStore } = await import("matrix-js-sdk");
 
 export type { BridgeConfig, MatrixConfig } from "./config.js";
 export type { FatalError, FatalErrorListener } from "./diagnostics.js";
@@ -430,22 +427,6 @@ const SDK_EVENT_TYPES = {
   roomEncryption: "m.room.encryption",
   roomMember: "m.room.member",
 } as const;
-
-let matrixSdkLoaderRegistered = true;
-
-function ensureMatrixSdkLoader(): void {
-  if (matrixSdkLoaderRegistered) {
-    return;
-  }
-  register("./matrix-sdk-loader.js", import.meta.url);
-  matrixSdkLoaderRegistered = true;
-}
-
-async function loadMatrixSdk(): Promise<typeof import("matrix-js-sdk")> {
-  ensureMatrixSdkLoader();
-  await silenceMatrixSdkRootLogger();
-  return import("matrix-js-sdk");
-}
 
 export interface MatrixClientAdapterOptions {
   /** Replace the SDK factory with a hermetic fake in tests. */
@@ -972,12 +953,11 @@ interface MatrixSdkRootLogger extends MatrixSdkLogger {
   setLevel(level: "silent", persist?: boolean): void;
 }
 
-async function silenceMatrixSdkRootLogger(): Promise<void> {
+function silenceMatrixSdkRootLogger(): void {
   // MatrixRTC's static helpers import this logger directly instead of using
-  // the logger supplied to MatrixClient. Configure it before loading the
-  // public SDK so module-level child loggers are silent too.
-  const loggerModule = await import("matrix-js-sdk/lib/logger.js");
-  const rootLogger = loggerModule.logger as unknown as MatrixSdkRootLogger;
+  // the logger supplied to MatrixClient. Configure it before creating the
+  // client so module-level child loggers are silent too.
+  const rootLogger = matrixSdkRootLogger as unknown as MatrixSdkRootLogger;
   rootLogger.setLevel("silent", false);
   rootLogger.getChild = () => silentMatrixSdkLogger;
 }
@@ -1148,8 +1128,9 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
       return client;
     }
     if (loading === undefined) {
-      loading = loadMatrixSdk().then((sdk) => {
-        client = sdk.createClient({
+      loading = Promise.resolve().then(() => {
+        silenceMatrixSdkRootLogger();
+        client = createClient({
           baseUrl: options.baseUrl,
           accessToken: options.accessToken,
           userId: options.userId,

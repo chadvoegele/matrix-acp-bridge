@@ -168,4 +168,4 @@ The tests must exercise the production Matrix adapter and SDK retry path, not on
 - [Cursor-aware Matrix SDK store for restart recovery](cursor-aware-matrix-store.md)
 - `src/matrix-client.ts`
 - `src/main.ts`
-- matrix-js-sdk 42.0.0 `SyncApi`
+- matrix-js-sdk 42.2.0 `SyncApi`
