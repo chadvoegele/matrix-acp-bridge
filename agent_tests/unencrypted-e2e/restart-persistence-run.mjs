@@ -68,6 +68,12 @@ function promptText(request) {
 function assertCleanDiagnostics(pair, requiredEvents) {
   const records = parseDiagnostics(pair.bridgeDiagnostics());
   for (const event of requiredEvents) assert(records.some((record) => record.event === event), `missing ${event} diagnostic`);
+  const verified = records.findIndex((record) => record.event === "saved-sync-token-verified");
+  const catchup = records.findIndex((record) => record.event === "catch-up-started");
+  if (requiredEvents.includes("saved-sync-token-verified") && requiredEvents.includes("catch-up-started")) {
+    assert(verified !== -1 && catchup !== -1 && verified < catchup,
+      "saved-token verification must precede restart catch-up");
+  }
   const failures = records.filter((record) => record.level === "error" ||
     /(?:failed|failure|protocol|lock)/u.test(String(record.event)));
   assert(failures.length === 0, `unexpected bridge diagnostics: ${failures.map((record) => record.event).join(", ")}`);
@@ -144,7 +150,7 @@ try {
   const restartState = await readState();
   assert(restartState.sessions?.[environment.roomId] === originalSessionId,
     "room mapping did not remain on the loaded ACP session");
-  assertCleanDiagnostics(pair, ["saved-cursor-loaded", "catch-up-started", "catch-up-finished", "startup-ready"]);
+  assertCleanDiagnostics(pair, ["saved-cursor-loaded", "saved-sync-token-verified", "catch-up-started", "catch-up-finished", "startup-ready"]);
   await stopPair(pair);
   pair = undefined;
   process.stdout.write("Restart-persistence Matrix E2E test passed.\n");

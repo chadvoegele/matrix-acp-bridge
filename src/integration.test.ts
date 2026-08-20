@@ -322,7 +322,9 @@ class MatrixSdkHarness implements MatrixSdkClientLike {
   readonly operations: string[] = [];
   readonly encryptedRooms: boolean;
   startCalls = 0;
-  readonly startOptions: Array<{ readonly since?: string }> = [];
+  readonly startupTokens: Array<string | null> = [];
+  syncToken: string | null = null;
+  savedSyncToken: string | null | undefined;
   stopCalls = 0;
   startClientAction: () => void | Promise<void> = () => {
     this.emit("sync", "PREPARED", null, { nextSyncToken: "default-start-cursor" });
@@ -379,9 +381,29 @@ class MatrixSdkHarness implements MatrixSdkClientLike {
     return { joined_rooms: [...this.rooms.keys()] };
   }
 
-  async startClient(options?: { readonly since?: string }): Promise<void> {
+  readonly store = {
+    getSyncToken: (): string | null => this.syncToken,
+    setSyncToken: (token: string): void => {
+      this.syncToken = token;
+    },
+    getSavedSync: async (): Promise<null> => null,
+    getSavedSyncToken: async (): Promise<string | null> => {
+      this.savedSyncToken = this.syncToken;
+      return this.syncToken;
+    },
+    resetStartupObservation: (): void => {
+      this.savedSyncToken = undefined;
+    },
+    getStartupTokenObservation: () => ({
+      consulted: this.savedSyncToken !== undefined,
+      value: this.savedSyncToken,
+    }),
+  };
+
+  async startClient(): Promise<void> {
     this.startCalls += 1;
-    this.startOptions.push(options ?? {});
+    await this.store.getSavedSyncToken();
+    this.startupTokens.push(this.savedSyncToken ?? null);
     await this.startClientAction();
   }
 
@@ -1205,7 +1227,7 @@ void test("M2 scenario 1: the first run suppresses history and saves a cursor", 
     };
     ({ run: firstRun } = await startRig(first));
     assert.equal(first.peer.prompts.length, 0);
-    assert.deepEqual(first.matrixSdk.startOptions, [{}]);
+    assert.deepEqual(first.matrixSdk.startupTokens, [null]);
 
     first.matrixSdk.emitInbound(sdkEvent({
       eventId: "$live-m2:example.org",
@@ -1235,7 +1257,7 @@ void test("M2 scenario 1: the first run suppresses history and saves a cursor", 
       second!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "restart-cursor" });
     };
     ({ run: secondRun } = await startRig(second));
-    assert.deepEqual(second.matrixSdk.startOptions, [{ since: "live-cursor" }]);
+    assert.deepEqual(second.matrixSdk.startupTokens, ["live-cursor"]);
     await waitFor(() => second!.peer.loadRequests.length === 1, "saved ACP session load");
     assert.deepEqual(second.peer.loadRequests[0]?.params, {
       sessionId: "session-1",
@@ -1244,6 +1266,7 @@ void test("M2 scenario 1: the first run suppresses history and saves a cursor", 
     });
     await waitFor(() => second!.peer.prompts.length === 1, "offline ACP prompt");
     assert.equal(second.peer.prompts[0]?.text, "offline prompt");
+    assert.equal(second.peer.prompts.some((prompt) => prompt.text === "live prompt"), false);
     await completePrompt(second, second.peer.prompts[0], "offline response");
     assert.equal(second.peer.prompts.some((prompt) => prompt.text.includes("replayed history")), false);
     await stopRig(second, secondRun);
@@ -1285,7 +1308,7 @@ void test("M2 scenario 2: a short restart submits a bounded offline message to A
     };
     ({ run: restartRun } = await startRig(restart));
 
-    assert.deepEqual(restart.matrixSdk.startOptions, [{ since: "before-outage" }]);
+    assert.deepEqual(restart.matrixSdk.startupTokens, ["before-outage"]);
     assert.equal(restart.batches[0]?.phase, "incremental");
     assert.equal(restart.batches[0]?.rooms[0]?.timeline[0]?.isCatchUp, true);
     await waitFor(() => restart!.peer.prompts.length === 1, "short restart ACP prompt");
@@ -1658,7 +1681,7 @@ void test("M2 scenario 8: an interrupted event remains pending and is retried af
       restart!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "crash-restart" });
     };
     ({ run: restartRun } = await startRig(restart));
-    assert.deepEqual(restart.matrixSdk.startOptions, [{ since: "crash-start" }]);
+    assert.deepEqual(restart.matrixSdk.startupTokens, ["crash-start"]);
     await waitFor(() => restart!.peer.prompts.length === 1, "replayed interrupted prompt");
     await completePrompt(restart, restart.peer.prompts[0]!, "replayed response");
   } finally {
@@ -1716,7 +1739,7 @@ void test("M2 scenario 9: completion is durable before a lost Matrix response an
       restart!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "response-loss-restart" });
     };
     ({ run: restartRun } = await startRig(restart));
-    assert.deepEqual(restart.matrixSdk.startOptions, [{ since: "response-loss-next" }]);
+    assert.deepEqual(restart.matrixSdk.startupTokens, ["response-loss-next"]);
     assert.equal(restart.peer.prompts.length, 0);
   } finally {
     if (firstRun !== undefined && first !== undefined) {
@@ -1898,7 +1921,7 @@ void test("M3 scenario 4: a short restart restores the device and catches up one
       restart!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "m3-after-outage" });
     };
     ({ run: restartRun } = await startRig(restart));
-    assert.deepEqual(restart.matrixSdk.startOptions, [{ since: "m3-before-outage" }]);
+    assert.deepEqual(restart.matrixSdk.startupTokens, ["m3-before-outage"]);
     await waitFor(() => restart!.peer.prompts.length === 1, "encrypted catch-up ACP prompt");
     assert.equal(restart.peer.prompts[0]?.text, "bounded encrypted offline work");
     await completePrompt(restart, restart.peer.prompts[0], "bounded encrypted reply");

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   MatrixAdapterError,
   MatrixClientAdapterImpl,
+  CursorAwareMatrixStore,
   assertMatrixIdentity,
   classifyMatrixError,
   createMatrixClientAdapter,
@@ -73,12 +74,30 @@ class FakeSdkClient implements MatrixSdkClientLike {
   startError: unknown;
   sendError: unknown;
   startClientAction: (() => void | Promise<void>) | undefined;
-  startOptions: { readonly since?: string } | undefined;
-  syncToken: string | undefined;
+  syncToken: string | null = null;
+  savedSyncTokenCalls = 0;
+  savedSyncToken: string | null | undefined;
+  savedSyncTokenOverride: string | null | undefined;
+  consultSavedSyncToken = true;
   readonly store = {
     setSyncToken: (token: string): void => {
       this.syncToken = token;
     },
+    getSyncToken: (): string | null => this.syncToken,
+    getSavedSync: async (): Promise<null> => null,
+    getSavedSyncToken: async (): Promise<string | null> => {
+      this.savedSyncTokenCalls += 1;
+      this.savedSyncToken = this.savedSyncTokenOverride ?? this.syncToken;
+      return this.savedSyncToken;
+    },
+    resetStartupObservation: (): void => {
+      this.savedSyncTokenCalls = 0;
+      this.savedSyncToken = undefined;
+    },
+    getStartupTokenObservation: () => ({
+      consulted: this.savedSyncTokenCalls > 0,
+      value: this.savedSyncToken,
+    }),
   };
   startCalls = 0;
   stopCalls = 0;
@@ -123,11 +142,13 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return this.whoamiResponse;
   }
 
-  async startClient(options?: { readonly since?: string }): Promise<void> {
+  async startClient(): Promise<void> {
     this.startCalls += 1;
-    this.startOptions = options;
     if (this.startError !== undefined) {
       throw this.startError;
+    }
+    if (this.consultSavedSyncToken) {
+      await this.store.getSavedSyncToken();
     }
     await this.startClientAction?.();
   }
@@ -322,6 +343,140 @@ function captureDiagnostics(
   };
 }
 
+interface RealSdkHttpHarnessOptions {
+  readonly syncFailures?: number;
+  readonly syncFailureStatus?: number;
+  readonly syncFailureErrcode?: string;
+}
+
+interface RealSdkHttpHarness {
+  readonly fetch: typeof globalThis.fetch;
+  readonly syncRequests: URL[];
+  readonly syncResponses: number;
+}
+
+function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): RealSdkHttpHarness {
+  const syncRequests: URL[] = [];
+  let syncResponses = 0;
+
+  const fetch: typeof globalThis.fetch = async (input) => {
+    let inputUrl: string;
+    if (typeof input === "string") {
+      inputUrl = input;
+    } else if (input instanceof URL) {
+      inputUrl = input.href;
+    } else {
+      inputUrl = input.url;
+    }
+    const url = new URL(inputUrl);
+    let status = 200;
+    let body: unknown = {};
+    if (url.pathname.endsWith("/whoami")) {
+      body = { user_id: BRIDGE_USER_ID, device_id: "BRIDGE-DEVICE" };
+    } else if (url.pathname.endsWith("/versions")) {
+      body = { versions: ["r0.6.0"] };
+    } else if (url.pathname.endsWith("/capabilities")) {
+      body = { capabilities: {} };
+    } else if (url.pathname.endsWith("/pushrules/")) {
+      body = {
+        global: { override: [], content: [], room: [], sender: [], underride: [] },
+        device: {},
+        account: {},
+      };
+    } else if (url.pathname.endsWith("/filter")) {
+      body = { filter_id: "test-filter" };
+    } else if (url.pathname.endsWith("/joined_rooms")) {
+      body = { joined_rooms: [ROOM_ID] };
+    } else if (url.pathname.endsWith("/state")) {
+      body = [{
+        type: "m.room.member",
+        state_key: BRIDGE_USER_ID,
+        content: { membership: "join" },
+      }];
+    } else if (url.pathname.endsWith("/sync")) {
+      syncRequests.push(url);
+      const requestNumber = syncRequests.length;
+      const failures = options.syncFailures ?? 0;
+      if (requestNumber <= failures) {
+        status = options.syncFailureStatus ?? 503;
+        body = {
+          errcode: options.syncFailureErrcode ?? "M_UNKNOWN",
+          error: "temporary Matrix sync failure",
+        };
+      } else {
+        syncResponses += 1;
+        body = {
+          next_batch: `next-${syncResponses}`,
+          rooms: {
+            join: {
+              [ROOM_ID]: {
+                state: {
+                  events: [{
+                    event_id: `$member-${syncResponses}:example.org`,
+                    room_id: ROOM_ID,
+                    sender: BRIDGE_USER_ID,
+                    type: "m.room.member",
+                    state_key: BRIDGE_USER_ID,
+                    content: { membership: "join" },
+                  }],
+                },
+                timeline: {
+                  events: syncResponses === 1 ? [{
+                    event_id: "$offline:example.org",
+                    room_id: ROOM_ID,
+                    sender: ALICE,
+                    type: "m.room.message",
+                    content: { msgtype: "m.text", body: "offline prompt" },
+                  }] : [],
+                  limited: false,
+                },
+              },
+            },
+          },
+          account_data: { events: [] },
+          presence: { events: [] },
+          to_device: { events: [] },
+        };
+      }
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  return {
+    fetch,
+    syncRequests,
+    get syncResponses() {
+      return syncResponses;
+    },
+  };
+}
+
+async function withFetch<T>(fetch: typeof globalThis.fetch, action: () => Promise<T>): Promise<T> {
+  const previousFetch = globalThis.fetch;
+  const previousSetTimeout = globalThis.setTimeout;
+  globalThis.fetch = fetch;
+  globalThis.setTimeout = ((...args: Parameters<typeof globalThis.setTimeout>) => {
+    const timer = previousSetTimeout(...args);
+    const delay = args[1];
+    if (typeof delay === "number" && delay >= 10_000 &&
+        typeof timer === "object" && timer !== null && "unref" in timer &&
+        typeof timer.unref === "function") {
+      timer.unref();
+    }
+    return timer;
+  }) as typeof globalThis.setTimeout;
+  try {
+    return await action();
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.setTimeout = previousSetTimeout;
+  }
+}
+
 void test("constructs a token-authenticated client with the configured device", () => {
   let received: MatrixClientCreateOptions | undefined;
   const fake = readyClient();
@@ -339,6 +494,20 @@ void test("constructs a token-authenticated client with the configured device", 
     deviceId: CONFIG.deviceId,
   });
   assert.equal(fake.startCalls, 0);
+});
+
+void test("cursor-aware store keeps SDK state in memory and exposes no cached sync", async () => {
+  const store = new CursorAwareMatrixStore();
+  assert.equal(await store.getSavedSync(), null);
+  assert.equal(store.getSyncToken(), null);
+  store.resetStartupObservation();
+  store.setSyncToken("checkpoint-S1");
+  assert.equal(await store.getSavedSyncToken(), "checkpoint-S1");
+  assert.deepEqual(store.getStartupTokenObservation(), {
+    consulted: true,
+    value: "checkpoint-S1",
+  });
+  assert.equal(await store.getSavedSync(), null);
 });
 
 void test("loads the pinned Matrix SDK through the default factory under strict ESM", async () => {
@@ -388,6 +557,83 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
 
   assert.equal(requestCount, 1);
   assert.equal(sdkLogCalls, 0);
+});
+
+void test("real SDK initial startup omits since and suppresses history without a cache response", async () => {
+  const harness = createRealSdkHttpHarness();
+  const batches: MatrixSyncBatch[] = [];
+  await withFetch(harness.fetch, async () => {
+    const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
+    adapter.onSyncBatch((batch) => { batches.push(batch); });
+    await adapter.whoAmI();
+    await adapter.start();
+    assert.equal(harness.syncResponses >= 1, true);
+    assert.equal(harness.syncRequests[0]?.searchParams.has("since"), false);
+    assert.equal(harness.syncRequests[0]?.searchParams.has("_cacheBuster"), true);
+    assert.equal(
+      batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
+        .some((event) => event.content.body === "offline prompt"),
+      false,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await adapter.stop();
+  });
+});
+
+void test("real SDK restart startup sends the saved cursor and uses next_batch afterward", async () => {
+  const harness = createRealSdkHttpHarness();
+  const batches: MatrixSyncBatch[] = [];
+  await withFetch(harness.fetch, async () => {
+    const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
+    adapter.onSyncBatch((batch) => { batches.push(batch); });
+    await adapter.whoAmI();
+    await adapter.start({ since: "checkpoint-S1" });
+    const firstSync = harness.syncRequests[0];
+    const secondSync = harness.syncRequests[1];
+    assert.equal(firstSync?.searchParams.get("since"), "checkpoint-S1");
+    assert.equal(secondSync?.searchParams.get("since"), "next-1");
+    assert.equal(batches[0]?.phase, "incremental");
+    assert.equal(
+      batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
+        .filter((event) => event.content.body === "offline prompt").length,
+      1,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await adapter.stop();
+  });
+});
+
+void test("real SDK retries a failed first sync with the saved cursor every time", async () => {
+  const harness = createRealSdkHttpHarness({ syncFailures: 2 });
+  await withFetch(harness.fetch, async () => {
+    const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
+    await adapter.whoAmI();
+    await adapter.start({ since: "checkpoint-S1" });
+    assert.deepEqual(
+      harness.syncRequests.slice(0, 3).map((request) => request.searchParams.get("since")),
+      ["checkpoint-S1", "checkpoint-S1", "checkpoint-S1"],
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    await adapter.stop();
+  });
+});
+
+void test("real SDK rejects an invalid saved cursor without initial-sync fallback", async () => {
+  const harness = createRealSdkHttpHarness({
+    syncFailures: 1,
+    syncFailureStatus: 400,
+    syncFailureErrcode: "M_UNKNOWN_POS",
+  });
+  await withFetch(harness.fetch, async () => {
+    const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
+    await adapter.whoAmI();
+    await assert.rejects(
+      () => adapter.start({ since: "checkpoint-S1" }),
+      /Saved Matrix sync cursor was rejected; reset private bridge state before retrying/u,
+    );
+    assert.equal(harness.syncRequests.length, 1);
+    assert.equal(harness.syncRequests[0]?.searchParams.get("since"), "checkpoint-S1");
+  });
 });
 
 void test("returns strict whoami identity data and validates configured IDs", async () => {
@@ -843,7 +1089,7 @@ void test("starts from an opaque cursor and emits the first incremental batch af
   });
   await adapter.start({ since: "saved-opaque-cursor" });
 
-  assert.equal(fake.startOptions?.since, "saved-opaque-cursor");
+  assert.equal(fake.savedSyncToken, "saved-opaque-cursor");
   assert.equal(fake.syncToken, "saved-opaque-cursor");
   assert.deepEqual(batches, [{
     nextBatch: "next-opaque-cursor",
@@ -869,6 +1115,44 @@ void test("starts from an opaque cursor and emits the first incremental batch af
   }]);
 });
 
+void test("fails startup when the SDK does not consult the saved-token hook", async () => {
+  const fake = readyClient();
+  fake.consultSavedSyncToken = false;
+  const received: InboundMatrixEvent[] = [];
+  const adapter = adapterFor(fake);
+  adapter.onSyncBatch((batch) => {
+    for (const room of batch.rooms) {
+      received.push(...room.timeline);
+    }
+  });
+
+  await assert.rejects(
+    () => adapter.start({ since: "saved-cursor" }),
+    /did not return the expected saved cursor/u,
+  );
+  assert.deepEqual(received, []);
+  assert.equal(fake.stopCalls, 1);
+});
+
+void test("fails startup when the SDK returns a different saved token", async () => {
+  const fake = readyClient();
+  fake.savedSyncTokenOverride = "wrong-cursor";
+  const received: InboundMatrixEvent[] = [];
+  const adapter = adapterFor(fake);
+  adapter.onSyncBatch((batch) => {
+    for (const room of batch.rooms) {
+      received.push(...room.timeline);
+    }
+  });
+
+  await assert.rejects(
+    () => adapter.start({ since: "saved-cursor" }),
+    /did not return the expected saved cursor/u,
+  );
+  assert.deepEqual(received, []);
+  assert.equal(fake.stopCalls, 1);
+});
+
 void test("does not fall back to an initial sync when a saved cursor is rejected", async () => {
   const fake = readyClient();
   fake.startClientAction = () => {
@@ -879,7 +1163,7 @@ void test("does not fall back to an initial sync when a saved cursor is rejected
     () => adapter.start({ since: "expired-opaque-cursor" }),
     /reset private bridge state before retrying/u,
   );
-  assert.equal(fake.startOptions?.since, "expired-opaque-cursor");
+  assert.equal(fake.savedSyncToken, "expired-opaque-cursor");
 });
 
 void test("requires every configured room to be joined and unencrypted", async () => {

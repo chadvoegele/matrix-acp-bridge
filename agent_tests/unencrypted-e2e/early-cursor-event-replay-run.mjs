@@ -260,6 +260,12 @@ function assertCleanDiagnostics(pair, requiredEvents) {
   for (const event of requiredEvents) {
     assert(records.some((record) => record.event === event), `missing ${event} diagnostic`);
   }
+  const verified = records.findIndex((record) => record.event === "saved-sync-token-verified");
+  const catchup = records.findIndex((record) => record.event === "catch-up-started");
+  if (requiredEvents.includes("saved-sync-token-verified") && requiredEvents.includes("catch-up-started")) {
+    assert(verified !== -1 && catchup !== -1 && verified < catchup,
+      "saved-token verification must precede restart catch-up");
+  }
   const failures = records.filter((record) => record.level === "error" ||
     /(?:failed|failure|protocol|lock)/u.test(String(record.event)));
   assert(failures.length === 0,
@@ -387,7 +393,7 @@ try {
     const state = await readState();
     return state.cursor !== recoveryState.cursor && state.pendingBatches?.length === 0;
   }, "processed cursor advancement and ledger cleanup", 30_000, pair);
-  assertCleanDiagnostics(pair, ["saved-cursor-loaded", "catch-up-started", "catch-up-finished", "startup-ready"]);
+  assertCleanDiagnostics(pair, ["saved-cursor-loaded", "saved-sync-token-verified", "catch-up-started", "catch-up-finished", "startup-ready"]);
 
   await stopBridgePair(pair);
   pair = undefined;

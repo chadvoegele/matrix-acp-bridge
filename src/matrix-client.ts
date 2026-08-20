@@ -22,6 +22,12 @@ import type {
 import type { RenderedMatrixPart } from "./response-rendering.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
+// The pinned SDK has extensionless internal imports. Register the repository's
+// narrow resolver before loading its public module so the store subclass uses
+// the exact exported MemoryStore class without patching node_modules.
+register("./matrix-sdk-loader.js", import.meta.url);
+const { MemoryStore } = await import("matrix-js-sdk");
+
 export type { BridgeConfig, MatrixConfig } from "./config.js";
 export type { FatalError, FatalErrorListener } from "./diagnostics.js";
 export type { Unsubscribe } from "./cancellation.js";
@@ -297,7 +303,46 @@ export interface MatrixSdkRoomLike {
 }
 
 export interface MatrixSdkStoreLike {
+  getSyncToken?(): string | null;
   setSyncToken?(token: string): void;
+  getSavedSync?(): Promise<unknown>;
+  getSavedSyncToken?(): Promise<string | null>;
+  resetStartupObservation?(): void;
+  getStartupTokenObservation?(): MatrixSyncTokenObservation;
+}
+
+export interface MatrixSyncTokenObservation {
+  readonly consulted: boolean;
+  readonly value: string | null | undefined;
+}
+
+/**
+ * Process-local SDK state with the bridge checkpoint exposed through the
+ * public saved-token startup hook. The bridge recovery state remains the only
+ * durable cursor ledger; this store never saves sync responses or event data.
+ */
+export class CursorAwareMatrixStore extends MemoryStore implements MatrixSdkStoreLike {
+  #savedSyncTokenConsulted = false;
+  #savedSyncToken: string | null | undefined;
+
+  override getSavedSyncToken(): Promise<string | null> {
+    const token = this.getSyncToken();
+    this.#savedSyncTokenConsulted = true;
+    this.#savedSyncToken = token;
+    return Promise.resolve(token);
+  }
+
+  resetStartupObservation(): void {
+    this.#savedSyncTokenConsulted = false;
+    this.#savedSyncToken = undefined;
+  }
+
+  getStartupTokenObservation(): MatrixSyncTokenObservation {
+    return {
+      consulted: this.#savedSyncTokenConsulted,
+      value: this.#savedSyncToken,
+    };
+  }
 }
 
 type SdkListener = (...args: unknown[]) => void;
@@ -307,7 +352,7 @@ export interface MatrixSdkClientLike {
   off?(event: string, listener: SdkListener): unknown;
   removeListener?(event: string, listener: SdkListener): unknown;
   whoami(): Promise<unknown>;
-  startClient(options?: { readonly since?: string }): Promise<void>;
+  startClient(): Promise<void>;
   stopClient(): void;
   initRustCrypto?(options?: {
     readonly useIndexedDB?: boolean;
@@ -386,7 +431,7 @@ const SDK_EVENT_TYPES = {
   roomMember: "m.room.member",
 } as const;
 
-let matrixSdkLoaderRegistered = false;
+let matrixSdkLoaderRegistered = true;
 
 function ensureMatrixSdkLoader(): void {
   if (matrixSdkLoaderRegistered) {
@@ -1095,8 +1140,8 @@ function matrixConfigFrom(config: MatrixConfig | BridgeConfig): MatrixConfig {
 function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClientLike {
   let client: MatrixSdkClientLike | undefined;
   let loading: Promise<MatrixSdkClientLike> | undefined;
-  let initialSyncToken: string | undefined;
   const subscriptions: SdkSubscription[] = [];
+  const store = new CursorAwareMatrixStore();
 
   const load = async (): Promise<MatrixSdkClientLike> => {
     if (client !== undefined) {
@@ -1112,11 +1157,9 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
           ...(options.verificationMethods === undefined
             ? {}
             : { verificationMethods: [...options.verificationMethods] }),
+          store,
           logger: silentMatrixSdkLogger,
         }) as unknown as MatrixSdkClientLike;
-        if (initialSyncToken !== undefined) {
-          client.store?.setSyncToken?.(initialSyncToken);
-        }
         for (const subscription of subscriptions) {
           client.on(subscription.event, subscription.listener);
         }
@@ -1151,10 +1194,7 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
     async whoami() {
       return (await load()).whoami();
     },
-    async startClient(startOptions) {
-      if (startOptions?.since !== undefined) {
-        initialSyncToken = startOptions.since;
-      }
+    async startClient() {
       await (await load()).startClient();
     },
     stopClient() {
@@ -1189,14 +1229,7 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
         await loaded.sendReadReceipt(event, "m.read", true);
       }
     },
-    store: {
-      setSyncToken(token: string): void {
-        initialSyncToken = token;
-        if (client?.store?.setSyncToken !== undefined) {
-          client.store.setSyncToken(token);
-        }
-      },
-    },
+    store,
     async sendMessage(roomId, content, transactionId) {
       await (await load()).sendMessage(roomId, content, transactionId);
     },
@@ -1661,19 +1694,16 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#rejectPrepared = reject;
     });
 
-    if (this.#since !== undefined) {
-      this.#client.store?.setSyncToken?.(this.#since);
-    }
-    const sdkStart = Promise.resolve().then(() => this.#client.startClient(
-      this.#since === undefined ? {} : { since: this.#since },
-    ));
-    sdkStart.catch((error: unknown) => {
-      this.#rejectPrepared?.(
-        this.#startError(error, "Matrix sync failed to start"),
-      );
-    });
+    let sdkStart: Promise<void> | undefined;
 
     try {
+      this.#prepareStoreForStartup();
+      sdkStart = Promise.resolve().then(() => this.#client.startClient());
+      sdkStart.catch((error: unknown) => {
+        this.#rejectPrepared?.(
+          this.#startError(error, "Matrix sync failed to start"),
+        );
+      });
       await preparedPromise;
       await sdkStart;
       if (this.#intakeStopped || this.#fatalEmitted) {
@@ -1683,6 +1713,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
           permanentFailure(),
         );
       }
+      this.#verifySavedSyncToken();
       await this.validateConfiguredRooms();
       if (this.#pendingNextBatch === undefined) {
         throw new MatrixAdapterError(
@@ -1713,6 +1744,44 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         });
       }
       throw normalized;
+    }
+  }
+
+  #prepareStoreForStartup(): void {
+    const store = this.#client.store;
+    if (
+      store?.setSyncToken === undefined ||
+      store.getSavedSync === undefined ||
+      store.getSavedSyncToken === undefined ||
+      store.resetStartupObservation === undefined ||
+      store.getStartupTokenObservation === undefined
+    ) {
+      throw new MatrixAdapterError(
+        "start",
+        "Matrix client store does not support cursor-aware startup",
+        permanentFailure(),
+      );
+    }
+    store.resetStartupObservation();
+    if (this.#since !== undefined) {
+      store.setSyncToken(this.#since);
+    }
+  }
+
+  #verifySavedSyncToken(): void {
+    const observation = this.#client.store?.getStartupTokenObservation?.();
+    const expected = this.#since ?? null;
+    if (observation?.consulted !== true || observation.value !== expected) {
+      throw new MatrixAdapterError(
+        "start",
+        "Matrix client store did not return the expected saved cursor",
+        permanentFailure(),
+      );
+    }
+    try {
+      this.#diagnostics?.info("saved-sync-token-verified");
+    } catch {
+      // Diagnostics are observational and never affect startup verification.
     }
   }
 
@@ -2351,6 +2420,19 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#rejectPrepared = undefined;
       return;
     }
+    if (
+      this.#since !== undefined &&
+      (state === SDK_SYNC_STATES.reconnecting || state === SDK_SYNC_STATES.error) &&
+      this.#isSavedCursorRejection(rawFailure)
+    ) {
+      const error = this.#startError(rawFailure, "Matrix sync failed");
+      if (this.#prepared) {
+        this.#emitFatal({ code: "matrix_transport", message: error.message });
+      } else {
+        this.#rejectPrepared?.(error);
+      }
+      return;
+    }
     if (state === SDK_SYNC_STATES.error) {
       const error = this.#startError(rawFailure, "Matrix sync failed");
       if (this.#prepared) {
@@ -2583,12 +2665,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   }
 
   #startError(error: unknown, message: string): MatrixAdapterError {
-    const errcode = stringProperty(
-      isRecord(error) ? own(error, "data") : undefined,
-      "errcode",
-    ) ?? stringProperty(error, "errcode", "errorCode");
-    if (this.#since !== undefined &&
-        (errcode === "M_UNKNOWN_POS" || errcode === "M_INVALID_PARAM" || errcode === "M_UNKNOWN_TOKEN")) {
+    if (this.#since !== undefined && this.#isSavedCursorRejection(error)) {
       return new MatrixAdapterError(
         "start",
         "Saved Matrix sync cursor was rejected; reset private bridge state before retrying",
@@ -2597,6 +2674,16 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       );
     }
     return this.#operationError("start", error, message);
+  }
+
+  #isSavedCursorRejection(error: unknown): boolean {
+    const errcode = stringProperty(
+      isRecord(error) ? own(error, "data") : undefined,
+      "errcode",
+    ) ?? stringProperty(error, "errcode", "errorCode");
+    return errcode === "M_UNKNOWN_POS" ||
+      errcode === "M_INVALID_PARAM" ||
+      errcode === "M_UNKNOWN_TOKEN";
   }
 
   #startupInvariant(message: string): MatrixAdapterError {
