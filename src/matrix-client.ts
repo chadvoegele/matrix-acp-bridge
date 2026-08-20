@@ -8,6 +8,8 @@ import {
   classifyCryptoFailure,
   SAS_VERIFICATION_METHOD,
 } from "./crypto-runtime.js";
+import { systemClock } from "./clock.js";
+import type { Clock } from "./clock.js";
 import { RateLimitedDiagnosticSink } from "./diagnostics.js";
 import { isValidMatrixEventId } from "./matrix-validation.js";
 import { configureNodeIndexedDb as configureNodeIndexedDatabase, flushNodeIndexedDb as flushNodeIndexedDatabase } from "./node-indexeddb.js";
@@ -389,6 +391,8 @@ export interface MatrixClientAdapterOptions {
   readonly cryptoAdapter?: MatrixCryptoAdapter;
   /** Metadata-only sink for SDK decryption failures. */
   readonly diagnostics?: DiagnosticSink;
+  /** Clock used for outage durations and deterministic lifecycle tests. */
+  readonly clock?: Clock;
 }
 
 export type MatrixOperation = "whoami" | "start" | "send_message";
@@ -989,9 +993,10 @@ function sdkRetryDelay(error: unknown, attempts: number): number {
 }
 
 /**
- * Classify a Matrix/SDK failure without retrying it.  The SDK's own
- * `calculateRetryBackoff` is used as the retryability oracle; this adapter
- * only returns its result as metadata for the coordinator.
+ * Classify a Matrix/SDK failure without retrying it. The SDK's own
+ * `calculateRetryBackoff` is used as the retryability oracle, with the
+ * bridge's explicit timeout and Matrix authentication rules layered on
+ * at this boundary.
  */
 export function classifyMatrixError(
   error: unknown,
@@ -1002,6 +1007,7 @@ export function classifyMatrixError(
   const errcode =
     stringProperty(error, "errcode", "errorCode") ?? stringProperty(data, "errcode");
   const name = stringProperty(error, "name");
+  const errorCode = stringProperty(error, "code");
   const sdkDelay = sdkRetryDelay(error, Math.max(0, attempts));
   const sdkRetryable = sdkDelay >= 0;
 
@@ -1010,23 +1016,32 @@ export function classifyMatrixError(
   const isRedirect =
     httpStatus !== undefined && httpStatus >= 300 && httpStatus < 400;
   const explicitlyPermanent =
-    name === "AbortError" ||
     name === "M_TOO_LARGE" ||
     errcode === "M_TOO_LARGE" ||
+    name === "TokenRefreshLogoutError" ||
+    errcode === "M_UNKNOWN_TOKEN" ||
+    errcode === "M_MISSING_TOKEN" ||
+    errcode === "M_UNAUTHORIZED" ||
+    errcode === "M_FORBIDDEN" ||
     isRedirect ||
     (isClientError && httpStatus !== 408 && httpStatus !== 429);
   const isTransientStatus =
     httpStatus === 408 ||
     httpStatus === 429 ||
     (httpStatus !== undefined && httpStatus >= 500 && httpStatus < 600);
-  const retryable = !explicitlyPermanent && (isTransientStatus || sdkRetryable);
+  const isTransientTimeout =
+    name === "AbortError" ||
+    name === "TimeoutError" ||
+    errorCode === "ETIMEDOUT";
+  const retryable = !explicitlyPermanent && (isTransientStatus || isTransientTimeout || sdkRetryable);
+  const normalizedSdkRetryable = explicitlyPermanent ? false : sdkRetryable;
   const kind = retryable ? "transient" : "permanent";
 
   if (!retryable) {
     return {
       kind,
       retryable,
-      sdkRetryable,
+      sdkRetryable: normalizedSdkRetryable,
       ...(httpStatus === undefined ? {} : { httpStatus }),
       ...(errcode === undefined ? {} : { errcode }),
     };
@@ -1041,7 +1056,7 @@ export function classifyMatrixError(
     kind,
     retryable,
     retryAfterMs,
-    sdkRetryable,
+    sdkRetryable: normalizedSdkRetryable,
     ...(httpStatus === undefined ? {} : { httpStatus }),
     ...(errcode === undefined ? {} : { errcode }),
   };
@@ -1049,6 +1064,10 @@ export function classifyMatrixError(
 
 function permanentFailure(): MatrixFailureClassification {
   return { kind: "permanent", retryable: false, sdkRetryable: false };
+}
+
+function transientFailure(): MatrixFailureClassification {
+  return { kind: "transient", retryable: true, sdkRetryable: true };
 }
 
 /** Identify SDK encryption failures without allowing their text to escape. */
@@ -1193,6 +1212,11 @@ function unsubscribeFrom<T>(set: Set<T>, listener: T): void {
 
 type Lifecycle = "idle" | "starting" | "ready" | "stopped";
 
+interface MatrixOutage {
+  readonly startedAt: number;
+  failureCount: number;
+}
+
 interface EventContext {
   readonly order: number;
   readonly isLive: boolean;
@@ -1222,6 +1246,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   readonly #client: MatrixSdkClientLike;
   readonly #crypto: MatrixCryptoAdapter | undefined;
   readonly #diagnostics: DiagnosticSink | undefined;
+  readonly #clock: Clock;
   readonly #configuredRooms: ReadonlySet<string>;
   readonly #initialSyncLimit: number;
 
@@ -1253,6 +1278,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   #nextEventOrder = 0;
   #syncBatchInFlight = false;
   #pendingBatchReady = false;
+  #outage: MatrixOutage | undefined;
 
   #resolvePrepared: (() => void) | undefined;
   #rejectPrepared: ((error: unknown) => void) | undefined;
@@ -1281,6 +1307,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     this.#diagnostics = options.diagnostics === undefined || options.diagnostics instanceof RateLimitedDiagnosticSink
       ? options.diagnostics
       : new RateLimitedDiagnosticSink(options.diagnostics);
+    this.#clock = options.clock ?? systemClock;
     const factory = options.clientFactory ?? defaultClientFactory;
     this.#client = options.client ??
       factory({
@@ -1763,6 +1790,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return;
     }
     this.#syncBatchInFlight = true;
+    const outageStartedAt = this.#outage?.startedAt;
     const phase = this.#firstBatch ? "initial" : "incremental";
     const events = this.#pendingBatchEvents.splice(0);
     events.sort((left, right) => this.#eventOrderFor(left) - this.#eventOrderFor(right));
@@ -1821,6 +1849,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         await listener(batch);
       }
       this.#firstBatch = false;
+      this.#restoreConnectionAfterBatch(outageStartedAt);
     } finally {
       this.#syncBatchInFlight = false;
       if (this.#lifecycle === "ready" && this.#pendingBatchReady) {
@@ -2225,6 +2254,92 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     return this.#eventContexts.get(eventId)?.order ?? Number.MAX_SAFE_INTEGER;
   }
 
+  #classifySyncStateFailure(
+    state: MatrixSyncState,
+    error: unknown,
+  ): MatrixFailureClassification {
+    // RECONNECTING is the SDK's explicit retrying state. It can be emitted
+    // without an error payload, so retain that designation at the adapter
+    // boundary instead of asking callers to inspect SDK objects.
+    if (error === undefined || error === null) {
+      return state === SDK_SYNC_STATES.reconnecting
+        ? transientFailure()
+        : permanentFailure();
+    }
+    if (this.#isSavedCursorRejection(error)) {
+      return permanentFailure();
+    }
+    return classifyMatrixError(error);
+  }
+
+  #handleStartupOrRuntimeFailure(error: MatrixAdapterError): void {
+    if (this.#prepared) {
+      this.#emitFatal({ code: "matrix_transport", message: error.message });
+    } else {
+      this.#rejectPrepared?.(error);
+    }
+  }
+
+  #recordTransientFailure(failure: MatrixFailureClassification): void {
+    if (this.#intakeStopped || this.#fatalEmitted) {
+      return;
+    }
+    if (this.#outage === undefined) {
+      this.#outage = {
+        startedAt: this.#clock.now(),
+        failureCount: 0,
+      };
+      this.#emitDiagnostic("warn", "matrix-connection-lost", {
+        kind: failure.kind,
+        startupCompleted: this.#prepared,
+        ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }),
+        ...(failure.errcode === undefined ? {} : { errcode: failure.errcode }),
+      });
+    }
+    this.#outage.failureCount += 1;
+    // The SDK owns retry timing. A sparse count-based notice is only an
+    // observation of a prolonged outage; it never schedules or accelerates a
+    // retry of its own.
+    if (this.#outage.failureCount === 2 || this.#outage.failureCount % 5 === 0) {
+      this.#emitDiagnostic("warn", "matrix-reconnect-retry", {
+        failureCount: this.#outage.failureCount,
+        elapsedMs: Math.max(0, this.#clock.now() - this.#outage.startedAt),
+      });
+    }
+  }
+
+  #restoreConnectionAfterBatch(expectedStartedAt: number | undefined): void {
+    const outage = this.#outage;
+    if (
+      expectedStartedAt === undefined ||
+      outage === undefined ||
+      outage.startedAt !== expectedStartedAt ||
+      this.#intakeStopped ||
+      this.#fatalEmitted
+    ) {
+      return;
+    }
+    this.#emitDiagnostic("info", "matrix-connection-restored", {
+      outageDurationMs: Math.max(0, this.#clock.now() - outage.startedAt),
+      failureCount: outage.failureCount,
+    });
+    // Clear only after the restoration diagnostic has been emitted so a
+    // diagnostic failure cannot silently lose the lifecycle accounting.
+    this.#outage = undefined;
+  }
+
+  #emitDiagnostic(
+    level: "info" | "warn",
+    event: string,
+    fields: Record<string, string | number | boolean | null>,
+  ): void {
+    try {
+      this.#diagnostics?.emit(level, event, fields);
+    } catch {
+      // Diagnostics are observational and cannot affect Matrix recovery.
+    }
+  }
+
   #handleSyncState = (...args: unknown[]): void => {
     const state = syncStateFrom(args[0]);
     if (state === undefined) {
@@ -2253,7 +2368,9 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       }
     }
     const rawFailure = data === undefined ? undefined : own(data, "error");
-    const failure = state === "ERROR" ? classifyMatrixError(rawFailure) : undefined;
+    const failure = state === SDK_SYNC_STATES.reconnecting || state === SDK_SYNC_STATES.error
+      ? this.#classifySyncStateFailure(state, rawFailure)
+      : undefined;
     const change: MatrixSyncStateChange = {
       state,
       previousState: previousState ?? null,
@@ -2267,6 +2384,20 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       }
     }
 
+    if (
+      state === SDK_SYNC_STATES.syncing &&
+      nextSyncToken === undefined &&
+      !this.#intakeStopped &&
+      !this.#fatalEmitted
+    ) {
+      this.#handleStartupOrRuntimeFailure(new MatrixAdapterError(
+        "start",
+        "Matrix sync response did not establish a cursor",
+        permanentFailure(),
+      ));
+      return;
+    }
+
     if (state === SDK_SYNC_STATES.prepared) {
       this.#prepared = true;
       this.#resolvePrepared?.();
@@ -2274,12 +2405,24 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#rejectPrepared = undefined;
       return;
     }
-    if (state === SDK_SYNC_STATES.error) {
-      const error = this.#startError(rawFailure, "Matrix sync failed");
-      if (this.#prepared) {
-        this.#emitFatal({ code: "matrix_transport", message: "Matrix sync failed" });
+    if (state === SDK_SYNC_STATES.stopped) {
+      if (this.#intakeStopped || this.#sdkStopped || this.#lifecycle === "stopped") {
+        return;
+      }
+      const error = new MatrixAdapterError(
+        "start",
+        "Matrix sync stopped unexpectedly",
+        permanentFailure(),
+      );
+      this.#handleStartupOrRuntimeFailure(error);
+      return;
+    }
+    if (failure !== undefined) {
+      if (failure.kind === "transient") {
+        this.#recordTransientFailure(failure);
       } else {
-        this.#rejectPrepared?.(error);
+        const error = this.#startError(rawFailure, "Matrix sync failed");
+        this.#handleStartupOrRuntimeFailure(error);
       }
     }
     if (
@@ -2291,10 +2434,15 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   };
 
   #handleSyncUnexpectedError = (): void => {
-    if (!this.#prepared || this.#intakeStopped) {
+    if (this.#intakeStopped || this.#fatalEmitted) {
       return;
     }
-    this.#emitFatal({ code: "matrix_transport", message: "Matrix sync failed" });
+    const error = new MatrixAdapterError(
+      "start",
+      "Matrix sync failed during local processing",
+      permanentFailure(),
+    );
+    this.#handleStartupOrRuntimeFailure(error);
   };
 
   #handleRoomMembership = (...args: unknown[]): void => {
@@ -2506,9 +2654,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   }
 
   #startError(error: unknown, message: string): MatrixAdapterError {
+    if (error === undefined || error === null) {
+      return new MatrixAdapterError("start", message, permanentFailure());
+    }
     return this.#operationError("start", error, message);
   }
-
   #startupInvariant(message: string): MatrixAdapterError {
     const error = new MatrixAdapterError("start", message, permanentFailure());
     this.#emitFatal({ code: "matrix_invariant", message });
