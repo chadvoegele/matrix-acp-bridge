@@ -608,6 +608,28 @@ void test("startup timeout stops already-created resources and returns exit code
   resolveInitialize?.();
 });
 
+void test("startup timeout remains authoritative while Matrix is reconnecting", async () => {
+  const log: string[] = [];
+  const pendingStart = new Promise<void>(() => {});
+  const matrix = new FakeMatrix(log, async () => {
+    for (const listener of matrix.syncListeners) {
+      listener({ state: "RECONNECTING", previousState: null });
+    }
+    await pendingStart;
+  });
+  const rig = makeRig({ matrix });
+  const run = rig.lifecycle.run();
+  while (matrix.startCalls === 0) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  rig.clock.advanceBy(1000);
+
+  assert.equal(await run, 1);
+  assert.equal(matrix.stopCalls, 1);
+  assert.equal(rig.acp.closeCalls, 1);
+  assert.equal(rig.lock.released, true);
+});
+
 void test("cleans up resources in reverse order for each partial startup failure", async () => {
   const stages = ["acp", "matrix", "bridge", "initialize", "whoami", "start"] as const;
   for (const stage of stages) {

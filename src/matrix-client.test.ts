@@ -1603,6 +1603,57 @@ void test("runtime transient failures, including repeated SDK error states, pres
   assert.equal(fake.stopCalls, 1);
 });
 
+void test("does not clear an outage when another failure arrives during durable batch handling", async () => {
+  const fake = readyClient();
+  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  let releaseBatch: (() => void) | undefined;
+  let batchStarted: (() => void) | undefined;
+  const batchEntered = new Promise<void>((resolve) => { batchStarted = resolve; });
+  const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
+    client: fake,
+    diagnostics: captureDiagnostics(records),
+  });
+  adapter.onSyncBatch(async (batch) => {
+    if (batch.nextBatch === "first-recovery") {
+      batchStarted?.();
+      await new Promise<void>((resolve) => { releaseBatch = resolve; });
+    }
+  });
+  await adapter.start();
+
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "first-recovery" });
+  await batchEntered;
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  releaseBatch?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(records.some((record) => record.event === "matrix-connection-restored"), false);
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "second-recovery" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    records.map((record) => record.event),
+    ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
+  );
+  assert.equal(records.at(-1)?.fields.failureCount, 2);
+  await adapter.stop();
+});
+
+void test("sync.unexpectedError remains fatal during runtime", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const fatal: FatalErrorRecord[] = [];
+  adapter.onFatalError((error) => fatal.push(error));
+  await adapter.start();
+
+  fake.emit("sync.unexpectedError", new Error("unsafe local processing failure"));
+  assert.deepEqual(fatal, [{
+    code: "matrix_transport",
+    message: "Matrix sync failed during local processing",
+  }]);
+  await adapter.stop();
+});
+
 void test("permanent authentication and unsolicited stop states remain fatal", async () => {
   const authFailure = readyClient();
   authFailure.startClientAction = () => {

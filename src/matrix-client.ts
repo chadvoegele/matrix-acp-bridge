@@ -1790,7 +1790,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return;
     }
     this.#syncBatchInFlight = true;
-    const outageStartedAt = this.#outage?.startedAt;
+    const outageSnapshot = this.#outage === undefined ? undefined : {
+      startedAt: this.#outage.startedAt,
+      failureCount: this.#outage.failureCount,
+    };
     const phase = this.#firstBatch ? "initial" : "incremental";
     const events = this.#pendingBatchEvents.splice(0);
     events.sort((left, right) => this.#eventOrderFor(left) - this.#eventOrderFor(right));
@@ -1849,7 +1852,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         await listener(batch);
       }
       this.#firstBatch = false;
-      this.#restoreConnectionAfterBatch(outageStartedAt);
+      this.#restoreConnectionAfterBatch(outageSnapshot);
     } finally {
       this.#syncBatchInFlight = false;
       if (this.#lifecycle === "ready" && this.#pendingBatchReady) {
@@ -2308,12 +2311,15 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
   }
 
-  #restoreConnectionAfterBatch(expectedStartedAt: number | undefined): void {
+  #restoreConnectionAfterBatch(
+    expected: { readonly startedAt: number; readonly failureCount: number } | undefined,
+  ): void {
     const outage = this.#outage;
     if (
-      expectedStartedAt === undefined ||
+      expected === undefined ||
       outage === undefined ||
-      outage.startedAt !== expectedStartedAt ||
+      outage.startedAt !== expected.startedAt ||
+      outage.failureCount !== expected.failureCount ||
       this.#intakeStopped ||
       this.#fatalEmitted
     ) {
