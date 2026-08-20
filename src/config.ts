@@ -37,6 +37,7 @@ export interface BridgeLimits {
   readonly maxTurnSeconds: number;
   readonly shutdownGraceSeconds: number;
   readonly startupTimeoutSeconds: number;
+  readonly initialSyncTimelineLimit: number;
   readonly maxCatchupAgeSeconds: number;
   readonly maxCatchupEventsPerRoom: number;
 }
@@ -61,6 +62,7 @@ export const DEFAULT_LIMITS: BridgeLimits = {
   maxTurnSeconds: 1800,
   shutdownGraceSeconds: 30,
   startupTimeoutSeconds: 60,
+  initialSyncTimelineLimit: 100,
   maxCatchupAgeSeconds: 900,
   maxCatchupEventsPerRoom: 4,
 };
@@ -74,6 +76,7 @@ const LIMIT_KEYS = [
   "max_turn_seconds",
   "shutdown_grace_seconds",
   "startup_timeout_seconds",
+  "initial_sync_timeline_limit",
   "max_catchup_age_seconds",
   "max_catchup_events_per_room",
 ] as const;
@@ -447,6 +450,7 @@ function validateLimits(limits: BridgeLimits): void {
     max_turn_seconds: limits.maxTurnSeconds,
     shutdown_grace_seconds: limits.shutdownGraceSeconds,
     startup_timeout_seconds: limits.startupTimeoutSeconds,
+    initial_sync_timeline_limit: limits.initialSyncTimelineLimit,
     max_catchup_age_seconds: limits.maxCatchupAgeSeconds,
     max_catchup_events_per_room: limits.maxCatchupEventsPerRoom,
   };
@@ -582,6 +586,7 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
     maxTurnSeconds: values.get("max_turn_seconds")!,
     shutdownGraceSeconds: values.get("shutdown_grace_seconds")!,
     startupTimeoutSeconds: values.get("startup_timeout_seconds")!,
+    initialSyncTimelineLimit: values.get("initial_sync_timeline_limit")!,
     maxCatchupAgeSeconds: values.get("max_catchup_age_seconds")!,
     maxCatchupEventsPerRoom: values.get("max_catchup_events_per_room")!,
   };
@@ -640,6 +645,7 @@ function limitProperty(key: LimitKey): keyof BridgeLimits {
     max_turn_seconds: "maxTurnSeconds",
     shutdown_grace_seconds: "shutdownGraceSeconds",
     startup_timeout_seconds: "startupTimeoutSeconds",
+    initial_sync_timeline_limit: "initialSyncTimelineLimit",
     max_catchup_age_seconds: "maxCatchupAgeSeconds",
     max_catchup_events_per_room: "maxCatchupEventsPerRoom",
   };

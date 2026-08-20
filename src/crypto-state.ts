@@ -19,7 +19,7 @@ import type {
   CryptoDeviceKeyFingerprints,
   CryptoStatePaths,
 } from "./crypto-contracts.js";
-import type { MatrixCheckpointIdentity } from "./bridge-state.js";
+import type { MatrixBridgeIdentity } from "./bridge-state.js";
 import { closeQuietly, unlinkQuietly } from "./file-utils.js";
 import { isMatrixId, isSafeHomeserver, isValidMatrixDeviceId } from "./matrix-validation.js";
 import type { MatrixDeviceId, MatrixUserId } from "./matrix-client.js";
@@ -105,7 +105,7 @@ export interface CryptoStateStoreOptions {
   /** The already validated private state directory. */
   readonly stateDir: string;
   /** Optional configured identity used to fail closed on manifest mismatch. */
-  readonly identity?: MatrixCheckpointIdentity;
+  readonly identity?: MatrixBridgeIdentity;
   /** Optional current SDK public keys used to fail closed on key mismatch. */
   readonly fingerprints?: CryptoDeviceKeyFingerprints;
   readonly diagnostics?: DiagnosticSink;
@@ -260,7 +260,7 @@ export class PrivateCryptoStateStore {
   readonly paths: CryptoStatePaths;
 
   readonly #stateDir: string;
-  readonly #identity: MatrixCheckpointIdentity | undefined;
+  readonly #identity: MatrixBridgeIdentity | undefined;
   readonly #diagnostics: DiagnosticSink | undefined;
   readonly #faultInjector: CryptoStateFaultInjector | undefined;
   #databaseExists: boolean;
@@ -270,7 +270,7 @@ export class PrivateCryptoStateStore {
   constructor(
     stateDir: string,
     paths: CryptoStatePaths,
-    identity: MatrixCheckpointIdentity | undefined,
+    identity: MatrixBridgeIdentity | undefined,
     databaseExists: boolean,
     manifest: CryptoManifest | undefined,
     diagnostics: DiagnosticSink | undefined,
@@ -602,7 +602,7 @@ function parseManifest(value: unknown, path = "crypto-state.json"): CryptoManife
 
 function assertManifestIdentity(
   manifest: CryptoManifest,
-  identity: Pick<MatrixCheckpointIdentity, "homeserver" | "userId" | "deviceId">,
+  identity: Pick<MatrixBridgeIdentity, "homeserver" | "userId" | "deviceId">,
   path: string,
 ): void {
   if (

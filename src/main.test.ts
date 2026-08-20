@@ -60,6 +60,7 @@ const CONFIG: BridgeConfig = {
     maxTurnSeconds: 10,
     shutdownGraceSeconds: 1,
     startupTimeoutSeconds: 1,
+    initialSyncTimelineLimit: 100,
     maxCatchupAgeSeconds: 900,
     maxCatchupEventsPerRoom: 4,
   },

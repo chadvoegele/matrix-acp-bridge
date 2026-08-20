@@ -16,11 +16,11 @@ import type {
 } from "./matrix-client.js";
 import type { OperatorTty, OperatorTtyFactory } from "./operator-tty.js";
 import type { CryptoManifest } from "./crypto-state.js";
-import type { MatrixCheckpointIdentity } from "./bridge-state.js";
+import type { MatrixBridgeIdentity } from "./bridge-state.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
 
 export interface CryptoVerificationRequest {
-  readonly identity: MatrixCheckpointIdentity;
+  readonly identity: MatrixBridgeIdentity;
   readonly state: CryptoStatePaths;
   readonly targetDeviceId: MatrixDeviceId;
 }

@@ -8,7 +8,7 @@ import type {
   MatrixSyncRoomBatch,
 } from "./matrix-client.js";
 import { BridgeStateError } from "./bridge-state.js";
-import type { BridgeStateStore } from "./bridge-state.js";
+import type { BridgeStateStore, CompletedEventRoomInput } from "./bridge-state.js";
 import type { BridgeTerminalCompletion } from "./bridge.js";
 
 export interface SyncCoordinatorBridge {
@@ -41,11 +41,7 @@ function emit(
   }
 }
 
-/**
- * Authorize the batch before durable registration. Rejected events and events
- * omitted by catch-up policy are intentionally absent from the ledger: they
- * are not agent work and therefore cannot hold the recovery cursor.
- */
+/** Authorize a batch before any event is admitted to ACP or the ledger. */
 function eligibleEvents(
   rooms: readonly MatrixSyncRoomBatch[],
   config: BridgeConfig,
@@ -66,7 +62,11 @@ function eligibleEvents(
   for (const room of rooms) {
     const values = selected.get(room.roomId) ?? [];
     for (const event of room.timeline) {
-      const decision = authorizer.authorize(event);
+      // Initial-sync history is intentionally non-live at the Matrix adapter
+      // boundary, but it still needs authorization before its ID is added to
+      // the durable suppression baseline.
+      const authorizationEvent = event.isLive ? event : { ...event, isLive: true };
+      const decision = authorizer.authorize(authorizationEvent);
       if (decision.accepted || decision.kind === "oversized") {
         values.push(catchUp
           ? {
@@ -149,196 +149,133 @@ export class MatrixSyncCoordinator {
         }
       }
 
-      const checkpoint = this.#stateStore.getCheckpoint();
-      if (this.#startupBatch && checkpoint === undefined && batch.phase === "initial") {
-        // Initial history is deliberately outside the recovery cursor. This
-        // is the only cursor write that may precede an event ledger.
-        await this.#commitInitialCursor(batch.nextBatch);
-        emit(this.#diagnostics, "info", "first-cursor-established");
-        this.#bridge.openIntake();
-        this.#bridge.enableDispatch();
-        // A live event can arrive after PREPARED but before the initial
-        // response is handed to the coordinator. It is not initial history;
-        // register it against the established boundary before dispatch. The
-        // equal boundary is intentional: the event was delivered in the
-        // initial response, so completion removes this zero-distance ledger.
-        const live = eligibleEvents(
-          this.#roomsFrom(batch).map((room) => ({
-            ...room,
-            timeline: room.timeline.filter((event) =>
-              event.isLive &&
-              event.isCatchUp !== true &&
-              event.timeline?.isCatchUp !== true,
-            ),
-          })),
-          this.#config,
-          this.#diagnostics,
-          this.#clock,
-          false,
-        );
-        if ([...live.values()].some((events) => events.length > 0)) {
-          await this.#registerAndDispatch(batch, live);
-        }
-        this.#startupBatch = false;
-        return;
-      }
+      const eligible = eligibleEvents(
+        batch.rooms,
+        this.#config,
+        this.#diagnostics,
+        this.#clock,
+        this.#startupBatch && batch.phase === "initial" && this.#stateStore.getSnapshot().initialized,
+      );
 
-      if (this.#startupBatch) {
-        const committedAtMs = checkpoint?.committedAtMs ?? this.#clock.now();
-        const now = this.#clock.now();
-        let ageMs = now - committedAtMs;
-        if (ageMs < 0) {
-          ageMs = 0;
-          emit(this.#diagnostics, "warn", "clock-skew-during-catch-up");
+      if (this.#startupBatch && batch.phase === "initial") {
+        if (!this.#stateStore.getSnapshot().initialized) {
+          const history = new Map<string, InboundMatrixEvent[]>(
+            [...eligible.entries()].map(([roomId, events]) => [
+              roomId,
+              events.filter((event) => !event.isLive),
+            ]),
+          );
+          const live = new Map<string, InboundMatrixEvent[]>(
+            [...eligible.entries()].map(([roomId, events]) => [
+              roomId,
+              events.filter((event) => event.isLive),
+            ]),
+          );
+          await this.#establishBaseline(history);
+          emit(this.#diagnostics, "info", "completed-event-baseline-established");
+          this.#bridge.openIntake();
+          this.#bridge.enableDispatch();
+          this.#dispatchSelected(batch, live);
+          this.#startupBatch = false;
+          return;
         }
-        emit(this.#diagnostics, "info", "catch-up-started", { elapsedMs: ageMs });
 
-        const ageLimitMs = this.#config.limits.maxCatchupAgeSeconds * 1000;
+        const currentTimeline = this.#ledgerRooms(eligible);
+        const selected = new Map<string, InboundMatrixEvent[]>();
+        const newlyTerminal: CompletedEventRoomInput[] = [];
+        let selectedCount = 0;
+        let omittedCount = 0;
         const selectedLimit = Math.min(
           this.#config.limits.maxCatchupEventsPerRoom,
           1 + this.#config.limits.maxQueuedTurnsPerRoom,
         );
-        const eligible = eligibleEvents(this.#roomsFrom(batch), this.#config, this.#diagnostics, this.#clock, true);
-        const selected = new Map<string, InboundMatrixEvent[]>();
-        let selectedCount = 0;
-        let omittedCount = 0;
         for (const room of batch.rooms) {
-          const events = eligible.get(room.roomId) ?? [];
-          if (ageMs > ageLimitMs) {
-            omittedCount += events.length;
-            selected.set(room.roomId, []);
-            continue;
-          }
-          const keep = events.slice(Math.max(0, events.length - selectedLimit));
-          const omitted = events.length - keep.length;
-          omittedCount += omitted;
-          if (omitted > 0) {
-            emit(this.#diagnostics, "warn", "catch-up-events-omitted", {
+          const events = (eligible.get(room.roomId) ?? []).filter((event) => event.eventId !== undefined);
+          const unseen = events.filter((event) => !this.#stateStore.isEventCompleted(room.roomId, event.eventId!));
+          const keep = unseen.slice(Math.max(0, unseen.length - selectedLimit));
+          const keepIds = new Set(keep.map((event) => event.eventId));
+          const omitted = unseen.filter((event) => !keepIds.has(event.eventId));
+          selected.set(room.roomId, keep);
+          if (omitted.length > 0) {
+            newlyTerminal.push({
               roomId: room.roomId,
-              omittedCount: omitted,
+              eventIds: omitted.flatMap((event) => event.eventId === undefined ? [] : [event.eventId]),
+            });
+            omittedCount += omitted.length;
+            emit(this.#diagnostics, "warn", "initial-sync-events-omitted", {
+              roomId: room.roomId,
+              omittedCount: omitted.length,
             });
           }
           selectedCount += keep.length;
-          selected.set(room.roomId, keep);
         }
-        if (ageMs > ageLimitMs) {
-          const total = [...eligible.values()].reduce((count, events) => count + events.length, 0);
-          omittedCount = total;
-          emit(this.#diagnostics, "warn", "catch-up-skipped-age", { elapsedMs: ageMs, omittedCount });
-        }
-
-        await this.#registerAndDispatch(batch, selected);
-        emit(this.#diagnostics, "info", "catch-up-finished", { selectedCount, omittedCount });
+        await this.#compact(currentTimeline, newlyTerminal);
+        emit(this.#diagnostics, "info", "initial-sync-recovery-finished", { selectedCount, omittedCount });
         this.#bridge.openIntake();
+        this.#dispatchSelected(batch, selected);
         this.#bridge.enableDispatch();
         this.#startupBatch = false;
         return;
       }
 
-      const eligible = eligibleEvents(this.#roomsFrom(batch), this.#config, this.#diagnostics, this.#clock, false);
-      await this.#registerAndDispatch(batch, eligible);
+      this.#bridge.openIntake();
+      this.#dispatchSelected(batch, eligible);
+      if (this.#startupBatch) {
+        this.#bridge.enableDispatch();
+        this.#startupBatch = false;
+      }
     } finally {
       this.#handling = false;
     }
   }
 
-  async #registerAndDispatch(
+  async #establishBaseline(eligible: ReadonlyMap<string, readonly InboundMatrixEvent[]>): Promise<void> {
+    try {
+      await this.#stateStore.establishInitialBaseline(this.#ledgerRooms(eligible));
+    } catch (error) {
+      this.#stateFailure(error, "establish-baseline");
+      throw new Error("Private bridge state failure");
+    }
+  }
+
+  async #compact(
+    currentTimeline: readonly CompletedEventRoomInput[],
+    newlyTerminal: readonly CompletedEventRoomInput[],
+  ): Promise<void> {
+    try {
+      await this.#stateStore.compactCompletedEventIds(currentTimeline, newlyTerminal);
+    } catch (error) {
+      this.#stateFailure(error, "compact-completed-event-ledger");
+      throw new Error("Private bridge state failure");
+    }
+  }
+
+  #dispatchSelected(
     batch: MatrixSyncBatch,
     selected: ReadonlyMap<string, readonly InboundMatrixEvent[]>,
-  ): Promise<void> {
-    const priorPending = new Set(
-      this.#stateStore
-        .getPendingRecoveryBatches()
-        .flatMap((recoveryBatch) => recoveryBatch.rooms.flatMap((room) => room.eventIds)),
-    );
-    const registration = await this.#register(batch, selected);
-    // Registration is the authoritative intake gate. No selected event is
-    // handed to the bridge until this durable state transition has succeeded.
-    const recoveryOrder = new Map<string, string[]>();
-    for (const recoveryBatch of this.#stateStore.getPendingRecoveryBatches()) {
-      for (const recoveryRoom of recoveryBatch.rooms) {
-        const eventIds = recoveryOrder.get(recoveryRoom.roomId) ?? [];
-        eventIds.push(...recoveryRoom.eventIds);
-        recoveryOrder.set(recoveryRoom.roomId, eventIds);
-      }
-    }
-    this.#bridge.openIntake();
+  ): void {
     for (const room of batch.rooms) {
+      let terminalTail = this.#roomDispatchTails.get(room.roomId) ?? Promise.resolve();
       const selectedById = new Map(
         (selected.get(room.roomId) ?? [])
           .filter((event): event is InboundMatrixEvent & { readonly eventId: string } => event.eventId !== undefined)
           .map((event) => [event.eventId, event]),
       );
-      const timelineById = new Map(
-        room.timeline
-          .filter((event): event is InboundMatrixEvent & { readonly eventId: string } => event.eventId !== undefined)
-          .map((event) => [event.eventId, event]),
-      );
-      const orderedEventIds = (recoveryOrder.get(room.roomId) ?? [])
-        .filter((eventId) => timelineById.has(eventId));
-      const orderedEventIdSet = new Set(orderedEventIds);
-      for (const eventId of timelineById.keys()) {
-        if (!orderedEventIdSet.has(eventId)) orderedEventIds.push(eventId);
-      }
-      let terminalTail = this.#roomDispatchTails.get(room.roomId) ?? Promise.resolve();
-      let admissionGate: Promise<void> | undefined;
-      for (const eventId of orderedEventIds) {
-        const event = timelineById.get(eventId);
-        if (event === undefined) {
+      for (const event of room.timeline) {
+        if (event.eventId === undefined || !selectedById.has(event.eventId)) {
           continue;
         }
-        const selectedEvent = selectedById.get(eventId);
-        if (selectedEvent !== undefined) {
-          if (registration.get(eventId) !== "completed") {
-            // Admit selected events immediately unless an earlier pending
-            // event in this batch must first be completed as omitted. This
-            // preserves bridge queue depth without allowing a later terminal
-            // completion to violate the durable room FIFO.
-            if (admissionGate !== undefined) {
-              await admissionGate;
-              admissionGate = undefined;
-            }
-            const terminal = this.#dispatchEvent(selectedEvent);
-            terminalTail = terminalTail.then(() => terminal);
-          }
+        if (this.#stateStore.isEventCompleted(room.roomId, event.eventId)) {
           continue;
         }
-        if (priorPending.has(eventId)) {
-          // A previously registered event can be rejected or omitted by a
-          // later restart's policy/age/volume decision. Resolve that old
-          // ledger entry in room order so it cannot strand the cursor.
-          terminalTail = terminalTail.then(() => this.#completeOmittedEvent(eventId));
-          admissionGate = terminalTail;
+        const selectedEvent = selectedById.get(event.eventId);
+        if (selectedEvent === undefined) {
+          continue;
         }
+        terminalTail = terminalTail.then(() => this.#dispatchEvent(selectedEvent));
       }
       this.#roomDispatchTails.set(room.roomId, terminalTail);
       void terminalTail.catch(() => {});
-    }
-    try {
-      await this.#stateStore.advanceRecoveryCursor();
-    } catch (error) {
-      this.#stateFailure(error, "advance-cursor");
-      throw new Error("Private bridge state failure");
-    }
-  }
-
-  async #register(
-    batch: MatrixSyncBatch,
-    selected: ReadonlyMap<string, readonly InboundMatrixEvent[]>,
-  ): Promise<ReadonlyMap<string, "pending" | "completed">> {
-    try {
-      return await this.#stateStore.registerSyncBatch({
-        nextBatch: batch.nextBatch,
-        rooms: batch.rooms.map((room) => ({
-          roomId: room.roomId,
-          eventIds: (selected.get(room.roomId) ?? [])
-            .map((event) => event.eventId)
-            .filter((eventId): eventId is string => eventId !== undefined),
-        })),
-      });
-    } catch (error) {
-      this.#stateFailure(error, "register-batch");
-      throw new Error("Private bridge state failure");
     }
   }
 
@@ -352,7 +289,7 @@ export class MatrixSyncCoordinator {
     const terminalCompletion: BridgeTerminalCompletion = async () => {
       terminalCalled = true;
       try {
-        await this.#stateStore.completeSyncEvent(eventId);
+        await this.#stateStore.markEventCompleted(event.roomId, eventId);
       } catch (error) {
         this.#stateFailure(error, "complete-event");
         throw new Error("Private bridge state failure");
@@ -360,10 +297,6 @@ export class MatrixSyncCoordinator {
     };
     await this.#bridge.handleTimelineEvent(event, terminalCompletion).then(
       () => {
-        // Compatibility for embedding bridges that return only after their
-        // terminal response but do not consume the optional callback. A
-        // callback-aware bridge may also resolve when fatal shutdown abandons
-        // a turn, which must remain incomplete for restart.
         if (!terminalCalled && this.#bridge.consumesTerminalCompletion !== true) {
           return terminalCompletion();
         }
@@ -374,13 +307,15 @@ export class MatrixSyncCoordinator {
     );
   }
 
-  async #completeOmittedEvent(eventId: string): Promise<void> {
-    try {
-      await this.#stateStore.completeSyncEvent(eventId);
-    } catch (error) {
-      this.#stateFailure(error, "complete-omitted-event");
-      throw new Error("Private bridge state failure");
-    }
+  #ledgerRooms(
+    events: ReadonlyMap<string, readonly InboundMatrixEvent[]>,
+  ): CompletedEventRoomInput[] {
+    return [...events.entries()].map(([roomId, roomEvents]) => ({
+      roomId,
+      eventIds: roomEvents
+        .map((event) => event.eventId)
+        .filter((eventId): eventId is string => eventId !== undefined),
+    }));
   }
 
   #rememberDispatched(eventId: string): void {
@@ -394,28 +329,14 @@ export class MatrixSyncCoordinator {
     }
   }
 
-  #roomsFrom(batch: MatrixSyncBatch): readonly MatrixSyncRoomBatch[] {
-    return batch.rooms;
-  }
-
-  async #commitInitialCursor(cursor: string): Promise<void> {
-    try {
-      await this.#stateStore.commitCursor(cursor, this.#clock.now());
-    } catch (error) {
-      this.#stateFailure(error, "commit-initial-cursor");
-      throw new Error("Private bridge state failure");
-    }
-  }
-
   #stateFailure(error: unknown, operation: string): void {
-    emit(this.#diagnostics, "error", "state-checkpoint-failure", {
+    emit(this.#diagnostics, "error", "state-ledger-failure", {
       operation,
       ...(error instanceof BridgeStateError ? { reason: error.category } : {}),
     });
-    const fatal: FatalError = {
+    this.#onFatal({
       code: "state",
       message: "Private bridge state failure",
-    };
-    this.#onFatal(fatal);
+    });
   }
 }

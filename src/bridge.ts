@@ -917,7 +917,7 @@ export class BridgeCoordinator {
       if (event.isCatchUp === true) {
         // The catch-up selector has already admitted this event to durable
         // recovery metadata. Queue bounds make it an intentional omission,
-        // not an unresolved event that can block the cursor forever.
+        // not an unresolved event that can remain in the completed-event ledger.
         this.#diagnostic("warn", "catch-up-event-omitted", {
           roomId,
           eventId,

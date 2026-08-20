@@ -603,13 +603,12 @@ export class DaemonLifecycle {
         userId: identity.userId,
         deviceId: identity.deviceId,
       },
-      now: () => this.#clock.now(),
       diagnostics: this.#diagnostics,
     });
     await (loadSession ? this.#stateStore.pruneSessionMappings(context.config.matrix.allowedRooms) : this.#stateStore.discardSessionMappings());
-    const checkpoint = this.#stateStore.getCheckpoint();
-    if (checkpoint !== undefined) {
-      emitDiagnostic(this.#diagnostics, "info", "saved-cursor-loaded");
+    const initialized = this.#stateStore.getSnapshot().initialized;
+    if (initialized) {
+      emitDiagnostic(this.#diagnostics, "info", "completed-event-ledger-loaded");
     }
 
     this.#bridge = createBridge({
@@ -651,7 +650,7 @@ export class DaemonLifecycle {
     });
     this.#syncCoordinator = coordinator;
     this.#syncBatchUnsubscribe = matrix.onSyncBatch((batch) => coordinator.handleBatch(batch));
-    await matrix.start(checkpoint === undefined ? {} : { since: checkpoint.cursor });
+    await matrix.start({});
     this.#checkShutdownRequest();
 
     emitDiagnostic(this.#diagnostics, "info", "startup-ready");
