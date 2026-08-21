@@ -272,6 +272,47 @@ void test("restart initial sync admits unseen events, suppresses completed IDs, 
   });
 });
 
+void test("completed IDs survive restart compaction when authorization temporarily disallows their sender", async () => {
+  await withStore(async (stateDir) => {
+    const identity = { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" } as const;
+    const completedId = "$completed-while-allowed:example.org";
+    const firstReceived: InboundMatrixEvent[] = [];
+    const first = makeCoordinator(
+      await openBridgeStateStore({ stateDir, identity }),
+      firstReceived,
+    ).coordinator;
+    await first.handleBatch(batch("initial", []));
+    await first.handleBatch(batch("incremental", [event(completedId)]));
+    await first.flush();
+    assert.deepEqual(firstReceived.map((input) => input.eventId), [completedId]);
+
+    const disallowedReceived: InboundMatrixEvent[] = [];
+    const disallowed = makeCoordinator(
+      await openBridgeStateStore({ stateDir, identity }),
+      disallowedReceived,
+      { config: { ...config, matrix: { ...config.matrix, allowedSenders: [] } } },
+    ).coordinator;
+    await disallowed.handleBatch(batch("initial", [event(completedId, completedId, false)]));
+    await disallowed.flush();
+    assert.deepEqual(disallowedReceived, []);
+    assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
+      [ROOM]: [completedId],
+    });
+
+    const allowedAgainReceived: InboundMatrixEvent[] = [];
+    const allowedAgain = makeCoordinator(
+      await openBridgeStateStore({ stateDir, identity }),
+      allowedAgainReceived,
+    ).coordinator;
+    await allowedAgain.handleBatch(batch("initial", [event(completedId, completedId, false)]));
+    await allowedAgain.flush();
+    assert.deepEqual(allowedAgainReceived, []);
+    assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
+      [ROOM]: [completedId],
+    });
+  });
+});
+
 void test("terminal encrypted IDs survive fresh and initialized recovery without retaining content", async () => {
   await withStore(async (stateDir) => {
     const identity = { homeserver: "https://matrix.example.org", userId: "@bridge:example.org", deviceId: "BRIDGEDEVICE" } as const;

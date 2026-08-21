@@ -10,6 +10,7 @@ import type {
 import { BridgeStateError } from "./bridge-state.js";
 import type { BridgeStateStore, CompletedEventRoomInput } from "./bridge-state.js";
 import type { BridgeTerminalCompletion } from "./bridge.js";
+import { isValidMatrixEventId } from "./matrix-validation.js";
 
 export interface SyncCoordinatorBridge {
   openIntake(): void;
@@ -167,7 +168,7 @@ export class MatrixSyncCoordinator {
           // The whole first response is the baseline.  Events that arrived
           // while the SDK crossed PREPARED are still part of that response;
           // opening live intake does not make them new prompts.
-          await this.#establishBaseline(this.#ledgerRooms(eligible, batch.rooms));
+          await this.#establishBaseline(this.#ledgerRooms(batch.rooms));
           emit(this.#diagnostics, "info", "completed-event-baseline-established");
           this.#bridge.openIntake();
           this.#bridge.enableDispatch();
@@ -175,7 +176,7 @@ export class MatrixSyncCoordinator {
           return;
         }
 
-        const currentTimeline = this.#ledgerRooms(eligible, batch.rooms);
+        const currentTimeline = this.#ledgerRooms(batch.rooms);
         const selected = new Map<string, InboundMatrixEvent[]>();
         const newlyTerminalByRoom = new Map<string, string[]>(
           this.#terminalRooms(batch.rooms).map(({ roomId, eventIds }) => [roomId, [...eventIds]]),
@@ -325,30 +326,22 @@ export class MatrixSyncCoordinator {
     );
   }
 
-  #ledgerRooms(
-    events: ReadonlyMap<string, readonly InboundMatrixEvent[]>,
-    rooms: readonly MatrixSyncRoomBatch[] = [],
-  ): CompletedEventRoomInput[] {
+  #ledgerRooms(rooms: readonly MatrixSyncRoomBatch[]): CompletedEventRoomInput[] {
     const byRoom = new Map<string, string[]>();
-    for (const [roomId, roomEvents] of events) {
-      const eventIds = roomEvents
-        .map((event) => event.eventId)
-        .filter((eventId): eventId is string => eventId !== undefined);
-      if (eventIds.length > 0) {
-        byRoom.set(roomId, eventIds);
-      }
-    }
     for (const room of rooms) {
-      if (room.terminalEventIds === undefined || room.terminalEventIds.length === 0) {
-        continue;
-      }
-      const eventIds = byRoom.get(room.roomId) ?? [];
-      for (const eventId of room.terminalEventIds) {
-        if (!eventIds.includes(eventId)) {
-          eventIds.push(eventId);
+      const eventIds = room.timeline
+        .map((event) => event.eventId)
+        .filter((eventId): eventId is string => isValidMatrixEventId(eventId));
+      if (room.terminalEventIds !== undefined) {
+        for (const eventId of room.terminalEventIds) {
+          if (!eventIds.includes(eventId)) {
+            eventIds.push(eventId);
+          }
         }
       }
-      byRoom.set(room.roomId, eventIds);
+      if (eventIds.length > 0) {
+        byRoom.set(room.roomId, eventIds);
+      }
     }
     return [...byRoom.entries()].map(([roomId, eventIds]) => ({ roomId, eventIds }));
   }
