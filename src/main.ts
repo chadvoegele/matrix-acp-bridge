@@ -50,7 +50,6 @@ import type {
   InboundMatrixEvent,
   MatrixClientAdapter,
   MatrixIdentity,
-  MatrixSyncStateChange,
 } from "./matrix-client.js";
 
 const MAX_TIMER_MS = 2_147_483_647;
@@ -256,6 +255,7 @@ function defaultAcpFactory(context: DaemonFactoryContext): AcpClient {
 function defaultMatrixFactory(context: DaemonFactoryContext): MatrixClientAdapter {
   return createMatrixClientAdapter(context.config, context.accessToken, {
     diagnostics: context.diagnostics,
+    clock: context.clock,
   });
 }
 
@@ -405,7 +405,6 @@ export class DaemonLifecycle {
   #cryptoStateStore: PrivateCryptoStateStore | undefined;
   #stateLock: StateLockLike | undefined;
   readonly #fatalUnsubscribes: Unsubscribe[] = [];
-  #syncUnsubscribe: Unsubscribe | undefined;
   #syncBatchUnsubscribe: Unsubscribe | undefined;
   #syncCoordinator: MatrixSyncCoordinator | undefined;
   #signalListeners: Array<{ readonly signal: DaemonSignal; readonly listener: () => void }> = [];
@@ -627,14 +626,6 @@ export class DaemonLifecycle {
     });
     this.#checkShutdownRequest();
 
-    this.#syncUnsubscribe = matrix.onSyncState((change: MatrixSyncStateChange) => {
-      if (change.state === "RECONNECTING") {
-        emitDiagnostic(this.#diagnostics, "warn", "matrix-reconnect");
-      } else if (change.state === "SYNCING" && change.previousState === "RECONNECTING") {
-        emitDiagnostic(this.#diagnostics, "info", "matrix-return-to-syncing");
-      }
-    });
-
     const coordinator = new MatrixSyncCoordinator({
       config: context.config,
       bridge: {
@@ -825,12 +816,6 @@ export class DaemonLifecycle {
         this.#shutdownFailed = true;
       }
     }
-    try {
-      this.#syncUnsubscribe?.();
-    } catch {
-      this.#shutdownFailed = true;
-    }
-    this.#syncUnsubscribe = undefined;
     try {
       this.#syncBatchUnsubscribe?.();
     } catch {

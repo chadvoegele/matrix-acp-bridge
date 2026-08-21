@@ -1138,12 +1138,12 @@ void test("integration reconnects Matrix, retries transient sends with one trans
 
   const { run } = await startRig(rig);
   try {
-    rig.matrixSdk.emit("sync", "RECONNECTING", "SYNCING");
     rig.matrixSdk.emitInbound(sdkEvent({ eventId: "$retry:example.org", body: "retry me" }));
-    rig.matrixSdk.emit("sync", "CATCHUP", "RECONNECTING", { nextSyncToken: "retry-cursor" });
-    await waitFor(() => rig.peer.prompts.length === 1, "reconnected live prompt");
+    rig.matrixSdk.emit("sync", "SYNCING", "SYNCING", { nextSyncToken: "pre-outage-cursor" });
+    await waitFor(() => rig.peer.prompts.length === 1, "active prompt before outage");
 
     const retryCall = rig.peer.prompts[0]!;
+    rig.matrixSdk.emit("sync", "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
     retryCall.update("retry reply", "retry-message");
     await flushMany(2);
     retryCall.respond();
@@ -1152,6 +1152,7 @@ void test("integration reconnects Matrix, retries transient sends with one trans
     await waitFor(() => rig.matrixSdk.attempts.length === 1, "first transient Matrix attempt");
     assert.equal(rig.matrixSdk.sent.length, 0);
     const retryTransactionId = rig.matrixSdk.attempts[0]?.transactionId;
+    rig.matrixSdk.emit("sync", "CATCHUP", "RECONNECTING", { nextSyncToken: "retry-cursor" });
     rig.clock.advanceBy(0);
     await waitFor(() => rig.matrixSdk.sent.length === 1, "transient Matrix retry success");
     assert.equal(rig.matrixSdk.attempts[1]?.transactionId, retryTransactionId);
@@ -2052,7 +2053,7 @@ void test("M3 scenario 9: an unverified manifest fails daemon startup", async ()
   }
 });
 
-void test("M3 scenario 10: a verified-device restart preserves both public-key fingerprints", async () => {
+void test("M3 scenario 10: a verified-device restart and reconnect preserve both public-key fingerprints", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-m3-fingerprint-restart-"));
   const config = requiredConfig(stateDir);
   const firstCrypto = new HermeticCrypto();
@@ -2076,6 +2077,10 @@ void test("M3 scenario 10: a verified-device restart preserves both public-key f
       second!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "m3-fingerprint-two" });
     };
     ({ run: secondRun } = await startRig(second));
+    second.matrixSdk.emit("sync", "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+    second.matrixSdk.emit("sync", "CATCHUP", "RECONNECTING", { nextSyncToken: "m3-fingerprint-recovered" });
+    await flushMany();
+    assert.equal(secondCrypto.initializeCalls, 1);
     await stopRig(second, secondRun);
     secondRun = undefined;
 

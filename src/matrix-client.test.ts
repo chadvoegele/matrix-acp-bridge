@@ -471,6 +471,13 @@ async function withFetch<T>(fetch: typeof globalThis.fetch, action: () => Promis
   }
 }
 
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(
+    JSON.stringify(body),
+    { status, headers: { "content-type": "application/json" } },
+  );
+}
+
 void test("constructs a token-authenticated client with the configured device", () => {
   let received: MatrixClientCreateOptions | undefined;
   const fake = readyClient();
@@ -616,7 +623,7 @@ void test("real SDK encrypted initial events remain outside disabled-mode intake
   });
 });
 
-void test("real SDK retries a failed initial sync without a saved cursor", async () => {
+void test("real SDK retries failed initial sync requests without switching to incremental mode", async () => {
   const harness = createRealSdkHttpHarness({ syncFailures: 2 });
   await withFetch(harness.fetch, async () => {
     const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
@@ -629,6 +636,131 @@ void test("real SDK retries a failed initial sync without a saved cursor", async
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await adapter.stop();
   });
+});
+
+void test("real SDK keeps runtime retry ownership through three failed syncs after normal startup", async () => {
+  const syncRequests: URL[] = [];
+  let successfulSyncs = 0;
+  let runtimeFailures = 0;
+  let runtimeMode = false;
+  let releaseNextSync: (() => void) | undefined;
+
+  const fetch: typeof globalThis.fetch = async (input) => {
+    const inputUrl = typeof input === "string"
+      ? input
+      : (input instanceof URL ? input.href : input.url);
+    const url = new URL(inputUrl);
+    if (url.pathname.endsWith("/whoami")) {
+      return jsonResponse({ user_id: BRIDGE_USER_ID, device_id: "BRIDGE-DEVICE" });
+    }
+    if (url.pathname.endsWith("/versions")) {
+      return jsonResponse({ versions: ["r0.6.0"] });
+    }
+    if (url.pathname.endsWith("/capabilities")) {
+      return jsonResponse({ capabilities: {} });
+    }
+    if (url.pathname.endsWith("/pushrules/")) {
+      return jsonResponse({
+        global: { override: [], content: [], room: [], sender: [], underride: [] },
+        device: {},
+        account: {},
+      });
+    }
+    if (url.pathname.endsWith("/filter")) {
+      return jsonResponse({ filter_id: "runtime-recovery-filter" });
+    }
+    if (url.pathname.endsWith("/joined_rooms")) {
+      return jsonResponse({ joined_rooms: [ROOM_ID] });
+    }
+    if (url.pathname.endsWith("/state")) {
+      return jsonResponse([{
+        type: "m.room.member",
+        state_key: BRIDGE_USER_ID,
+        content: { membership: "join" },
+      }]);
+    }
+    if (url.pathname.endsWith("/sync")) {
+      syncRequests.push(url);
+      if (successfulSyncs > 0) {
+        await new Promise<void>((resolve) => {
+          releaseNextSync = resolve;
+        });
+      }
+      if (runtimeMode && runtimeFailures < 3) {
+        runtimeFailures += 1;
+        return jsonResponse({ errcode: "M_UNKNOWN", error: "temporary failure" }, 503);
+      }
+      successfulSyncs += 1;
+      return jsonResponse({
+        next_batch: `runtime-next-${successfulSyncs}`,
+      rooms: {
+          join: {
+            [ROOM_ID]: {
+              state: {
+                events: [{
+                  event_id: "$member:example.org",
+                  room_id: ROOM_ID,
+                  sender: BRIDGE_USER_ID,
+                  type: "m.room.member",
+                  state_key: BRIDGE_USER_ID,
+                  content: { membership: "join" },
+                }],
+              },
+              timeline: { events: [], limited: false },
+            },
+          },
+        },
+        account_data: { events: [] },
+        presence: { events: [] },
+        to_device: { events: [] },
+      });
+    }
+    return jsonResponse({});
+  };
+
+  const previousRandom = Math.random;
+  Math.random = () => 0;
+  try {
+    await withFetch(fetch, async () => {
+      const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+      const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token", {
+        diagnostics: captureDiagnostics(records),
+      });
+      const fatal: FatalErrorRecord[] = [];
+      adapter.onFatalError((error) => fatal.push(error));
+      try {
+        await adapter.whoAmI();
+        await adapter.start();
+        runtimeMode = true;
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          while (releaseNextSync === undefined) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+          }
+          const release = releaseNextSync;
+          releaseNextSync = undefined;
+          release();
+        }
+        for (let turn = 0; turn < 100 && !records.some((record) => record.event === "matrix-connection-restored"); turn += 1) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        assert.equal(runtimeFailures, 3);
+        assert.equal(fatal.length, 0);
+        assert.deepEqual(
+          syncRequests.slice(0, 5).map((request) => request.searchParams.get("since")),
+          [null, "runtime-next-1", "runtime-next-1", "runtime-next-1", "runtime-next-1"],
+        );
+        assert.deepEqual(
+          records.map((record) => record.event),
+          ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
+        );
+      } finally {
+        await adapter.stop();
+      }
+    });
+  } finally {
+    Math.random = previousRandom;
+  }
 });
 
 void test("returns strict whoami identity data and validates configured IDs", async () => {
@@ -1130,6 +1262,21 @@ void test("fails startup when the initial sync response has no next token", asyn
   assert.equal(fake.stopCalls, 1);
 });
 
+void test("treats a malformed runtime sync boundary as fatal", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const fatal: FatalErrorRecord[] = [];
+  adapter.onFatalError((error) => fatal.push(error));
+  await adapter.start();
+
+  fake.emit(SDK_SYNC, "SYNCING", "SYNCING", {});
+  assert.deepEqual(fatal, [{
+    code: "matrix_transport",
+    message: "Matrix sync response did not establish a next sync token",
+  }]);
+  await adapter.stop();
+});
+
 void test("requires every configured room to be joined and unencrypted", async () => {
   for (const [configuredRoom, expected] of [
     [null, /is not joined/u],
@@ -1332,6 +1479,9 @@ void test("normalizes retryability and server retry-delay metadata without retry
   const timeout = classifyMatrixError({ httpStatus: 408 });
   assert.equal(timeout.kind, "transient");
   assert.equal(timeout.retryable, true);
+  const abortedRequest = classifyMatrixError({ name: "AbortError" });
+  assert.equal(abortedRequest.kind, "transient");
+  assert.equal(abortedRequest.retryable, true);
 
   const forbidden = classifyMatrixError({ httpStatus: 403, errcode: "M_FORBIDDEN" });
   assert.equal(forbidden.kind, "permanent");
@@ -1382,10 +1532,10 @@ void test("exposes reconnect state without taking over SDK backoff and shuts dow
   assert.equal([...fake.listeners.values()].reduce((count, set) => count + set.size, 0), 0);
 });
 
-void test("initial sync transport errors reject startup and are not retried", async () => {
+void test("permanent initial sync errors reject startup immediately", async () => {
   const fake = readyClient();
   fake.startClientAction = () => {
-    fake.emit(SDK_SYNC, "ERROR", null, { error: { httpStatus: 503 } });
+    fake.emit(SDK_SYNC, "ERROR", null, { error: { errcode: "M_UNKNOWN_TOKEN" } });
   };
   const fatal: FatalErrorRecord[] = [];
   const adapter = adapterFor(fake);
@@ -1393,9 +1543,179 @@ void test("initial sync transport errors reject startup and are not retried", as
   await assert.rejects(
     () => adapter.start(),
     (error: unknown) =>
-      error instanceof MatrixAdapterError && error.failure.kind === "transient",
+      error instanceof MatrixAdapterError && error.failure.kind === "permanent",
   );
   assert.equal(fake.startCalls, 1);
   assert.equal(fake.stopCalls, 1);
   assert.equal(fatal.length, 1);
+});
+
+void test("transient reconnecting and error states do not reject startup", async () => {
+  const fake = readyClient();
+  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  fake.startClientAction = () => {
+    fake.emit(SDK_SYNC, "RECONNECTING", null, { error: { httpStatus: 503 } });
+    fake.emit(SDK_SYNC, "ERROR", "RECONNECTING", { error: { httpStatus: 503 } });
+    fake.emit(SDK_SYNC, "PREPARED", "ERROR", { nextSyncToken: "startup-recovered" });
+  };
+  const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
+    client: fake,
+    diagnostics: captureDiagnostics(records),
+  });
+  const fatal: string[] = [];
+  adapter.onFatalError((error) => fatal.push(error.code));
+
+  await adapter.start();
+  assert.deepEqual(fatal, []);
+  assert.deepEqual(records.map((record) => record.event), [
+    "matrix-connection-lost",
+    "matrix-reconnect-retry",
+    "matrix-connection-restored",
+  ]);
+  assert.equal(records[0]?.fields.startupCompleted, false);
+  assert.equal(records[0]?.fields.httpStatus, 503);
+  await adapter.stop();
+});
+
+void test("runtime transient failures, including repeated SDK error states, preserve the adapter and restore once", async () => {
+  const fake = readyClient();
+  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const batches: MatrixSyncBatch[] = [];
+  const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
+    client: fake,
+    diagnostics: captureDiagnostics(records),
+  });
+  adapter.onSyncBatch((batch) => { batches.push(batch); });
+  const fatal: FatalErrorRecord[] = [];
+  adapter.onFatalError((error) => fatal.push(error));
+  await adapter.start();
+
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  fake.emit(SDK_SYNC, "ERROR", "RECONNECTING", { error: { httpStatus: 503 } });
+  fake.emit(SDK_SYNC, "ERROR", "ERROR", { error: { httpStatus: 503 } });
+  assert.deepEqual(fatal, []);
+  assert.equal(fake.stopCalls, 0);
+
+  fake.emit(SDK_EVENT, event({ eventId: "$recovered:example.org", content: {
+    msgtype: "m.text",
+    body: "after recovery",
+  } }));
+  fake.emit(SDK_SYNC, "SYNCING", "ERROR", { nextSyncToken: "recovered-cursor" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(batches.length, 2);
+  assert.deepEqual(
+    batches[1]?.rooms.flatMap((room) => room.timeline).map((item) => item.eventId),
+    ["$recovered:example.org"],
+  );
+  assert.deepEqual(records.map((record) => record.event), [
+    "matrix-connection-lost",
+    "matrix-reconnect-retry",
+    "matrix-connection-restored",
+  ]);
+  const diagnosticText = JSON.stringify(records);
+  assert.equal(diagnosticText.includes("https://"), false);
+  assert.equal(diagnosticText.includes("recovered-cursor"), false);
+  assert.equal(diagnosticText.includes("$recovered"), false);
+  assert.equal(diagnosticText.includes("temporary"), false);
+  assert.equal(diagnosticText.includes("Error"), false);
+  assert.equal(records.at(-1)?.fields.failureCount, 3);
+  await adapter.stop();
+  assert.equal(fake.stopCalls, 1);
+});
+
+void test("does not clear an outage when another failure arrives during durable batch handling", async () => {
+  const fake = readyClient();
+  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  let releaseBatch: (() => void) | undefined;
+  let batchStarted: (() => void) | undefined;
+  let batchCount = 0;
+  const batchEntered = new Promise<void>((resolve) => { batchStarted = resolve; });
+  const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
+    client: fake,
+    diagnostics: captureDiagnostics(records),
+  });
+  adapter.onSyncBatch(async () => {
+    batchCount += 1;
+    if (batchCount === 2) {
+      batchStarted?.();
+      await new Promise<void>((resolve) => { releaseBatch = resolve; });
+    }
+  });
+  await adapter.start();
+
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "first-recovery" });
+  await batchEntered;
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  releaseBatch?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(records.some((record) => record.event === "matrix-connection-restored"), false);
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "second-recovery" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    records.map((record) => record.event),
+    ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
+  );
+  assert.equal(records.at(-1)?.fields.failureCount, 2);
+  await adapter.stop();
+});
+
+void test("sync.unexpectedError remains fatal during runtime", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const fatal: FatalErrorRecord[] = [];
+  adapter.onFatalError((error) => fatal.push(error));
+  await adapter.start();
+
+  fake.emit("sync.unexpectedError", new Error("unsafe local processing failure"));
+  assert.deepEqual(fatal, [{
+    code: "matrix_transport",
+    message: "Matrix sync failed during local processing",
+  }]);
+  await adapter.stop();
+});
+
+void test("permanent authentication and unsolicited stop states remain fatal", async () => {
+  const authFailure = readyClient();
+  authFailure.startClientAction = () => {
+    authFailure.emit(SDK_SYNC, "ERROR", null, { error: { errcode: "M_UNKNOWN_TOKEN" } });
+  };
+  const authAdapter = adapterFor(authFailure);
+  const authFatal: FatalErrorRecord[] = [];
+  authAdapter.onFatalError((error) => authFatal.push(error));
+  await assert.rejects(() => authAdapter.start(), /Matrix sync failed/u);
+  assert.equal(authFatal.length, 1);
+  assert.equal(authFatal[0]?.code, "startup");
+
+  const stopped = readyClient();
+  const stoppedAdapter = adapterFor(stopped);
+  const stoppedFatal: FatalErrorRecord[] = [];
+  stoppedAdapter.onFatalError((error) => stoppedFatal.push(error));
+  await stoppedAdapter.start();
+  stopped.emit(SDK_SYNC, "STOPPED", "SYNCING");
+  assert.deepEqual(stoppedFatal, [{
+    code: "matrix_transport",
+    message: "Matrix sync stopped unexpectedly",
+  }]);
+  await stoppedAdapter.stop();
+});
+
+void test("shutdown during a transient outage emits no false restoration", async () => {
+  const fake = readyClient();
+  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
+    client: fake,
+    diagnostics: captureDiagnostics(records),
+  });
+  await adapter.start();
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  await adapter.stop();
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "late-cursor" });
+  assert.deepEqual(
+    records.map((record) => record.event),
+    ["matrix-connection-lost"],
+  );
+  assert.equal(fake.stopCalls, 1);
 });
