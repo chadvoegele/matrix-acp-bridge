@@ -1,6 +1,6 @@
 # Encrypted Matrix end-to-end test helpers
 
-These test-only programs provision three dedicated devices on two existing Matrix accounts:
+These test-only programs provision three dedicated devices on two existing Matrix accounts. They exercise normal SDK initial sync and completed-ID suppression across restart:
 
 1. the bridge device;
 2. a second device on the bridge account that completes real `m.sas.v1`; and
@@ -74,10 +74,11 @@ The runner:
 - starts the ACP proxy and bridge with a full-duplex pipe;
 - sends and decrypts an encrypted prompt and response with a unique run suffix;
 - checks both event types are `m.room.encrypted` through the Matrix API;
-- counts exactly one ACP `session/prompt` request;
+- counts exactly one ACP `session/prompt` request per live exchange and zero
+  replayed completed prompts during restart;
 - stops both clients and checks snapshot persistence;
 - restarts with the same state and fingerprints; and
-- repeats the exchange.
+- repeats the exchange after normal initial-sync recovery.
 
 ## Manual cleanup
 

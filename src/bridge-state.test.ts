@@ -19,6 +19,11 @@ const identity = {
   deviceId: "BRIDGEDEVICE",
 } as const;
 
+const ROOM_ONE = "!one:example";
+const ROOM_TWO = "!two:example";
+const EVENT_ONE = "$one:example";
+const EVENT_TWO = "$two:example";
+
 async function makeStateDir(): Promise<string> {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-state-"));
   await chmod(stateDir, 0o700);
@@ -36,16 +41,12 @@ async function withStateDir(run: (stateDir: string) => Promise<void>): Promise<v
 
 async function openStore(
   stateDir: string,
-  options: { readonly faultInjector?: (point: BridgeStateFaultPoint) => void | Promise<void>; readonly diagnostics?: DiagnosticSink } = {},
+  options: {
+    readonly faultInjector?: (point: BridgeStateFaultPoint) => void | Promise<void>;
+    readonly diagnostics?: DiagnosticSink;
+  } = {},
 ) {
   return openBridgeStateStore({ stateDir, identity, ...options });
-}
-
-async function seedState(stateDir: string): Promise<void> {
-  const store = await openStore(stateDir);
-  await store.commitCursor("sync-old", 1_700_000_000_000);
-  await store.setSessionMapping("!one:example", "session-one");
-  await store.setSessionMapping("!two:example", "session-two");
 }
 
 async function writeRawState(stateDir: string, value: unknown): Promise<void> {
@@ -58,10 +59,9 @@ function validState(overrides: Record<string, unknown> = {}): Record<string, unk
   return {
     schemaVersion: BRIDGE_STATE_SCHEMA_VERSION,
     identity: { ...identity },
-    cursor: "sync-old",
-    committedAtMs: 1_700_000_000_000,
-    sessions: { "!one:example": "session-one" },
-    pendingBatches: [],
+    initialized: true,
+    sessions: { [ROOM_ONE]: "session-one" },
+    completedEventIds: { [ROOM_ONE]: [EVENT_ONE] },
     ...overrides,
   };
 }
@@ -85,51 +85,154 @@ async function expectStateError(
   return rejected;
 }
 
-void test("absent private state opens empty and a cursor/session round trip preserves only the M2 fields", async () => {
+void test("absent private state is fresh and the strict schema round-trips sessions and completed IDs", async () => {
   await withStateDir(async (stateDir) => {
     const store = await openStore(stateDir);
-    assert.equal(store.getCheckpoint(), undefined);
     assert.deepEqual(store.getSnapshot(), {
-      schemaVersion: 11,
+      schemaVersion: 12,
       identity,
+      initialized: false,
       sessionMappings: {},
-      pendingBatches: [],
+      completedEventIds: {},
     });
 
-    await store.commitCursor("sync-opaque", 1_700_000_000_123);
-    await store.setSessionMapping("!room:example", "acp-session");
+    await store.setSessionMapping(ROOM_ONE, "acp-session");
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] }]);
 
     const raw = JSON.parse(await readFile(store.statePath, "utf8")) as Record<string, unknown>;
-    assert.deepEqual(Object.keys(raw).sort(), ["committedAtMs", "cursor", "identity", "pendingBatches", "schemaVersion", "sessions"]);
-    assert.equal(raw.cursor, "sync-opaque");
-    assert.deepEqual(raw.sessions, { "!room:example": "acp-session" });
-    for (const forbidden of ["eventBody", "inbox", "outbox", "pending", "reply", "accessToken", "agentOutput"]) {
+    assert.deepEqual(Object.keys(raw).sort(), [
+      "completedEventIds",
+      "identity",
+      "initialized",
+      "schemaVersion",
+      "sessions",
+    ]);
+    assert.equal(raw.initialized, true);
+    assert.deepEqual(raw.sessions, { [ROOM_ONE]: "acp-session" });
+    assert.deepEqual(raw.completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    for (const forbidden of [
+      "cursor",
+      "committedAtMs",
+      "pendingBatches",
+      "observedEventIds",
+      "eventBody",
+      "accessToken",
+      "rawError",
+    ]) {
       assert.equal(Object.hasOwn(raw, forbidden), false);
     }
     assert.equal((await lstat(store.statePath)).mode & 0o7777, 0o600);
 
     const reopened = await openStore(stateDir);
-    assert.deepEqual(reopened.getCheckpoint(), {
-      schemaVersion: 11,
-      identity,
-      cursor: "sync-opaque",
-      committedAtMs: 1_700_000_000_123,
-    });
-    assert.equal(reopened.getSessionMapping("!room:example"), "acp-session");
+    assert.equal(reopened.getSnapshot().initialized, true);
+    assert.equal(reopened.isEventCompleted(ROOM_ONE, EVENT_ONE), true);
+    assert.equal(reopened.isEventCompleted(ROOM_TWO, EVENT_ONE), false);
+    assert.deepEqual([...reopened.getSessionMappings()], [[ROOM_ONE, "acp-session"]]);
   });
 });
 
-void test("state validation rejects unknown fields, malformed values, truncation, and unsupported versions", async () => {
-  const cases: Array<{ readonly value: unknown; readonly category?: BridgeStateError["category"] }> = [
-    { value: { ...validState(), extra: true }, category: "corrupt" },
-    { value: validState({ cursor: "" }), category: "corrupt" },
-    { value: validState({ committedAtMs: "yesterday" }), category: "corrupt" },
-    { value: validState({ identity: { ...identity, extra: true } }), category: "corrupt" },
-    { value: validState({ sessions: { "!room:example": 42 } }), category: "corrupt" },
-    { value: "{\"schemaVersion\":1,\"identity\":", category: "corrupt" },
-  ];
+void test("baseline establishment is atomic and a failed first commit remains fresh", async () => {
+  await withStateDir(async (stateDir) => {
+    let failed = false;
+    const store = await openStore(stateDir, {
+      faultInjector: (point) => {
+        if (!failed && point === "rename") {
+          failed = true;
+          throw new Error("opaque baseline failure");
+        }
+      },
+    });
+    await expectStateError(
+      () => store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]),
+      "rename",
+    );
+    assert.equal(store.getSnapshot().initialized, false);
+    assert.deepEqual(store.getSnapshot().completedEventIds, {});
 
-  for (const schemaVersion of [1, 2, 3, 4, 10, 12]) {
+    const reopened = await openStore(stateDir);
+    assert.equal(reopened.getSnapshot().initialized, false);
+    assert.deepEqual(reopened.getSnapshot().completedEventIds, {});
+    await reopened.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
+    assert.equal(reopened.getSnapshot().initialized, true);
+  });
+});
+
+void test("completion is durable, room-scoped, idempotent, and preserves sessions", async () => {
+  await withStateDir(async (stateDir) => {
+    const store = await openStore(stateDir);
+    await store.setSessionMapping(ROOM_ONE, "session-one");
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
+
+    assert.equal(await store.markEventCompleted(ROOM_ONE, EVENT_TWO), true);
+    assert.equal(await store.markEventCompleted(ROOM_ONE, EVENT_TWO), false);
+    assert.equal(store.isEventCompleted(ROOM_ONE, EVENT_TWO), true);
+    assert.equal(store.isEventCompleted(ROOM_TWO, EVENT_TWO), false);
+
+    const reopened = await openStore(stateDir);
+    assert.equal(reopened.isEventCompleted(ROOM_ONE, EVENT_TWO), true);
+    assert.deepEqual([...reopened.getSessionMappings()], [[ROOM_ONE, "session-one"]]);
+  });
+});
+
+void test("compaction retains the current window and newly terminal IDs only", async () => {
+  await withStateDir(async (stateDir) => {
+    const store = await openStore(stateDir);
+    await store.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] },
+      { roomId: ROOM_TWO, eventIds: ["$old:example"] },
+    ]);
+    await store.markEventCompleted(ROOM_ONE, "$outside:example");
+
+    await store.compactCompletedEventIds(
+      [
+        { roomId: ROOM_ONE, eventIds: [EVENT_TWO, "$not-completed:example"] },
+        { roomId: ROOM_TWO, eventIds: [] },
+      ],
+      [
+        { roomId: ROOM_ONE, eventIds: ["$new-terminal:example"] },
+        { roomId: ROOM_TWO, eventIds: ["$omitted:example"] },
+      ],
+    );
+
+    assert.deepEqual(store.getSnapshot().completedEventIds, {
+      [ROOM_ONE]: [EVENT_TWO, "$new-terminal:example"],
+      [ROOM_TWO]: ["$omitted:example"],
+    });
+  });
+});
+
+void test("a compaction failure leaves the previous ledger intact and therefore only over-retains", async () => {
+  await withStateDir(async (stateDir) => {
+    let fail = false;
+    const store = await openStore(stateDir, {
+      faultInjector: (point) => {
+        if (fail && point === "write") {
+          throw new Error("opaque compaction failure");
+        }
+      },
+    });
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] }]);
+    fail = true;
+    await expectStateError(
+      () => store.compactCompletedEventIds([{ roomId: ROOM_ONE, eventIds: [EVENT_TWO] }]),
+      "write",
+    );
+    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    const reopened = await openStore(stateDir);
+    assert.deepEqual(reopened.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+  });
+});
+
+void test("strict validation rejects cursor-era state, unknown fields, malformed IDs, and duplicates", async () => {
+  const cases: Array<{ readonly value: unknown; readonly category: BridgeStateError["category"] }> = [
+    { value: { ...validState(), extra: true }, category: "corrupt" },
+    { value: validState({ initialized: "yes" }), category: "corrupt" },
+    { value: validState({ completedEventIds: { [ROOM_ONE]: [EVENT_ONE, EVENT_ONE] } }), category: "corrupt" },
+    { value: validState({ completedEventIds: { [ROOM_ONE]: ["not-an-event-id"] } }), category: "corrupt" },
+    { value: validState({ cursor: "old-cursor" }), category: "corrupt" },
+    { value: "{\"schemaVersion\":12,\"identity\":", category: "corrupt" },
+  ];
+  for (const schemaVersion of [1, 2, 3, 10, 11, 13]) {
     cases.push({ value: validState({ schemaVersion }), category: "unsupported-version" });
   }
 
@@ -141,130 +244,60 @@ void test("state validation rejects unknown fields, malformed values, truncation
   }
 });
 
-void test("current-schema recovery ledgers require explicit contiguous completed event IDs", async () => {
-  const invalidRooms: unknown[] = [
-    { roomId: "!one:example", eventIds: ["$one:example", "$two:example"], completedEventIds: ["$two:example"] },
-    { roomId: "!one:example", eventIds: ["$one:example", "$two:example"], completedEventIds: ["$one:example", "$one:example"] },
-    { roomId: "!one:example", eventIds: ["$one:example", "$two:example"], completedEventIds: ["$missing:example"] },
-    { roomId: "!one:example", eventIds: ["$one:example", "$one:example"], completedEventIds: [] },
-    { roomId: "!one:example", eventIds: ["$one:example"], completedEventIds: ["not-an-event-id"] },
-    { roomId: "!one:example", eventIds: ["$one:example"], completedEventIds: [], completedPrefix: 0 },
-  ];
-  for (const room of invalidRooms) {
-    await withStateDir(async (stateDir) => {
-      await writeRawState(stateDir, validState({
-        pendingBatches: [{
-          fromCursor: "sync-old",
-          nextBatch: "sync-next",
-          rooms: [room],
-        }],
-      }));
-      await expectStateError(() => openStore(stateDir), "corrupt");
-    });
-  }
-});
-
-void test("completion uses exact event IDs, is idempotent, and survives restart", async () => {
-  await withStateDir(async (stateDir) => {
-    const store = await openStore(stateDir);
-    await store.commitCursor("cursor-x", 100);
-    await store.registerSyncBatch({
-      nextBatch: "cursor-y",
-      rooms: [{ roomId: "!one:example", eventIds: ["$one:example", "$two:example"] }],
-    });
-
-    await expectStateError(() => store.completeSyncEvent("$two:example"), "invalid-input");
-    assert.equal(await store.completeSyncEvent("$one:example"), true);
-    assert.equal(await store.completeSyncEvent("$one:example"), false);
-    assert.deepEqual(store.getPendingRecoveryBatches()[0]?.rooms[0]?.completedEventIds, ["$one:example"]);
-
-    const reopened = await openStore(stateDir);
-    const statuses = await reopened.registerSyncBatch({
-      nextBatch: "cursor-y",
-      rooms: [{ roomId: "!one:example", eventIds: ["$one:example", "$two:example"] }],
-    });
-    assert.deepEqual(statuses, new Map([
-      ["$one:example", "completed"],
-      ["$two:example", "pending"],
-    ]));
-    assert.equal(await reopened.completeSyncEvent("$two:example"), true);
-    assert.equal(reopened.getCheckpoint()?.cursor, "cursor-y");
-    assert.deepEqual(reopened.getPendingRecoveryBatches(), []);
-  });
-});
-
-void test("recovery ledgers preserve room order and advance only through contiguous completed event IDs", async () => {
-  await withStateDir(async (stateDir) => {
-    const store = await openStore(stateDir);
-    await store.commitCursor("cursor-x", 100);
-    await store.registerSyncBatch({
-      nextBatch: "cursor-y",
-      rooms: [
-        { roomId: "!one:example", eventIds: ["$one:example", "$two:example"] },
-        { roomId: "!two:example", eventIds: ["$three:example", "$four:example"] },
-      ],
-    });
-    await store.completeSyncEvent("$one:example");
-    await store.completeSyncEvent("$three:example");
-    assert.equal(store.getCheckpoint()?.cursor, "cursor-x");
-    assert.deepEqual(
-      store.getPendingRecoveryBatches()[0]?.rooms.map((room) => room.completedEventIds),
-      [["$one:example"], ["$three:example"]],
-    );
-
-    await store.completeSyncEvent("$four:example");
-    assert.equal(store.getCheckpoint()?.cursor, "cursor-x");
-    await store.completeSyncEvent("$two:example");
-    assert.equal(store.getCheckpoint()?.cursor, "cursor-y");
-    assert.deepEqual(store.getPendingRecoveryBatches(), []);
-  });
-});
-
-void test("later recovery batches cannot bypass an earlier incomplete batch", async () => {
-  await withStateDir(async (stateDir) => {
-    const store = await openStore(stateDir);
-    await store.commitCursor("cursor-x", 100);
-    await store.registerSyncBatch({ nextBatch: "cursor-y", rooms: [{ roomId: "!one:example", eventIds: ["$one:example"] }] });
-    await store.registerSyncBatch({ nextBatch: "cursor-z", rooms: [{ roomId: "!one:example", eventIds: ["$two:example"] }] });
-    await store.completeSyncEvent("$two:example");
-    assert.equal(store.getCheckpoint()?.cursor, "cursor-x");
-    assert.equal(store.getPendingRecoveryBatches().length, 2);
-    await store.completeSyncEvent("$one:example");
-    assert.equal(store.getCheckpoint()?.cursor, "cursor-z");
-    assert.deepEqual(store.getPendingRecoveryBatches(), []);
-  });
-});
-
-void test("state identity is bound to homeserver, user, and device without exposing identity values in errors", async () => {
+void test("state identity is bound without exposing identity or event values in errors", async () => {
   await withStateDir(async (stateDir) => {
     await writeRawState(stateDir, validState({ identity: { ...identity, userId: "@other:example" } }));
     const error = await expectStateError(() => openStore(stateDir), "identity-mismatch");
     assert.equal(error.message.includes("@other:example"), false);
-    assert.equal(error.message.includes("sync-old"), false);
+    assert.equal(error.message.includes(EVENT_ONE), false);
     assert.equal(error.message.includes("session-one"), false);
   });
 });
 
-void test("private state directory and target path protections reject unsafe links and modes", async () => {
+void test("session mutations are independent of ledger mutations and are serialized", async () => {
   await withStateDir(async (stateDir) => {
-    await chmod(stateDir, 0o750);
-    await expectStateError(() => openStore(stateDir), "unsafe-path");
-    await chmod(stateDir, 0o700);
+    const store = await openStore(stateDir);
+    const rooms = Array.from({ length: 12 }, (_, index) => `!room-${index}:example`);
+    await Promise.all(rooms.map((roomId, index) => store.setSessionMapping(roomId, `session-${index}`)));
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
+    assert.equal(store.getSessionMappings().size, rooms.length);
+    assert.equal(await store.removeSessionMapping(rooms[0]!), true);
+    assert.deepEqual(
+      await store.pruneSessionMappings([ROOM_TWO, rooms[1]!]),
+      rooms.filter((room) => room !== rooms[0] && room !== rooms[1] && room !== ROOM_TWO).sort((left, right) => left.localeCompare(right)),
+    );
+    assert.equal(await store.discardSessionMappings(), true);
+    assert.equal(store.getSnapshot().initialized, true);
+    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE] });
+  });
+});
 
-    await seedState(stateDir);
-    const statePath = join(stateDir, BRIDGE_STATE_FILE_NAME);
-    await chmod(statePath, 0o640);
-    await expectStateError(() => openStore(stateDir), "permissions");
-    await chmod(statePath, 0o600);
-    await rm(statePath);
+void test("private path protections, temporary cleanup, and every atomic write failure are sanitized", async () => {
+  await withStateDir(async (stateDir) => {
+    const temporary = join(stateDir, `.${BRIDGE_STATE_FILE_NAME}.crash.tmp`);
+    await writeFile(temporary, "raw token and event body");
+    await chmod(temporary, 0o600);
+    const store = await openStore(stateDir);
+    assert.equal((await readdir(stateDir)).includes(temporary.split("/").at(-1)!), false);
+    assert.equal(store.getSnapshot().initialized, false);
 
-    const outside = join(stateDir, "outside.json");
-    await writeRawState(stateDir, validState());
-    await writeFile(outside, "not-state");
-    await chmod(outside, 0o600);
-    await rm(statePath);
-    await symlink(outside, statePath);
-    await expectStateError(() => openStore(stateDir), "unsafe-path");
+    const points: readonly BridgeStateFaultPoint[] = ["write", "file-fsync", "rename", "directory-fsync"];
+    for (const point of points) {
+      let enabled = false;
+      const faulted = await openStore(stateDir, {
+        faultInjector: (faultPoint) => {
+          if (enabled && faultPoint === point) {
+            throw new Error("raw secret and session");
+          }
+        },
+      });
+      enabled = true;
+      const error = await expectStateError(
+        () => faulted.markEventCompleted(ROOM_ONE, `$fault-${point}:example`),
+        point,
+      );
+      assert.equal(error.message.includes("raw secret"), false);
+    }
   });
 
   await withStateDir(async (parent) => {
@@ -276,113 +309,7 @@ void test("private state directory and target path protections reject unsafe lin
   });
 });
 
-void test("crash-left temporary files are removed and never accepted as state", async () => {
-  await withStateDir(async (stateDir) => {
-    const temporary = join(stateDir, `.${BRIDGE_STATE_FILE_NAME}.crash.tmp`);
-    await writeFile(temporary, "truncated secret-sync-token");
-    await chmod(temporary, 0o600);
-
-    const store = await openStore(stateDir);
-    assert.equal(store.getCheckpoint(), undefined);
-    assert.equal((await readdir(stateDir)).includes(".bridge-state.json.crash.tmp"), false);
-    assert.equal((await readdir(stateDir)).includes(BRIDGE_STATE_FILE_NAME), false);
-  });
-});
-
-void test("cursor and mapping mutations are serialized and preserve concurrent room updates", async () => {
-  await withStateDir(async (stateDir) => {
-    const store = await openStore(stateDir);
-    await store.commitCursor("sync-serialized", 100);
-    const rooms = Array.from({ length: 24 }, (_, index) => `!room-${index}:example`);
-    await Promise.all(rooms.map((roomId, index) => store.setSessionMapping(roomId, `session-${index}`)));
-
-    assert.equal(store.getSessionMappings().size, rooms.length);
-    const reopened = await openStore(stateDir);
-    assert.equal(reopened.getSessionMappings().size, rooms.length);
-    assert.deepEqual(
-      [...reopened.getSessionMappings().keys()].sort(),
-      [...rooms].sort(),
-    );
-  });
-});
-
-void test("flush waits for the complete fsync sequence of an accepted mutation", async () => {
-  await withStateDir(async (stateDir) => {
-    let releaseFsync!: () => void;
-    const fsyncStarted = new Promise<void>((resolve) => {
-      releaseFsync = resolve;
-    });
-    let fsyncFinished = false;
-    const store = await openStore(stateDir, {
-      faultInjector: async (point) => {
-        if (point === "file-fsync") {
-          await fsyncStarted;
-          fsyncFinished = true;
-        }
-      },
-    });
-
-    const commit = store.commitCursor("flush-cursor", 2);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(fsyncFinished, false);
-
-    let flushed = false;
-    const flush = store.flush().then(() => {
-      flushed = true;
-    });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(flushed, false);
-
-    releaseFsync();
-    await Promise.all([commit, flush]);
-    assert.equal(fsyncFinished, true);
-    assert.equal(store.getCheckpoint()?.cursor, "flush-cursor");
-  });
-});
-
-void test("mapping prune and discard are atomic operations", async () => {
-  await withStateDir(async (stateDir) => {
-    await seedState(stateDir);
-    const store = await openStore(stateDir);
-
-    assert.deepEqual(await store.pruneSessionMappings(["!one:example", "!new:example"]), ["!two:example"]);
-    assert.equal(store.getSessionMapping("!two:example"), undefined);
-    assert.equal(await store.removeSessionMapping("!missing:example"), false);
-    assert.equal(await store.discardSessionMappings(), true);
-    assert.deepEqual([...store.getSessionMappings()], []);
-
-    const reopened = await openStore(stateDir);
-    assert.deepEqual([...reopened.getSessionMappings()], []);
-    assert.equal(reopened.getCheckpoint()?.cursor, "sync-old");
-  });
-});
-
-void test("write, file-fsync, rename, and directory-fsync failures reject fatally without updating the reported state", async () => {
-  const points: readonly BridgeStateFaultPoint[] = ["write", "file-fsync", "rename", "directory-fsync"];
-  for (const point of points) {
-    await withStateDir(async (stateDir) => {
-      let enabled = false;
-      const secret = "raw-io-error-sync-token-session-id";
-      const store = await openStore(stateDir, {
-        faultInjector: (faultPoint) => {
-          if (enabled && faultPoint === point) {
-            throw new Error(secret);
-          }
-        },
-      });
-      await store.commitCursor("stable-cursor", 1);
-      enabled = true;
-
-      const error = await expectStateError(() => store.commitCursor("new-cursor", 2), point);
-      assert.equal(error.message.includes(secret), false);
-      assert.equal(store.getCheckpoint()?.cursor, "stable-cursor");
-      assert.equal(store.getCheckpoint()?.committedAtMs, 1);
-      assert.equal((await lstat(store.statePath)).isFile(), true);
-    });
-  }
-});
-
-void test("state diagnostics expose only the sanitized category and file location", async () => {
+void test("state diagnostics expose only sanitized metadata", async () => {
   await withStateDir(async (stateDir) => {
     const records: Array<{ readonly level: DiagnosticLevel; readonly event: string; readonly fields: DiagnosticFields }> = [];
     const diagnostics: DiagnosticSink = {
@@ -399,17 +326,17 @@ void test("state diagnostics expose only the sanitized category and file locatio
       diagnostics,
       faultInjector: () => {
         if (enabled) {
-          throw new Error("opaque token and ACP session id");
+          throw new Error("opaque event and ACP session id");
         }
       },
     });
-    await store.commitCursor("stable", 1);
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
     enabled = true;
-    await expectStateError(() => store.commitCursor("new", 2), "write");
+    await expectStateError(() => store.markEventCompleted(ROOM_ONE, EVENT_TWO), "write");
     const record = records.at(-1);
     assert.equal(record?.event, "private-state-failure");
     assert.equal(record?.fields.path, store.statePath);
     assert.equal(record?.fields.category, "write");
-    assert.equal(JSON.stringify(record).includes("opaque token"), false);
+    assert.equal(JSON.stringify(record).includes("opaque event"), false);
   });
 });

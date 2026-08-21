@@ -69,7 +69,7 @@ shutdown_grace_seconds = 30
 
 4. Start the ACP stdio proxy and bridge. Wait for the bridge's `startup-ready` diagnostic.
 
-5. Start the sender harness and establish an initial Matrix sync cursor.
+5. Start the sender harness and wait for normal Matrix sync readiness.
 
 6. Send:
 

@@ -98,6 +98,7 @@ void test("parses operator-supplied limits and TOML comments", () => {
     maxTurnSeconds: 2_147_483,
     shutdownGraceSeconds: 1,
     startupTimeoutSeconds: 120,
+    initialSyncTimelineLimit: 100,
     maxCatchupAgeSeconds: 120,
     maxCatchupEventsPerRoom: 3,
   });
@@ -203,6 +204,10 @@ void test("enforces positive integer, minimum byte, and Node timer bounds", asyn
     "max_turn_seconds = 2147484",
     "shutdown_grace_seconds = 2147484",
     "startup_timeout_seconds = 2147484",
+    "initial_sync_timeline_limit = 0",
+    "initial_sync_timeline_limit = -1",
+    "initial_sync_timeline_limit = 1.5",
+    "initial_sync_timeline_limit = 2147483648",
     "max_catchup_age_seconds = 0",
     "max_catchup_age_seconds = 2147484",
     "max_catchup_events_per_room = 0",

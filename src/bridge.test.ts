@@ -53,6 +53,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       maxTurnSeconds: 60,
       shutdownGraceSeconds: 1,
       startupTimeoutSeconds: 60,
+      initialSyncTimelineLimit: 100,
       maxCatchupAgeSeconds: 900,
       maxCatchupEventsPerRoom: 4,
       ...overrides,
@@ -745,7 +746,7 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
         deviceId: "BRIDGE",
       },
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "saved-session");
     const loadingAcp = new FakeAcp();
     let finishLoad!: () => void;
@@ -965,7 +966,7 @@ void test("reset removes only its room mapping and succeeds without an existing 
         deviceId: "BRIDGE",
       },
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "room-one-session");
     await store.setSessionMapping(ROOM_TWO, "room-two-session");
 
@@ -1079,7 +1080,7 @@ void test("a reset state-write failure is fatal and never acknowledges success",
         }
       },
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "saved-session");
     failWrites = true;
 
@@ -1118,9 +1119,8 @@ void test("restores a durable room session before its first prompt", async () =>
         userId: "@bridge:example.org",
         deviceId: "BRIDGE",
       },
-      now: () => clock.now(),
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "saved-session");
     const acp = new FakeAcp();
     acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "loaded answer" });
@@ -1158,9 +1158,8 @@ void test("discards unsupported durable mappings and never persists a newly-crea
         userId: "@bridge:example.org",
         deviceId: "BRIDGE",
       },
-      now: () => clock.now(),
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "old-session");
     const acp = new FakeAcp();
     acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "new answer" });
@@ -1200,9 +1199,8 @@ void test("persists a new mapping before the first prompt and phase-gates every 
         userId: "@bridge:example.org",
         deviceId: "BRIDGE",
       },
-      now: () => clock.now(),
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "saved-session");
 
     const acp = new FakeAcp();
@@ -1285,9 +1283,8 @@ void test("replaces a stale mapping after a healthy load method error and warns 
         userId: "@bridge:example.org",
         deviceId: "BRIDGE",
       },
-      now: () => clock.now(),
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "stale-session");
     const diagnostics: Array<{ level: string; event: string; fields: Readonly<Record<string, unknown>> | undefined }> = [];
     const diagnosticSink: DiagnosticSink = {
@@ -1349,9 +1346,8 @@ void test("keeps load transport and protocol failures fatal instead of creating 
           userId: "@bridge:example.org",
           deviceId: "BRIDGE",
         },
-        now: () => clock.now(),
       });
-      await store.commitCursor("cursor", 1000);
+      await store.establishInitialBaseline([]);
       await store.setSessionMapping(ROOM_ONE, "saved-session");
       const acp = new FakeAcp();
       acp.loadSessionImpl = async () => {
@@ -1393,9 +1389,8 @@ void test("prunes removed-room mappings and keeps restored sessions isolated by 
         userId: "@bridge:example.org",
         deviceId: "BRIDGE",
       },
-      now: () => clock.now(),
     });
-    await store.commitCursor("cursor", 1000);
+    await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "room-one-session");
     await store.setSessionMapping(ROOM_TWO, "removed-room-session");
     const acp = new FakeAcp();

@@ -1,6 +1,9 @@
-import { register } from "node:module";
-
-import { calculateRetryBackoff } from "matrix-js-sdk/lib/http-api/utils.js";
+import {
+  calculateRetryBackoff,
+  createClient,
+  MemoryStore,
+} from "matrix-js-sdk";
+import { logger as matrixSdkRootLogger } from "matrix-js-sdk/lib/logger.js";
 import {
   classifyCryptoFailure,
   SAS_VERIFICATION_METHOD,
@@ -30,12 +33,6 @@ export type MatrixRoomId = string;
 export type MatrixUserId = string;
 export type MatrixEventId = string;
 export type MatrixDeviceId = string;
-
-/**
- * A sync cursor is issued by Matrix and must be treated as an opaque value.
- * It is intentionally not parsed, compared, or assembled by bridge code.
- */
-export type MatrixSyncCursor = string;
 
 export interface MatrixIdentity {
   readonly userId: MatrixUserId;
@@ -103,7 +100,6 @@ export type MatrixDecryptionFailureListener = (
     readonly roomId: MatrixRoomId;
     readonly eventId: MatrixEventId;
     readonly sender: MatrixUserId;
-    readonly isCatchUp: boolean;
   }>,
 ) => void;
 
@@ -124,11 +120,12 @@ export interface MatrixTimelineMetadata {
 export interface MatrixSyncRoomBatch {
   readonly roomId: MatrixRoomId;
   readonly timeline: readonly InboundMatrixEvent[];
+  /** IDs terminally omitted at the adapter cutoff; no event content is retained. */
+  readonly terminalEventIds?: readonly MatrixEventId[];
   readonly limited: boolean;
 }
 
 export interface MatrixSyncBatch {
-  readonly nextBatch: MatrixSyncCursor;
   readonly phase: MatrixSyncPhase;
   readonly rooms: readonly MatrixSyncRoomBatch[];
 }
@@ -136,8 +133,6 @@ export interface MatrixSyncBatch {
 export type MatrixSyncBatchListener = (batch: MatrixSyncBatch) => void | Promise<void>;
 
 export interface MatrixSyncStartOptions {
-  /** The opaque cursor supplied as `since`; omitted for the first run. */
-  readonly since?: MatrixSyncCursor;
   /** Keep Matrix event intake closed for one-shot crypto readiness operations. */
   readonly intakeEnabled?: boolean;
 }
@@ -159,6 +154,8 @@ export interface InboundMatrixEvent {
   readonly sender: MatrixUserId;
   readonly type: string;
   readonly content: Readonly<Record<string, unknown>>;
+  /** Matrix event origin timestamp in milliseconds, when supplied by the SDK. */
+  readonly originServerTs?: number;
   readonly isLive: boolean;
   /** True when the event came from the bounded restart catch-up response. */
   readonly isCatchUp?: boolean;
@@ -277,6 +274,7 @@ export interface MatrixFailureClassification {
 export interface MatrixSdkEventLike {
   getRoomId(): string | undefined;
   getId(): string | undefined;
+  getTs?(): number | undefined;
   getSender(): string | undefined;
   getType(): string;
   getContent(): unknown;
@@ -296,10 +294,6 @@ export interface MatrixSdkRoomLike {
   findEventById?(eventId: string): unknown;
 }
 
-export interface MatrixSdkStoreLike {
-  setSyncToken?(token: string): void;
-}
-
 type SdkListener = (...args: unknown[]) => void;
 
 export interface MatrixSdkClientLike {
@@ -307,7 +301,7 @@ export interface MatrixSdkClientLike {
   off?(event: string, listener: SdkListener): unknown;
   removeListener?(event: string, listener: SdkListener): unknown;
   whoami(): Promise<unknown>;
-  startClient(options?: { readonly since?: string }): Promise<void>;
+  startClient(options?: { readonly initialSyncLimit?: number }): Promise<void>;
   stopClient(): void;
   initRustCrypto?(options?: {
     readonly useIndexedDB?: boolean;
@@ -325,13 +319,12 @@ export interface MatrixSdkClientLike {
       readonly left?: readonly string[];
     }): Promise<void>;
     onSyncCompleted?(
-      syncState: { readonly nextSyncToken?: string; readonly catchingUp?: boolean },
+      syncState: { readonly nextSyncToken?: string },
     ): void | Promise<void>;
     requestDeviceVerification?(userId: string, deviceId: string): Promise<unknown>;
     getVerificationRequestsToDeviceInProgress?(userId: string): readonly unknown[];
   } | undefined;
   getRoom(roomId: string): MatrixSdkRoomLike | null | undefined;
-  readonly store?: MatrixSdkStoreLike;
   getJoinedRooms?(): Promise<{ readonly joined_rooms: readonly string[] }>;
   roomState?(roomId: string): Promise<readonly {
     readonly type?: string;
@@ -353,6 +346,7 @@ export interface MatrixClientCreateOptions {
   readonly accessToken: string;
   readonly userId: string;
   readonly deviceId: string;
+  readonly initialSyncLimit: number;
   readonly verificationMethods?: readonly string[];
 }
 
@@ -385,22 +379,6 @@ const SDK_EVENT_TYPES = {
   roomEncryption: "m.room.encryption",
   roomMember: "m.room.member",
 } as const;
-
-let matrixSdkLoaderRegistered = false;
-
-function ensureMatrixSdkLoader(): void {
-  if (matrixSdkLoaderRegistered) {
-    return;
-  }
-  register("./matrix-sdk-loader.js", import.meta.url);
-  matrixSdkLoaderRegistered = true;
-}
-
-async function loadMatrixSdk(): Promise<typeof import("matrix-js-sdk")> {
-  ensureMatrixSdkLoader();
-  await silenceMatrixSdkRootLogger();
-  return import("matrix-js-sdk");
-}
 
 export interface MatrixClientAdapterOptions {
   /** Replace the SDK factory with a hermetic fake in tests. */
@@ -927,12 +905,11 @@ interface MatrixSdkRootLogger extends MatrixSdkLogger {
   setLevel(level: "silent", persist?: boolean): void;
 }
 
-async function silenceMatrixSdkRootLogger(): Promise<void> {
+function silenceMatrixSdkRootLogger(): void {
   // MatrixRTC's static helpers import this logger directly instead of using
-  // the logger supplied to MatrixClient. Configure it before loading the
-  // public SDK so module-level child loggers are silent too.
-  const loggerModule = await import("matrix-js-sdk/lib/logger.js");
-  const rootLogger = loggerModule.logger as unknown as MatrixSdkRootLogger;
+  // the logger supplied to MatrixClient. Configure it before creating the
+  // client so module-level child loggers are silent too.
+  const rootLogger = matrixSdkRootLogger as unknown as MatrixSdkRootLogger;
   rootLogger.setLevel("silent", false);
   rootLogger.getChild = () => silentMatrixSdkLogger;
 }
@@ -1095,16 +1072,17 @@ function matrixConfigFrom(config: MatrixConfig | BridgeConfig): MatrixConfig {
 function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClientLike {
   let client: MatrixSdkClientLike | undefined;
   let loading: Promise<MatrixSdkClientLike> | undefined;
-  let initialSyncToken: string | undefined;
   const subscriptions: SdkSubscription[] = [];
+  const store = new MemoryStore();
 
   const load = async (): Promise<MatrixSdkClientLike> => {
     if (client !== undefined) {
       return client;
     }
     if (loading === undefined) {
-      loading = loadMatrixSdk().then((sdk) => {
-        client = sdk.createClient({
+      loading = Promise.resolve().then(() => {
+        silenceMatrixSdkRootLogger();
+        client = createClient({
           baseUrl: options.baseUrl,
           accessToken: options.accessToken,
           userId: options.userId,
@@ -1112,11 +1090,9 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
           ...(options.verificationMethods === undefined
             ? {}
             : { verificationMethods: [...options.verificationMethods] }),
+          store,
           logger: silentMatrixSdkLogger,
         }) as unknown as MatrixSdkClientLike;
-        if (initialSyncToken !== undefined) {
-          client.store?.setSyncToken?.(initialSyncToken);
-        }
         for (const subscription of subscriptions) {
           client.on(subscription.event, subscription.listener);
         }
@@ -1151,11 +1127,8 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
     async whoami() {
       return (await load()).whoami();
     },
-    async startClient(startOptions) {
-      if (startOptions?.since !== undefined) {
-        initialSyncToken = startOptions.since;
-      }
-      await (await load()).startClient();
+    async startClient(startOptions?: { readonly initialSyncLimit?: number }) {
+      await (await load()).startClient(startOptions);
     },
     stopClient() {
       client?.stopClient();
@@ -1188,14 +1161,6 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
       if (event !== undefined && loaded.sendReadReceipt !== undefined) {
         await loaded.sendReadReceipt(event, "m.read", true);
       }
-    },
-    store: {
-      setSyncToken(token: string): void {
-        initialSyncToken = token;
-        if (client?.store?.setSyncToken !== undefined) {
-          client.store.setSyncToken(token);
-        }
-      },
     },
     async sendMessage(roomId, content, transactionId) {
       await (await load()).sendMessage(roomId, content, transactionId);
@@ -1231,9 +1196,7 @@ type Lifecycle = "idle" | "starting" | "ready" | "stopped";
 interface EventContext {
   readonly order: number;
   readonly isLive: boolean;
-  readonly isCatchUp: boolean;
-  readonly limited: boolean;
-  readonly catchUpClosed: boolean;
+  readonly isInitial: boolean;
 }
 
 type EncryptedEventStatus = "pending" | "completed" | "omitted";
@@ -1247,8 +1210,6 @@ type EncryptedEventStatus = "pending" | "completed" | "omitted";
 interface EncryptedEventRecord {
   readonly status: EncryptedEventStatus;
   readonly roomId?: string;
-  readonly sender?: string;
-  readonly isCatchUp: boolean;
 }
 
 interface SdkSubscription {
@@ -1262,6 +1223,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   readonly #crypto: MatrixCryptoAdapter | undefined;
   readonly #diagnostics: DiagnosticSink | undefined;
   readonly #configuredRooms: ReadonlySet<string>;
+  readonly #initialSyncLimit: number;
 
   #lifecycle: Lifecycle = "idle";
   #intakeStopped = false;
@@ -1287,11 +1249,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   readonly #pendingBatchEvents: InboundMatrixEvent[] = [];
   readonly #pendingBatchLimitedRooms = new Set<string>();
 
-  #since: string | undefined;
   #firstBatch = true;
   #nextEventOrder = 0;
   #syncBatchInFlight = false;
-  #pendingNextBatch: string | undefined;
+  #pendingBatchReady = false;
 
   #resolvePrepared: (() => void) | undefined;
   #rejectPrepared: ((error: unknown) => void) | undefined;
@@ -1316,6 +1277,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
 
     this.#configuredRooms = new Set(this.#config.allowedRooms);
+    this.#initialSyncLimit = "limits" in config ? config.limits.initialSyncTimelineLimit : 100;
     this.#diagnostics = options.diagnostics === undefined || options.diagnostics instanceof RateLimitedDiagnosticSink
       ? options.diagnostics
       : new RateLimitedDiagnosticSink(options.diagnostics);
@@ -1326,6 +1288,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         accessToken,
         userId: this.#config.userId,
         deviceId: this.#config.deviceId,
+        initialSyncLimit: this.#initialSyncLimit,
         ...(this.#config.encryption === "required"
           ? { verificationMethods: [SAS_VERIFICATION_METHOD] }
           : {}),
@@ -1475,16 +1438,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     return () => unsubscribeFrom(this.#syncBatchListeners, listener);
   }
 
-  /** Convenience subscription for the SDK's nonfatal reconnect transition. */
-  onReconnect(listener: MatrixSyncStateListener): Unsubscribe {
-    const wrapped: MatrixSyncStateListener = (change) => {
-      if (change.state === "RECONNECTING") {
-        listener(change);
-      }
-    };
-    return this.onSyncState(wrapped);
-  }
-
   onFatalError(listener: FatalErrorListener): Unsubscribe {
     this.#fatalListeners.add(listener);
     return () => unsubscribeFrom(this.#fatalListeners, listener);
@@ -1516,14 +1469,13 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     this.#lifecycle = "starting";
     this.#intakeStopped = false;
     this.#intakeEnabled = options.intakeEnabled !== false;
-    this.#since = options.since;
     this.#firstBatch = true;
     this.#pendingBatchEvents.length = 0;
     this.#pendingBatchLimitedRooms.clear();
     this.#encryptedEvents.clear();
     this.#eventContexts.clear();
     this.#nextEventOrder = 0;
-    this.#pendingNextBatch = undefined;
+    this.#pendingBatchReady = false;
     this.#registerSdkListeners();
     this.#startPromise = this.#runStart();
     return this.#startPromise;
@@ -1661,19 +1613,17 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#rejectPrepared = reject;
     });
 
-    if (this.#since !== undefined) {
-      this.#client.store?.setSyncToken?.(this.#since);
-    }
-    const sdkStart = Promise.resolve().then(() => this.#client.startClient(
-      this.#since === undefined ? {} : { since: this.#since },
-    ));
-    sdkStart.catch((error: unknown) => {
-      this.#rejectPrepared?.(
-        this.#startError(error, "Matrix sync failed to start"),
-      );
-    });
+    let sdkStart: Promise<void> | undefined;
 
     try {
+      sdkStart = Promise.resolve().then(() => this.#client.startClient({
+        initialSyncLimit: this.#initialSyncLimit,
+      }));
+      sdkStart.catch((error: unknown) => {
+        this.#rejectPrepared?.(
+          this.#startError(error, "Matrix sync failed to start"),
+        );
+      });
       await preparedPromise;
       await sdkStart;
       if (this.#intakeStopped || this.#fatalEmitted) {
@@ -1684,10 +1634,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         );
       }
       await this.validateConfiguredRooms();
-      if (this.#pendingNextBatch === undefined) {
+      if (!this.#pendingBatchReady) {
         throw new MatrixAdapterError(
           "start",
-          "Matrix sync response did not establish a cursor",
+          "Matrix sync response did not establish a next sync token",
           permanentFailure(),
         );
       }
@@ -1695,7 +1645,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#resolvePrepared = undefined;
       this.#rejectPrepared = undefined;
       this.#lifecycle = "ready";
-      if (this.#pendingNextBatch !== undefined) {
+      if (this.#pendingBatchReady) {
         void this.#emitPendingBatch().catch(() => {});
       }
     } catch (error) {
@@ -1716,11 +1666,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
   }
 
-  /**
-   * Validate every configured room, including membership and encryption.
-   * This remains a synchronous SDK lookup today, but the async boundary lets
-   * a cursor-aware adapter perform an independent current-state query.
-   */
+  /** Validate every configured room, including membership and encryption. */
   async validateConfiguredRooms(): Promise<MatrixConfiguredRoomValidation> {
     return this.#validateConfiguredRooms();
   }
@@ -1793,16 +1739,13 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
           toStartOfTimeline !== true &&
           data?.liveEvent !== false &&
           this.#phaseAllowsLiveEvents(),
-        isCatchUp:
-          this.#since !== undefined &&
-          this.#firstBatch &&
-          toStartOfTimeline !== true &&
-          data?.liveEvent !== false,
-        limited: data?.limited === true,
-        catchUpClosed: false,
+        isInitial: this.#firstBatch,
       });
     }
-    if (toStartOfTimeline === true || data?.liveEvent === false) {
+    // During the first SDK response, Room.timeline is also a valid source of
+    // initial history. After the initial batch has been classified, historical
+    // timeline callbacks are outside the adapter intake boundary.
+    if ((toStartOfTimeline === true || data?.liveEvent === false) && !this.#firstBatch) {
       return;
     }
     this.#handleInboundSdkEvent(args[0]);
@@ -1816,55 +1759,63 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   };
 
   async #emitPendingBatch(): Promise<void> {
-    if (this.#syncBatchInFlight || this.#pendingNextBatch === undefined) {
+    if (this.#syncBatchInFlight || !this.#pendingBatchReady) {
       return;
     }
     this.#syncBatchInFlight = true;
-    const phase = this.#since === undefined && this.#firstBatch ? "initial" : "incremental";
-    const isCatchUp = phase === "incremental" && this.#firstBatch;
+    const phase = this.#firstBatch ? "initial" : "incremental";
     const events = this.#pendingBatchEvents.splice(0);
     events.sort((left, right) => this.#eventOrderFor(left) - this.#eventOrderFor(right));
-    if (isCatchUp) {
-      // The batch is now classified. Unresolved encrypted events are omitted
-      // from this bounded selection and may not re-enter it after its cursor
-      // has been committed.
-      this.#closeCatchUpContexts();
-    } else if (phase === "initial") {
-      // First-run history is suppressed even when the SDK has not yet
-      // produced clear content. Do not let a later retry turn that history
-      // into live intake after the initial cursor is committed.
-      this.#closeInitialEncryptedEvents();
-    }
+    const terminalEventIds = phase === "initial"
+      ? this.#closeInitialEncryptedEvents()
+      : new Map<string, string[]>();
     const limitedRooms = new Set(this.#pendingBatchLimitedRooms);
     this.#pendingBatchLimitedRooms.clear();
-    const rooms = new Map<string, { timeline: InboundMatrixEvent[]; limited: boolean }>();
+    const rooms = new Map<string, {
+      timeline: InboundMatrixEvent[];
+      terminalEventIds: string[];
+      limited: boolean;
+    }>();
     for (const event of events) {
       let room = rooms.get(event.roomId);
       if (room === undefined) {
-        room = { timeline: [], limited: limitedRooms.has(event.roomId) };
+        room = {
+          timeline: [],
+          terminalEventIds: [],
+          limited: limitedRooms.has(event.roomId),
+        };
         rooms.set(event.roomId, room);
       }
       room.timeline.push({
         ...event,
-        ...(isCatchUp ? { isCatchUp: true } : { isCatchUp: false }),
-        timeline: { phase, isCatchUp, limited: room.limited },
+        isCatchUp: false,
+        timeline: { phase, isCatchUp: false, limited: room.limited },
       });
+    }
+    for (const [roomId, eventIds] of terminalEventIds) {
+      const room = rooms.get(roomId) ?? {
+        timeline: [],
+        terminalEventIds: [],
+        limited: limitedRooms.has(roomId),
+      };
+      room.terminalEventIds.push(...eventIds);
+      rooms.set(roomId, room);
     }
     for (const roomId of limitedRooms) {
       if (!rooms.has(roomId)) {
-        rooms.set(roomId, { timeline: [], limited: true });
+        rooms.set(roomId, { timeline: [], terminalEventIds: [], limited: true });
       }
     }
     const batch = {
-      nextBatch: this.#pendingNextBatch,
       phase,
       rooms: [...rooms.entries()].map(([roomId, room]) => ({
         roomId,
         timeline: room.timeline,
+        ...(room.terminalEventIds.length === 0 ? {} : { terminalEventIds: room.terminalEventIds }),
         limited: room.limited,
       })),
     } satisfies MatrixSyncBatch;
-    this.#pendingNextBatch = undefined;
+    this.#pendingBatchReady = false;
     try {
       for (const listener of this.#syncBatchListeners) {
         await listener(batch);
@@ -1872,7 +1823,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#firstBatch = false;
     } finally {
       this.#syncBatchInFlight = false;
-      if (this.#lifecycle === "ready" && this.#pendingNextBatch !== undefined) {
+      if (this.#lifecycle === "ready" && this.#pendingBatchReady) {
         void this.#emitPendingBatch().catch(() => {});
       }
     }
@@ -1903,9 +1854,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     if (context === undefined) {
       context = this.#rememberEventContext(eventId, {
         isLive: this.#phaseAllowsLiveEvents(),
-        isCatchUp: this.#since !== undefined && this.#firstBatch,
-        limited: false,
-        catchUpClosed: false,
+        isInitial: this.#firstBatch,
       });
     }
     const encrypted = this.#isEncryptedEvent(event);
@@ -1915,18 +1864,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     if (this.#fatalEmitted) {
       return;
     }
-    if (!context.isLive || context.catchUpClosed) {
-      if (this.#config.encryption === "required" && encrypted) {
-        if (this.#hasAuthenticatedClearContent(event)) {
-          this.#rememberEncryptedCompleted(eventId, context, this.#eventMetadata(event));
-        } else {
-          this.#rememberEncryptedPending(eventId, context, this.#eventMetadata(event));
-        }
-      } else if (!encrypted && !context.isLive) {
-        // Plaintext history may consume the ordinary deduplication slot. The
-        // encrypted path deliberately does not do this for ciphertext.
-        this.#rememberEventId(eventId);
-      }
+    if (!context.isLive && !context.isInitial) {
       return;
     }
     const normalized = this.#normalizeEvent(event, eventId, context);
@@ -1940,13 +1878,13 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
           // A successfully decrypted but unsupported clear event is still
           // complete. Retrying it on every SDK callback would keep it in the
           // pending registry forever and violate at-most-once observation.
-          this.#rememberEncryptedCompleted(eventId, context, metadata);
+          this.#rememberEncryptedCompleted(eventId, metadata);
           this.#rememberEventId(eventId);
         } else {
-          this.#rememberEncryptedPending(eventId, context, metadata);
+          this.#rememberEncryptedPending(eventId, metadata);
         }
         if (this.#isDecryptionFailure(event)) {
-          this.#emitDecryptionFailure(event, eventId, context);
+          this.#emitDecryptionFailure(event, eventId);
         }
       } else if (encrypted) {
         // Disabled mode rejects encrypted events at the SDK boundary. This
@@ -1962,10 +1900,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     // The dedup index is populated only after required-mode ciphertext has
     // yielded authenticated clear content. This permits late decryption.
     if (normalized.isEncrypted === true) {
-      this.#rememberEncryptedCompleted(eventId, context, {
-        roomId: normalized.roomId,
-        sender: normalized.sender,
-      });
+      this.#rememberEncryptedCompleted(eventId, { roomId: normalized.roomId });
     }
     this.#rememberEventId(eventId);
     if (normalized.isEncrypted === true && normalized.isDecrypted === true) {
@@ -2061,14 +1996,25 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       }
     })();
 
+    const originServerTs = (() => {
+      try {
+        const timestamp = event.getTs?.();
+        return typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp >= 0
+          ? timestamp
+          : undefined;
+      } catch {
+        return;
+      }
+    })();
+
     return {
       roomId,
       eventId,
       sender,
       type,
       content: { ...content },
+      ...(originServerTs === undefined ? {} : { originServerTs }),
       isLive: context.isLive,
-      ...(context.isCatchUp ? { isCatchUp: true } : {}),
       isRedacted: redacted,
       isPlaintext: !encrypted,
       isEncrypted: encrypted,
@@ -2099,14 +2045,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
 
   #eventMetadata(event: MatrixSdkEventLike): {
     readonly roomId?: string;
-    readonly sender?: string;
   } {
     try {
       const roomId = event.getRoomId();
-      const sender = event.getSender();
       return {
         ...(typeof roomId === "string" ? { roomId } : {}),
-        ...(typeof sender === "string" ? { sender } : {}),
       };
     } catch {
       return {};
@@ -2134,7 +2077,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   #emitDecryptionFailure(
     event: MatrixSdkEventLike,
     eventId: string,
-    context: EventContext,
   ): void {
     let roomId: string | undefined;
     let sender: string | undefined;
@@ -2148,14 +2090,12 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return;
     }
     const failure = classifyCryptoFailure("decrypt", "decryption_failed");
-    const metadata = { roomId, eventId, sender, isCatchUp: context.isCatchUp } as const;
+    const metadata = { roomId, eventId, sender } as const;
     try {
       this.#diagnostics?.warn("matrix-decryption-failed", {
-        roomId,
-        eventId,
-        sender,
-        isCatchUp: context.isCatchUp,
         reason: failure.reason,
+        phase: "decryption",
+        count: 1,
       });
     } catch {
       // Diagnostics must never affect event handling.
@@ -2180,9 +2120,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     } : {
       order: previous.order,
       isLive: previous.isLive && context.isLive,
-      isCatchUp: previous.isCatchUp || context.isCatchUp,
-      limited: previous.limited || context.limited,
-      catchUpClosed: previous.catchUpClosed || context.catchUpClosed,
+      isInitial: previous.isInitial || context.isInitial,
     };
     this.#eventContexts.set(eventId, next);
     while (this.#eventContexts.size > 10_000) {
@@ -2206,48 +2144,38 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
   }
 
-  #closeCatchUpContexts(): void {
-    // Classify the encrypted registry independently from event-context
-    // retention. This keeps a pending catch-up event closed even if its
-    // timeline context was evicted from the separate bounded ordering map.
+  #closeInitialEncryptedEvents(): Map<string, string[]> {
+    const terminalEventIds = new Map<string, string[]>();
+    let omittedCount = 0;
     for (const [eventId, encrypted] of this.#encryptedEvents) {
-      if (!encrypted.isCatchUp || encrypted.status !== "pending") {
+      if (encrypted.status !== "pending") {
         continue;
       }
       this.#encryptedEvents.set(eventId, { ...encrypted, status: "omitted" });
-      const fields = {
-        ...(encrypted.roomId === undefined ? {} : { roomId: encrypted.roomId }),
-        ...(encrypted.sender === undefined ? {} : { sender: encrypted.sender }),
-        eventId,
-        isCatchUp: true,
-        reason: "decryption_pending_at_catchup_cutoff",
-      } as const;
+      omittedCount += 1;
+      if (encrypted.roomId !== undefined) {
+        const eventIds = terminalEventIds.get(encrypted.roomId) ?? [];
+        eventIds.push(eventId);
+        terminalEventIds.set(encrypted.roomId, eventIds);
+      }
+    }
+    if (omittedCount > 0) {
       try {
-        this.#diagnostics?.warn("matrix-encrypted-catch-up-omitted", fields);
+        this.#diagnostics?.warn("matrix-encrypted-initial-event-omitted", {
+          reason: "decryption_pending_at_initial_sync_cutoff",
+          phase: "initial",
+          count: omittedCount,
+        });
       } catch {
         // Diagnostics are observational and never affect the cutoff.
       }
     }
-    for (const [eventId, context] of this.#eventContexts) {
-      if (!context.isCatchUp || context.catchUpClosed) {
-        continue;
-      }
-      this.#eventContexts.set(eventId, { ...context, catchUpClosed: true });
-    }
-  }
-
-  #closeInitialEncryptedEvents(): void {
-    for (const [eventId, encrypted] of this.#encryptedEvents) {
-      if (!encrypted.isCatchUp && encrypted.status === "pending") {
-        this.#encryptedEvents.set(eventId, { ...encrypted, status: "omitted" });
-      }
-    }
+    return terminalEventIds;
   }
 
   #rememberEncryptedPending(
     eventId: string,
-    context: EventContext,
-    metadata: { readonly roomId?: string; readonly sender?: string },
+    metadata: { readonly roomId?: string },
   ): void {
     const previous = this.#encryptedEvents.get(eventId);
     if (previous?.status === "completed" || previous?.status === "omitted") {
@@ -2255,22 +2183,17 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
     this.#rememberEncryptedEvent(eventId, {
       status: "pending",
-      isCatchUp: previous?.isCatchUp === true || context.isCatchUp,
       ...(metadata.roomId === undefined ? {} : { roomId: metadata.roomId }),
-      ...(metadata.sender === undefined ? {} : { sender: metadata.sender }),
     });
   }
 
   #rememberEncryptedCompleted(
     eventId: string,
-    context: EventContext,
-    metadata: { readonly roomId?: string; readonly sender?: string },
+    metadata: { readonly roomId?: string },
   ): void {
     this.#rememberEncryptedEvent(eventId, {
       status: "completed",
-      isCatchUp: context.isCatchUp,
       ...(metadata.roomId === undefined ? {} : { roomId: metadata.roomId }),
-      ...(metadata.sender === undefined ? {} : { sender: metadata.sender }),
     });
   }
 
@@ -2291,7 +2214,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     // events arriving while room validation runs; they must retain the
     // existing startup-buffer behavior. Timeline metadata still marks explicit
     // initial-history callbacks as non-live.
-    return this.#prepared || this.#since !== undefined;
+    return this.#prepared;
   }
 
   #eventOrderFor(event: InboundMatrixEvent): number {
@@ -2315,7 +2238,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         (state === SDK_SYNC_STATES.prepared ||
           state === SDK_SYNC_STATES.syncing ||
           state === SDK_SYNC_STATES.catchup)) {
-      this.#pendingNextBatch = nextSyncToken;
+      this.#pendingBatchReady = true;
     }
     const joinedRooms = data === undefined ? undefined : own(data, "rooms");
     if (isRecord(joinedRooms)) {
@@ -2583,19 +2506,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   }
 
   #startError(error: unknown, message: string): MatrixAdapterError {
-    const errcode = stringProperty(
-      isRecord(error) ? own(error, "data") : undefined,
-      "errcode",
-    ) ?? stringProperty(error, "errcode", "errorCode");
-    if (this.#since !== undefined &&
-        (errcode === "M_UNKNOWN_POS" || errcode === "M_INVALID_PARAM" || errcode === "M_UNKNOWN_TOKEN")) {
-      return new MatrixAdapterError(
-        "start",
-        "Saved Matrix sync cursor was rejected; reset private bridge state before retrying",
-        classifyMatrixError(error),
-        { cause: error },
-      );
-    }
     return this.#operationError("start", error, message);
   }
 

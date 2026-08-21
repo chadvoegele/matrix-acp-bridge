@@ -60,6 +60,7 @@ const CONFIG: BridgeConfig = {
     maxTurnSeconds: 10,
     shutdownGraceSeconds: 1,
     startupTimeoutSeconds: 1,
+    initialSyncTimelineLimit: 100,
     maxCatchupAgeSeconds: 900,
     maxCatchupEventsPerRoom: 4,
   },
@@ -167,7 +168,7 @@ class FakeMatrix implements MatrixClientAdapter {
         listener({ state: "PREPARED", previousState: null });
       }
       for (const listener of this.syncBatchListeners) {
-        await listener({ nextBatch: "test-start-cursor", phase: "initial", rooms: [] });
+        await listener({ phase: "initial", rooms: [] });
       }
     });
   }

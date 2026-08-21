@@ -6,4 +6,5 @@ Verify that the bridge can:
 - accept an unencrypted Matrix prompt;
 - forward the prompt to ACP exactly once;
 - return the ACP response as an unencrypted Matrix event; and
-- repeat the exchange after a process restart.
+- repeat the exchange after a normal initial-sync process restart without
+  submitting the completed first prompt to ACP again.

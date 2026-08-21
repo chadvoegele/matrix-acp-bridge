@@ -41,6 +41,7 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
     maxTurnSeconds: 10,
     shutdownGraceSeconds: 1,
     startupTimeoutSeconds: 5,
+    initialSyncTimelineLimit: 100,
     maxCatchupAgeSeconds: 900,
     maxCatchupEventsPerRoom: 4,
   },
