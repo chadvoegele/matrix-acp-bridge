@@ -265,7 +265,7 @@ For each ordinary ACP turn:
 
 - send typing-on immediately before `session/prompt`, after session creation or
   loading and after acquiring the global prompt permit;
-- request a 30-second timeout and refresh it every 20 seconds while the turn is
+- request a 30-second timeout and refresh it every 10 seconds while the turn is
   collecting or draining ACP output;
 - stop refreshing and send typing-off after rendering the response but before
   its first Matrix send; and

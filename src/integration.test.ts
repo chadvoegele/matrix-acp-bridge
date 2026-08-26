@@ -1555,7 +1555,7 @@ void test("M2 scenario 6: typing spans only an active ACP turn", async () => {
     assert.equal(rig.matrixSdk.typing.length, 1);
     assert.deepEqual(rig.matrixSdk.typing[0], { roomId: ROOM_ONE, isTyping: true, timeoutMs: 30_000 });
 
-    rig.clock.advanceBy(20_000);
+    rig.clock.advanceBy(10_000);
     await flushMany();
     assert.equal(rig.matrixSdk.typing.length, 2);
     assert.equal(rig.matrixSdk.typing[1]?.isTyping, true);

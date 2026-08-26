@@ -499,7 +499,7 @@ void test("typing spans only an active turn and receipts acknowledge authorized 
   await bridge.stop();
 });
 
-void test("typing refreshes every 20 seconds through output drain and stops before delivery", async () => {
+void test("typing refreshes every 10 seconds through output drain and stops before delivery", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
@@ -516,7 +516,7 @@ void test("typing refreshes every 20 seconds through output drain and stops befo
   await waitFor(() => acp.promptCalls.length === 1);
   assert.deepEqual(matrix.typing, [{ roomId: ROOM_ONE, isTyping: true, timeoutMs: 30_000 }]);
 
-  clock.advanceBy(19_999);
+  clock.advanceBy(9999);
   assert.equal(matrix.typing.length, 1);
   clock.advanceBy(1);
   assert.deepEqual(matrix.typing.at(-1), { roomId: ROOM_ONE, isTyping: true, timeoutMs: 30_000 });
@@ -529,6 +529,43 @@ void test("typing refreshes every 20 seconds through output drain and stops befo
 
   assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, true, false]);
   assert.equal(matrix.operationOrder.indexOf("typing:off") < matrix.operationOrder.indexOf("message:agent"), true);
+  await bridge.stop();
+});
+
+void test("typing survives one missed refresh before the server timeout", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeMatrix();
+  let finishPrompt!: () => void;
+  let typingAttempts = 0;
+  const sendTyping = matrix.sendTyping.bind(matrix);
+  matrix.sendTyping = async (roomId, isTyping, timeoutMs) => {
+    typingAttempts += 1;
+    if (isTyping && typingAttempts === 2) {
+      throw new Error("temporary typing failure");
+    }
+    await sendTyping(roomId, isTyping, timeoutMs);
+  };
+  acp.promptImpl = async (_sessionId) => new Promise<AcpOutcome>((resolve) => {
+    finishPrompt = () => resolve({ kind: "turn", stopReason: "end_turn", text: "answer" });
+  });
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+
+  const completion = bridge.handleTimelineEvent(event("$typing-recovery:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  clock.advanceBy(10_000);
+  await flush();
+  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true]);
+  clock.advanceBy(10_000);
+  await flush();
+  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, true]);
+
+  finishPrompt();
+  await flush();
+  await flush();
+  clock.advanceBy(300);
+  await completion;
+  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, true, false]);
   await bridge.stop();
 });
 
