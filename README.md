@@ -111,4 +111,5 @@ I co-authored the planning, specifications, and integration tests for
 reasoning effort and can run the integration tests.
 
 **Initial Prompt**
+
 I want to build a matrix client to acp bridge. This will allow me to create a matrix room with a 'chadagent' user and my user 'chad' and I'll be able to send messages which the agent will respond to. We'll connect to the agent via acp using a stdio. I want the agent user to be a normal user. Hopefully no application service needed for synapse. Let's start by inspecting these two implementations ~/code/github.com/openclaw/openclaw/extensions/matrix and ~/code/github.com/zooid-ai/zooid. Start some notes in spec/spec.md. What's going to be involved? How practical is it? How simple can we keep it? What's needed for security? Can we support e2ee?
