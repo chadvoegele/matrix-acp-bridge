@@ -47,7 +47,8 @@ import type {
 const QUIET_DRAIN_MS = 300;
 const STREAMING_DRAIN_CAP_MS = 30_000;
 const TYPING_TIMEOUT_MS = 30_000;
-const TYPING_REFRESH_MS = 20_000;
+// Leave enough time for another refresh if one request is delayed or fails.
+const TYPING_REFRESH_MS = 10_000;
 const CLOSED_MESSAGE_ID_LIMIT = 1000;
 const EVENT_ID_LIMIT = 10_000;
 const DEFAULT_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16_000, 30_000] as const;
