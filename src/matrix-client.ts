@@ -25,6 +25,7 @@ import type {
   CryptoStatePaths,
 } from "./crypto-contracts.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
+import { MATRIX_HTML_FORMAT, markdownToMatrixHtml } from "./matrix-markdown.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
 export type { BridgeConfig, MatrixConfig } from "./config.js";
@@ -1558,11 +1559,15 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       throw this.#fatalEncryptionSend("Required Matrix encryption is not ready for this room");
     }
 
-    // Construct a fresh top-level content object.  This deliberately strips
-    // relations, formatting, and any accidental caller-supplied fields.
+    // Construct a fresh top-level content object. This deliberately strips
+    // relations and any accidental caller-supplied fields while preserving
+    // the agent's Markdown as the fallback body and adding Matrix's standard
+    // HTML representation for clients that support rich text.
     const content = {
       msgtype: "m.text",
       body: part.content.body,
+      format: MATRIX_HTML_FORMAT,
+      formatted_body: markdownToMatrixHtml(part.content.body),
     } as const;
     try {
       await this.#client.sendMessage(part.roomId, content, part.transactionId);

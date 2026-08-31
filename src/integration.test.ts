@@ -1006,6 +1006,8 @@ void test("integration suppresses the complete first sync, delivers live text, a
     assert.deepEqual(liveSend.content, {
       msgtype: "m.text",
       body: "live reply",
+      format: "org.matrix.custom.html",
+      formatted_body: "<p>live reply</p>",
     });
     assert.equal(
       liveSend.transactionId,
