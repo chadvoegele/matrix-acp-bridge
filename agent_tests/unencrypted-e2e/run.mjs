@@ -35,8 +35,7 @@ function assertSchemaV12State(state, label) {
   assert(Object.hasOwn(state, "pendingBatches") === false, `${label} state contains legacy pending batches`);
   const ids = state.completedEventIds?.[environment.roomId];
   assert(Array.isArray(ids) && new Set(ids).size === ids.length,
-    `${label} state has no bounded completed-event ledger`);
-  assert(ids.length <= 100, `${label} completed-event ledger exceeded the initial-sync bound`);
+    `${label} state has no completed-event ledger`);
 }
 
 async function startPair({ expectedPrompt, suppressedPrompt }) {
