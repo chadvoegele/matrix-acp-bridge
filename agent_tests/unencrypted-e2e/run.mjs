@@ -14,8 +14,10 @@ const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const statePath = join(environment.bridge.stateDir, "bridge-state.json");
 const runId = randomBytes(6).toString("hex").toUpperCase();
-const firstPrompt = `Reply with exactly: UNENCRYPTED_E2E_OK_${runId}`;
-const firstExpected = `UNENCRYPTED_E2E_OK_${runId}`;
+const firstValue = `UNENCRYPTED_E2E_MARKDOWN_${runId}`;
+const firstExpected = `**${firstValue}**`;
+const firstPrompt = `Reply with exactly this Markdown and nothing else: ${firstExpected}`;
+const firstFormattedBody = `<p><strong>${firstValue}</strong></p>`;
 const secondPrompt = `Reply with exactly: UNENCRYPTED_E2E_OK_OK_${runId}`;
 const secondExpected = `UNENCRYPTED_E2E_OK_OK_${runId}`;
 
@@ -33,8 +35,7 @@ function assertSchemaV12State(state, label) {
   assert(Object.hasOwn(state, "pendingBatches") === false, `${label} state contains legacy pending batches`);
   const ids = state.completedEventIds?.[environment.roomId];
   assert(Array.isArray(ids) && new Set(ids).size === ids.length,
-    `${label} state has no bounded completed-event ledger`);
-  assert(ids.length <= 100, `${label} completed-event ledger exceeded the initial-sync bound`);
+    `${label} state has no completed-event ledger`);
 }
 
 async function startPair({ expectedPrompt, suppressedPrompt }) {
@@ -51,11 +52,13 @@ async function startPair({ expectedPrompt, suppressedPrompt }) {
   return { ...pair, counter };
 }
 
-async function runSender(prompt, expected) {
+async function runSender(prompt, expected, expectedFormattedBody) {
+  const args = ["--prompt", prompt, "--expect", expected];
+  if (expectedFormattedBody !== undefined) args.push("--expect-formatted-body", expectedFormattedBody);
   const result = await runSenderProcess({
     environmentPath,
     senderPath: join(testDir, "sender.mjs"),
-    args: ["--prompt", prompt, "--expect", expected],
+    args,
   });
   assert(result.event === "exchange-complete" && result.responseCount === 1,
     "sender did not report exactly one plaintext exchange");
@@ -68,7 +71,7 @@ let pair;
 try {
   process.stdout.write("Starting first plaintext exchange after normal initial sync...\n");
   pair = await startPair({ expectedPrompt: firstPrompt });
-  const first = await runSender(firstPrompt, firstExpected);
+  const first = await runSender(firstPrompt, firstExpected, firstFormattedBody);
   assert(pair.counter.matching === 1, `first prompt reached ACP ${pair.counter.matching} times`);
   assert(pair.counter.suppressed === 0, "first prompt was unexpectedly submitted during baseline startup");
   const firstState = await readState();

@@ -1401,9 +1401,36 @@ void test("sends only one ordinary top-level text event with the supplied transa
   await adapter.sendMessage(part);
   assert.deepEqual(fake.sent, [{
     roomId: ROOM_ID,
-    content: { msgtype: "m.text", body: "reply" },
+    content: {
+      msgtype: "m.text",
+      body: "reply",
+      format: "org.matrix.custom.html",
+      formatted_body: "<p>reply</p>",
+    },
     transactionId: "mab1_transaction",
   }]);
+});
+
+void test("sends Markdown as the standard Matrix formatted-body representation", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const part: RenderedMatrixPart = {
+    roomId: ROOM_ID,
+    inboundEventId: "$markdown-inbound:example.org",
+    responseKind: "agent",
+    partNumber: 1,
+    partCount: 1,
+    transactionId: "mab1_markdown_transaction",
+    content: { msgtype: "m.text", body: "_hi_" },
+  };
+
+  await adapter.sendMessage(part);
+  assert.deepEqual(fake.sent[0]?.content, {
+    msgtype: "m.text",
+    body: "_hi_",
+    format: "org.matrix.custom.html",
+    formatted_body: "<p><em>hi</em></p>",
+  });
 });
 
 void test("required outbound responses use the validated SDK encryption path and never fall back", async () => {

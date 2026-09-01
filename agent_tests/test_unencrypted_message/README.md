@@ -71,10 +71,11 @@ shutdown_grace_seconds = 30
 
 5. Start the sender harness and wait for normal Matrix sync readiness.
 
-6. Send:
+6. Send a prompt asking the agent to return a Markdown-formatted value. The
+   automated test sends a prompt like:
 
    ```text
-   Reply with exactly: UNENCRYPTED_E2E_OK
+   Reply with exactly this Markdown and nothing else: **UNENCRYPTED_E2E_MARKDOWN_<run-id>**
    ```
 
 7. Wait for the bridge response.
@@ -113,8 +114,10 @@ The test passes only when all these conditions hold:
 - The bridge starts in `disabled` mode and reports `startup-ready`.
 - The sender's prompt is a top-level `m.room.message` on the wire.
 - The bridge sends the exact prompt to ACP once.
-- ACP returns `UNENCRYPTED_E2E_OK`.
+- ACP returns the requested Markdown value.
 - The bridge response is a top-level `m.room.message` on the wire.
+- The response includes `format: "org.matrix.custom.html"` and the expected
+  `<strong>` element in `formatted_body`.
 - The sender receives exactly one response with the expected body.
 - No `m.room.encrypted` prompt or response is used.
 - The second plaintext exchange succeeds after restarting the bridge.

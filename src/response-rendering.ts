@@ -518,8 +518,6 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
         responseKind: normalized.responseKind,
         oneBasedPartNumber: partNumber,
       }),
-      // This is intentionally the complete ordinary Matrix text content.  No
-      // relation, reply fallback, or SDK object is introduced here.
       content: { msgtype: "m.text", body },
     };
   });
