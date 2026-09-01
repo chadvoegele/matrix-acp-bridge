@@ -14,9 +14,10 @@ const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const statePath = join(environment.bridge.stateDir, "bridge-state.json");
 const runId = randomBytes(6).toString("hex").toUpperCase();
-const firstExpected = `UNENCRYPTED_E2E_MARKDOWN_${runId}`;
-const firstPrompt = `Reply with exactly this Markdown and nothing else: **${firstExpected}**`;
-const firstFormattedBody = `<p><strong>${firstExpected}</strong></p>`;
+const firstValue = `UNENCRYPTED_E2E_MARKDOWN_${runId}`;
+const firstExpected = `**${firstValue}**`;
+const firstPrompt = `Reply with exactly this Markdown and nothing else: ${firstExpected}`;
+const firstFormattedBody = `<p><strong>${firstValue}</strong></p>`;
 const secondPrompt = `Reply with exactly: UNENCRYPTED_E2E_OK_OK_${runId}`;
 const secondExpected = `UNENCRYPTED_E2E_OK_OK_${runId}`;
 
