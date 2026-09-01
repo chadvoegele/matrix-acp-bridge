@@ -1559,10 +1559,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       throw this.#fatalEncryptionSend("Required Matrix encryption is not ready for this room");
     }
 
-    // Construct a fresh top-level content object. This deliberately strips
-    // relations and any accidental caller-supplied fields while preserving
-    // the agent's Markdown as the fallback body and adding Matrix's standard
-    // HTML representation for clients that support rich text.
     const content = {
       msgtype: "m.text",
       body: part.content.body,

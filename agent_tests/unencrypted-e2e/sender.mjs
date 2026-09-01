@@ -19,6 +19,7 @@ const prompt = argument("--prompt");
 const mode = optionalArgument("--mode") ?? "exchange";
 if (!["exchange", "send-only", "watch"].includes(mode)) throw new Error(`unsupported sender mode: ${mode}`);
 const expected = mode === "send-only" ? undefined : argument("--expect");
+const expectedFormattedBody = optionalArgument("--expect-formatted-body");
 const token = await readToken(environment.sender.tokenFile);
 const roomPath = encodeURIComponent(environment.roomId);
 
@@ -117,6 +118,11 @@ for (const [label, event, body] of [
   if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text" || event.content.body !== body) {
     throw new Error(`${label} was not a plaintext m.room.message event`);
   }
+}
+if (expectedFormattedBody !== undefined &&
+    (responseEvent.content?.format !== "org.matrix.custom.html" ||
+     responseEvent.content.formatted_body !== expectedFormattedBody)) {
+  throw new Error("response did not contain the expected Matrix formatted body");
 }
 process.stdout.write(`${JSON.stringify({
   event: "exchange-complete",

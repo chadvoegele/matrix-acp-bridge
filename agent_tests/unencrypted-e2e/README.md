@@ -1,6 +1,6 @@
 # Unencrypted Matrix end-to-end test helpers
 
-These test-only programs provision bridge and sender devices on two existing Matrix accounts. They send two plaintext exchanges across a bridge restart, verify both wire events are `m.room.message`, and assert that the completed first prompt is suppressed by normal initial-sync recovery.
+These test-only programs provision bridge and sender devices on two existing Matrix accounts. They send two plaintext exchanges across a bridge restart, verify both wire events are `m.room.message`, check the first response's Matrix Markdown formatting, and assert that the completed first prompt is suppressed by normal initial-sync recovery.
 
 Generated configuration and tokens live under ignored private paths.
 

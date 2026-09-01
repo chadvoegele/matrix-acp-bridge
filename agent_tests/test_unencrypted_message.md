@@ -5,6 +5,6 @@ Verify that the bridge can:
 - start in disabled-encryption mode without crypto setup;
 - accept an unencrypted Matrix prompt;
 - forward the prompt to ACP exactly once;
-- return the ACP response as an unencrypted Matrix event; and
+- return the ACP response as an unencrypted Matrix event with formatted Markdown; and
 - repeat the exchange after a normal initial-sync process restart without
   submitting the completed first prompt to ACP again.
