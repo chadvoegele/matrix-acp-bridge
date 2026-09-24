@@ -40,7 +40,15 @@ Two isolated sessions of the configured agent answered “What's the weather in 
 | Second `tool_call` | A terminal-style content block and terminal metadata appeared on the pending call. Updates progressed through `in_progress` to `completed`. Terminal output and exit information appeared in update metadata, **not** as `rawOutput` in this sample. |
 | Other | `session_info_update` and `available_commands_update` also appeared. No plan or usage update was seen in these turns. |
 
-Tool calls are correlated by `toolCallId`; arguments, outputs, and even content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. The probe did not establish a reliable distinction between mid-turn commentary and final-answer `agent_message_chunk` text.
+A separate isolated turn wrote, read, edited, then read a new scratch file. The resulting file was verified and removed. It also ended with `end_turn`:
+
+| Tool | Observed pending / in-progress input | Observed completed output |
+| --- | --- | --- |
+| Write | `rawInput` with `path` and `content` | `content` block of `type: diff` with `path`, `oldText`, and `newText`; no `rawOutput` |
+| Read (twice) | `rawInput` with `path` | `content` block of `type: content` with nested text, plus `rawOutput.content` |
+| Edit | `rawInput` with `path` and `edits` | `content` block of `type: diff` with `path`, `oldText`, and `newText`; no `rawOutput` |
+
+Each operation had `pending`, `in_progress`, and `completed` updates. This turn emitted no `agent_thought_chunk`; only startup and final agent text was observed. Tool calls are correlated by `toolCallId`; arguments, outputs, and content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. Neither probe established a reliable distinction between mid-turn commentary and final-answer `agent_message_chunk` text.
 
 Future probes should compare other tool types and turn shapes before fixing a display format. Never commit transcripts, endpoint addresses, session IDs, credentials, local paths, or unreviewed tool data to this public repository; publish only reviewed field shapes and presence/absence findings.
 
