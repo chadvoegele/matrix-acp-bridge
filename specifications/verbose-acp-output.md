@@ -12,7 +12,7 @@ Let Matrix readers see useful progress from an ACP agent, beyond its final answe
 
 ## Context
 
-The bridge currently forwards text from `agent_message_chunk`. Its ACP adapter recognizes `agent_thought_chunk`, `tool_call`, and `tool_call_update` but discards their payloads; the coordinator ignores those update kinds. The adapter also recognizes plan, command, mode, configuration, and usage updates without forwarding their payloads. A `session/prompt` response supplies a stop reason, not the missing progress details. These are observations about the bridge code, **not** evidence that a particular agent emits every update.
+The bridge currently forwards text from `agent_message_chunk`. Its ACP adapter recognizes `agent_thought_chunk`, `tool_call`, and `tool_call_update` but discards their payloads; the coordinator ignores those update kinds. The adapter also recognizes plan, command, mode, configuration, and usage updates without forwarding their payloads. A `session/prompt` response supplies a stop reason, not the missing progress details. These observations about the bridge code do not imply that every agent emits every update.
 
 ## Goals
 
@@ -28,18 +28,21 @@ The bridge currently forwards text from `agent_message_chunk`. Its ACP adapter r
 
 ## Specification
 
-### Discovery gate
+### Observed ACP stream
 
-Before choosing a display format, probe an isolated ACP session with a weather question that requires a tool call (for example, “What's the weather in New York right now? Use a weather tool to check.”). Record, locally, the ordered `session/update` kinds and the shapes of their payloads, followed by the `session/prompt` stop reason. Distinguish observed wire fields from ACP schema capabilities and from fields the bridge currently retains. Inspect at least:
+Two isolated sessions of the configured agent answered “What's the weather in New York right now? Use a weather tool to check.” Both completed with `session/prompt` stop reason `end_turn`. The following is a **redacted field-shape inventory**, not a transcript or a guarantee across agents or turns:
 
-| Update | Questions to resolve |
+| Update | Observed fields and sequence |
 | --- | --- |
-| `agent_message_chunk` | Does commentary precede the tool call? Are progress and final text distinguishable, and are chunks grouped by message ID? |
-| `agent_thought_chunk` | Is any thinking description emitted? Is it safe and useful to show, or absent? |
-| `tool_call` / `tool_call_update` | Which identifier, title, status, argument/input, content, and result/output fields appear? Are arguments or results partial, updated, or omitted? |
-| Other updates | Do plans, usage, or other kinds contain useful progress? |
+| `agent_message_chunk` | Text chunks arrived before and after tool calls. The initial messages included a startup prelude and startup metadata; subsequent small chunks formed the final answer. No separate commentary label or `messageId` appeared in these samples. Do not mistake startup text for turn commentary. |
+| `agent_thought_chunk` | Two text chunks preceded the first tool call. Thinking descriptions are therefore available in this sample, but their content is not reproduced here. Availability depends on the agent and turn. |
+| First `tool_call` | `toolCallId`, `title`, `kind`, `status: pending`, `locations`, and structured `rawInput` appeared. The input included a `path` key; its value is deliberately omitted. An `in_progress` update repeated the input; a `completed` update provided a `content` block (`type: content`, nested text content) and structured `rawOutput` with a `content` key. |
+| Second `tool_call` | A terminal-style content block and terminal metadata appeared on the pending call. Updates progressed through `in_progress` to `completed`. Terminal output and exit information appeared in update metadata, **not** as `rawOutput` in this sample. |
+| Other | `session_info_update` and `available_commands_update` also appeared. No plan or usage update was seen in these turns. |
 
-The probe must not commit transcripts, endpoint addresses, session IDs, credentials, local paths, or unreviewed tool data to this public repository. Publish only reviewed, redacted field shapes and presence/absence findings. If the configured endpoint is unavailable, keep findings explicitly unverified rather than substituting mock traffic for a live observation.
+Tool calls are correlated by `toolCallId`; arguments, outputs, and even content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. The probe did not establish a reliable distinction between mid-turn commentary and final-answer `agent_message_chunk` text.
+
+Future probes should compare other tool types and turn shapes before fixing a display format. Never commit transcripts, endpoint addresses, session IDs, credentials, local paths, or unreviewed tool data to this public repository; publish only reviewed field shapes and presence/absence findings.
 
 ### Future behavior boundaries
 
@@ -51,13 +54,13 @@ The probe must not commit transcripts, endpoint addresses, session IDs, credenti
 
 ## Verification
 
-- A live tool-using ACP probe yields a redacted field-shape inventory, including absent fields and ordering; no raw trace enters the repository.
+- The redacted live probe inventory above is reproducible with a tool-using turn; no raw trace enters the repository.
 - Adapter tests cover observed update shapes, partial and repeated tool updates, multiple tools, missing optional fields, and late updates.
 - Bridge tests confirm that non-verbose behavior remains unchanged and that progress is scoped to the active room turn and bounded under cancellation and failure.
 
 ## Open questions
 
-- Does the configured agent emit commentary separately from final answer text? Which ACP fields, if any, describe thinking rather than expose raw reasoning?
-- Are tool arguments and tool results available as structured fields, content blocks, both, or neither in the live stream?
+- Can commentary be distinguished from final answer text in other turns? Are thought chunks suitable as brief thinking descriptions, or could they contain sensitive reasoning?
+- For which tools do arguments and results appear in `rawInput`, `rawOutput`, content blocks, or metadata? How are incremental terminal updates bounded?
 - What should be hidden, summarized, or opt-in for tool arguments, outputs, and thought-like content?
 - How should Matrix present the available content (separate messages, edits, threading, or another form)?
