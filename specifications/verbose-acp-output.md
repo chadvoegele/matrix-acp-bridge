@@ -48,7 +48,32 @@ A separate isolated turn wrote, read, edited, then read a new scratch file. The 
 | Read (twice) | `rawInput` with `path` | `content` block of `type: content` with nested text, plus `rawOutput.content` |
 | Edit | `rawInput` with `path` and `edits` | `content` block of `type: diff` with `path`, `oldText`, and `newText`; no `rawOutput` |
 
-Each operation had `pending`, `in_progress`, and `completed` updates. This turn emitted no `agent_thought_chunk`; only startup and final agent text was observed. Tool calls are correlated by `toolCallId`; arguments, outputs, and content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. Neither probe established a reliable distinction between mid-turn commentary and final-answer `agent_message_chunk` text.
+Each operation had `pending`, `in_progress`, and `completed` updates. This turn emitted no `agent_thought_chunk`; only startup and final agent text was observed.
+
+### Redacted wire examples
+
+These examples show **selected fields** of actual `params.update` objects within ACP `session/update` notifications, in stream order. They omit the JSON-RPC envelope, `sessionId`, titles, locations, and other fields. IDs and paths are substituted; the scratch file's test text is safe to show. A file creation used the agent's `write` tool but was labeled `kind: edit` on the wire:
+
+```json
+{"sessionUpdate":"tool_call","toolCallId":"call-1","kind":"edit","status":"pending","rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}
+{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"in_progress","rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}
+{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"completed","content":[{"type":"diff","path":"<scratch-file>","oldText":null,"newText":"alpha\nbeta\n"}]}
+{"sessionUpdate":"tool_call","toolCallId":"call-2","kind":"read","status":"pending","rawInput":{"path":"<scratch-file>"}}
+{"sessionUpdate":"tool_call_update","toolCallId":"call-2","status":"completed","content":[{"type":"content","content":{"type":"text","text":"<read response omitted>"}}],"rawOutput":{"content":"<read response omitted>"}}
+{"sessionUpdate":"tool_call","toolCallId":"call-3","kind":"edit","status":"pending","rawInput":{"path":"<scratch-file>","edits":[{"oldText":"beta","newText":"gamma"}]}}
+{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"completed","content":[{"type":"diff","path":"<scratch-file>","oldText":"alpha\nbeta\n","newText":"alpha\ngamma\n"}]}
+```
+
+A separate weather turn emitted the following kinds of text and tool result. Text and tool-output values below are placeholders, **not quoted agent output**:
+
+```json
+{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"<thinking description omitted>"}}
+{"sessionUpdate":"tool_call","toolCallId":"call-1","status":"pending","rawInput":{"path":"<path omitted>"}}
+{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"<tool result omitted>"}}],"rawOutput":{"content":"<tool result omitted>"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"<answer chunk omitted>"}}
+```
+
+Tool calls are correlated by `toolCallId`; arguments, outputs, and content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. Neither probe established a reliable distinction between mid-turn commentary and final-answer `agent_message_chunk` text.
 
 Future probes should compare other tool types and turn shapes before fixing a display format. Never commit transcripts, endpoint addresses, session IDs, credentials, local paths, or unreviewed tool data to this public repository; publish only reviewed field shapes and presence/absence findings.
 
