@@ -80,6 +80,13 @@ Use color cues where possible to make activity easy to understand at a glance. F
 ## Open questions
 
 
+## References
+
+- [ACP v1 prompt turns](https://agentclientprotocol.com/protocol/v1/prompt-turn): `session/prompt`, `session/update`, message chunks, and stop reasons.
+- [ACP v1 tool calls](https://agentclientprotocol.com/protocol/v1/tool-calls): tool-call fields, statuses, updates, and result content.
+- [ACP v1 terminals](https://agentclientprotocol.com/protocol/v1/terminals): standard terminal capability and output methods.
+- [ACP v1 extensibility](https://agentclientprotocol.com/protocol/v1/extensibility): implementation-specific `_meta` data, including the terminal-output fields in the example.
+
 ## Appendix
 
 
