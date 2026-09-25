@@ -41,6 +41,173 @@ The example ACP trace shows agent activity in repeated `session/update` messages
         1. params.update.kind = "execute"
     1. params.update.sessionUpdate = "tool_call_update"
 
+ACP v1 references:
+
+- [Prompt turns](https://agentclientprotocol.com/protocol/v1/prompt-turn): `session/prompt`, `session/update`, message chunks, and stop reasons.
+- [Tool calls](https://agentclientprotocol.com/protocol/v1/tool-calls): tool-call fields, statuses, updates, and result content.
+- [Terminals](https://agentclientprotocol.com/protocol/v1/terminals): standard terminal capability and output methods.
+- [Extensibility](https://agentclientprotocol.com/protocol/v1/extensibility): implementation-specific `_meta` data.
+
+The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard** labels mark protocol-defined structures; **pi-acp extension** labels mark implementation-specific fields. Optional standard fields and exact tool-input shapes are not guaranteed for every agent.
+
+#### Thought chunk
+
+> **ACP v1 standard:** `agent_thought_chunk` carries streamed agent reasoning. Its presence is optional.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": { "type": "text", "text": "**Planning tools for text processing**" }
+    }
+  }
+}
+```
+
+#### Read tool call
+
+> **ACP v1 standard:** `tool_call` identifies the call; `tool_call_update` patches its status and content. `rawInput` and `rawOutput` are optional, and their internal shapes are tool-specific.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-read",
+      "title": "read",
+      "kind": "read",
+      "status": "pending",
+      "rawInput": { "path": "/tmp/output.txt" }
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-read",
+      "status": "completed",
+      "content": [
+        { "type": "content", "content": { "type": "text", "text": "alpha\nbeta\n" } }
+      ],
+      "rawOutput": { "content": [{ "type": "text", "text": "alpha\nbeta\n" }] }
+    }
+  }
+}
+```
+
+#### Edit tool call
+
+> **ACP v1 standard:** `kind: "edit"` covers modifications, including this agent's write operation. A `diff` content block reports the new file (`oldText: null`).
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-write",
+      "title": "write",
+      "kind": "edit",
+      "status": "pending",
+      "rawInput": { "path": "/tmp/output.txt", "content": "alpha\nbeta\n" }
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-write",
+      "status": "completed",
+      "content": [
+        { "type": "diff", "path": "/tmp/output.txt", "oldText": null, "newText": "alpha\nbeta\n" }
+      ]
+    }
+  }
+}
+```
+
+#### Execute tool call
+
+> **ACP v1 standard:** `kind: "execute"` and a `terminal` content block describe an executable tool call and terminal reference. `title` is a human-readable label; this agent puts the command there, but ACP does not require that. Standard terminal methods require a negotiated client terminal capability.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-exec",
+      "title": "cat -- /tmp/output.txt",
+      "kind": "execute",
+      "status": "pending",
+      "content": [{ "type": "terminal", "terminalId": "terminal-1" }]
+    }
+  }
+}
+```
+
+> **pi-acp extension:** The appendix also shows `_meta.terminal_info` on the initial call. This agent streams terminal data and exit information in `_meta.terminal_output` and `_meta.terminal_exit`, rather than standard `terminal/output` responses. ACP permits `_meta`, but does not define these keys or their values.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-exec",
+      "status": "in_progress",
+      "_meta": {
+        "terminal_output": { "terminal_id": "terminal-1", "data": "alpha\nbeta\n" }
+      }
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "session/update",
+  "params": {
+    "sessionId": "example-session",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-exec",
+      "status": "completed",
+      "_meta": {
+        "terminal_exit": { "terminal_id": "terminal-1", "exit_code": 0, "signal": null }
+      }
+    }
+  }
+}
+```
 
 ### Eager Message Rendering
 
@@ -79,13 +246,6 @@ Use color cues where possible to make activity easy to understand at a glance. F
 
 ## Open questions
 
-
-## References
-
-- [ACP v1 prompt turns](https://agentclientprotocol.com/protocol/v1/prompt-turn): `session/prompt`, `session/update`, message chunks, and stop reasons.
-- [ACP v1 tool calls](https://agentclientprotocol.com/protocol/v1/tool-calls): tool-call fields, statuses, updates, and result content.
-- [ACP v1 terminals](https://agentclientprotocol.com/protocol/v1/terminals): standard terminal capability and output methods.
-- [ACP v1 extensibility](https://agentclientprotocol.com/protocol/v1/extensibility): implementation-specific `_meta` data, including the terminal-output fields in the example.
 
 ## Appendix
 
