@@ -75,37 +75,222 @@ Tool calls are correlated by `toolCallId`; arguments, outputs, and content-block
 
 ## Example ACP trace
 
-This is the user's trimmed read/write/exec example. JSON-RPC IDs and session IDs were already omitted in the trimmed copy. File paths, tool-call IDs, and terminal IDs below are substituted for this public specification. The displayed text and tool results are unchanged; comments describe the bridge's **current** behavior. Repeated text chunks are summarized, not reproduced individually. This is not a complete wire transcript.
+This is the user's trimmed read/write/exec example. JSON-RPC IDs and session IDs were already omitted in the trimmed copy. File paths are shown as the illustrative `/tmp/output.txt`; tool-call and terminal IDs are substituted for this public specification. The displayed text and tool results are unchanged; comments describe the bridge's **current** behavior. Repeated text chunks are summarized, not reproduced individually. This is not a complete wire transcript.
 
 ```jsonc
 // User prompt
-{"method":"session/prompt","params":{"prompt":[{"type":"text","text":"First consider the safest way to handle a temporary file and briefly describe your plan before using tools. Use only these tools in order on a new scratch file: write <scratch-file> with exact text \"alpha\\nbeta\\n\"; read it; use bash (exec) to run only `cat -- <scratch-file>`; then briefly confirm completion. Do not inspect anything else or run any other command."}]}}
+{
+  "method": "session/prompt",
+  "params": {
+    "prompt": [
+      {
+        "type": "text",
+        "text": "First consider the safest way to handle a temporary file and briefly describe your plan before using tools. Use only these tools in order on a new scratch file: write /tmp/output.txt with exact text \"alpha\\nbeta\\n\"; read it; use bash (exec) to run only `cat -- /tmp/output.txt`; then briefly confirm completion. Do not inspect anything else or run any other command."
+      }
+    ]
+  }
+}
 
 // This is hidden now
-{"method":"session/update","params":{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"**Planning tools for text processing**"}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"\n\n"}}}}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": { "type": "text", "text": "**Planning tools for text processing**" }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "agent_thought_chunk",
+      "content": { "type": "text", "text": "\n\n" }
+    }
+  }
+}
 
 // Agent message is collected, then displayed after the turn completes
-{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I"}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"’ll"}}}}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": { "type": "text", "text": "I" }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": { "type": "text", "text": "’ll" }
+    }
+  }
+}
 // Same agent_message_chunk repeated to make it say:
 // I'll create only the specified scratch file with the provided contents, verify it by reading it, then display exactly that file using the requested `cat --` command.
 
 // Tool calls are not displayed
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"call-1","title":"write","kind":"edit","status":"pending","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"in_progress","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"completed","content":[{"type":"diff","path":"<scratch-file>","oldText":null,"newText":"alpha\nbeta\n"}]}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"call-2","title":"read","kind":"read","status":"pending","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>"}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-2","status":"in_progress","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>"}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-2","status":"completed","content":[{"type":"content","content":{"type":"text","text":"alpha\nbeta\n"}}],"rawOutput":{"content":[{"type":"text","text":"alpha\nbeta\n"}]}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"call-3","title":"cat -- <scratch-file>","kind":"execute","status":"pending","content":[{"type":"terminal","terminalId":"call-3"}],"_meta":{"terminal_info":{"terminal_id":"call-3","cwd":"<working directory>"}}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","title":"cat -- <scratch-file>","kind":"execute","status":"in_progress"}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"in_progress","_meta":{}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"in_progress","_meta":{"terminal_output":{"terminal_id":"call-3","data":"alpha\nbeta\n"}}}}}
-{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"completed","_meta":{"terminal_exit":{"terminal_id":"call-3","exit_code":0,"signal":null}}}}}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-1",
+      "title": "write",
+      "kind": "edit",
+      "status": "pending",
+      "locations": [{ "path": "/tmp/output.txt" }],
+      "rawInput": { "path": "/tmp/output.txt", "content": "alpha\nbeta\n" }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-1",
+      "status": "in_progress",
+      "locations": [{ "path": "/tmp/output.txt" }],
+      "rawInput": { "path": "/tmp/output.txt", "content": "alpha\nbeta\n" }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-1",
+      "status": "completed",
+      "content": [
+        { "type": "diff", "path": "/tmp/output.txt", "oldText": null, "newText": "alpha\nbeta\n" }
+      ]
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-2",
+      "title": "read",
+      "kind": "read",
+      "status": "pending",
+      "locations": [{ "path": "/tmp/output.txt" }],
+      "rawInput": { "path": "/tmp/output.txt" }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-2",
+      "status": "in_progress",
+      "locations": [{ "path": "/tmp/output.txt" }],
+      "rawInput": { "path": "/tmp/output.txt" }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-2",
+      "status": "completed",
+      "content": [
+        { "type": "content", "content": { "type": "text", "text": "alpha\nbeta\n" } }
+      ],
+      "rawOutput": {
+        "content": [{ "type": "text", "text": "alpha\nbeta\n" }]
+      }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call-3",
+      "title": "cat -- /tmp/output.txt",
+      "kind": "execute",
+      "status": "pending",
+      "content": [{ "type": "terminal", "terminalId": "call-3" }],
+      "_meta": {
+        "terminal_info": { "terminal_id": "call-3", "cwd": "/tmp" }
+      }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-3",
+      "title": "cat -- /tmp/output.txt",
+      "kind": "execute",
+      "status": "in_progress"
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-3",
+      "status": "in_progress",
+      "_meta": {}
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-3",
+      "status": "in_progress",
+      "_meta": {
+        "terminal_output": { "terminal_id": "call-3", "data": "alpha\nbeta\n" }
+      }
+    }
+  }
+}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call-3",
+      "status": "completed",
+      "_meta": {
+        "terminal_exit": { "terminal_id": "call-3", "exit_code": 0, "signal": null }
+      }
+    }
+  }
+}
 
 // Agent message is collected, then displayed after the turn completes
-{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Completed"}}}}
+{
+  "method": "session/update",
+  "params": {
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": { "type": "text", "text": "Completed" }
+    }
+  }
+}
 // agent_message_chunk repeated until it says:
 // Completed: wrote, read, and displayed the specified scratch file.
 
