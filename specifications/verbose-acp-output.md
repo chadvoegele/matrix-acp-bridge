@@ -50,34 +50,7 @@ A separate isolated turn wrote, read, edited, then read a new scratch file. The 
 
 Each operation had `pending`, `in_progress`, and `completed` updates. This turn emitted no `agent_thought_chunk`; only startup and final agent text was observed.
 
-### Redacted wire examples
-
-For an event-complete trace from `initialize` through a read/write/exec turn and its final `session/prompt` result, see the [redacted end-to-end ACP example](examples/acp-read-write-exec.md). Consecutive streamed text chunks are counted there rather than copied verbatim.
-
-These examples show **selected fields** of actual `params.update` objects within ACP `session/update` notifications, in stream order. They omit the JSON-RPC envelope, `sessionId`, titles, locations, and other fields. IDs and paths are substituted; the scratch file's test text is safe to show. A file creation used the agent's `write` tool but was labeled `kind: edit` on the wire:
-
-```json
-{"sessionUpdate":"tool_call","toolCallId":"call-1","kind":"edit","status":"pending","rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}
-{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"in_progress","rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}
-{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"completed","content":[{"type":"diff","path":"<scratch-file>","oldText":null,"newText":"alpha\nbeta\n"}]}
-{"sessionUpdate":"tool_call","toolCallId":"call-2","kind":"read","status":"pending","rawInput":{"path":"<scratch-file>"}}
-{"sessionUpdate":"tool_call_update","toolCallId":"call-2","status":"completed","content":[{"type":"content","content":{"type":"text","text":"<read response omitted>"}}],"rawOutput":{"content":"<read response omitted>"}}
-{"sessionUpdate":"tool_call","toolCallId":"call-3","kind":"edit","status":"pending","rawInput":{"path":"<scratch-file>","edits":[{"oldText":"beta","newText":"gamma"}]}}
-{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"completed","content":[{"type":"diff","path":"<scratch-file>","oldText":"alpha\nbeta\n","newText":"alpha\ngamma\n"}]}
-```
-
-A separate weather turn emitted the following kinds of text and tool result. Text and tool-output values below are placeholders, **not quoted agent output**:
-
-```json
-{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"<thinking description omitted>"}}
-{"sessionUpdate":"tool_call","toolCallId":"call-1","status":"pending","rawInput":{"path":"<path omitted>"}}
-{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"<tool result omitted>"}}],"rawOutput":{"content":"<tool result omitted>"}}
-{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"<answer chunk omitted>"}}
-```
-
-Tool calls are correlated by `toolCallId`; arguments, outputs, and content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. Neither probe established a reliable distinction between mid-turn commentary and final-answer `agent_message_chunk` text.
-
-Future probes should compare other tool types and turn shapes before fixing a display format. Never commit transcripts, endpoint addresses, session IDs, credentials, local paths, or unreviewed tool data to this public repository; publish only reviewed field shapes and presence/absence findings.
+Tool calls are correlated by `toolCallId`; arguments, outputs, and content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. Neither update type nor optional message ID distinguishes mid-turn commentary from final-answer `agent_message_chunk` text. Never commit unreviewed transcripts, endpoint addresses, session IDs, credentials, or private paths to this public repository.
 
 ### Future behavior boundaries
 
@@ -99,3 +72,42 @@ Future probes should compare other tool types and turn shapes before fixing a di
 - For which tools do arguments and results appear in `rawInput`, `rawOutput`, content blocks, or metadata? How are incremental terminal updates bounded?
 - What should be hidden, summarized, or opt-in for tool arguments, outputs, and thought-like content?
 - How should Matrix present the available content (separate messages, edits, threading, or another form)?
+
+## Example ACP trace
+
+This is the user's trimmed read/write/exec example. JSON-RPC IDs and session IDs were already omitted in the trimmed copy. File paths, tool-call IDs, and terminal IDs below are substituted for this public specification. The displayed text and tool results are unchanged; comments describe the bridge's **current** behavior. Repeated text chunks are summarized, not reproduced individually. This is not a complete wire transcript.
+
+```jsonc
+// User prompt
+{"method":"session/prompt","params":{"prompt":[{"type":"text","text":"First consider the safest way to handle a temporary file and briefly describe your plan before using tools. Use only these tools in order on a new scratch file: write <scratch-file> with exact text \"alpha\\nbeta\\n\"; read it; use bash (exec) to run only `cat -- <scratch-file>`; then briefly confirm completion. Do not inspect anything else or run any other command."}]}}
+
+// This is hidden now
+{"method":"session/update","params":{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"**Planning tools for text processing**"}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"\n\n"}}}}
+
+// Agent message is collected, then displayed after the turn completes
+{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I"}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"’ll"}}}}
+// Same agent_message_chunk repeated to make it say:
+// I'll create only the specified scratch file with the provided contents, verify it by reading it, then display exactly that file using the requested `cat --` command.
+
+// Tool calls are not displayed
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"call-1","title":"write","kind":"edit","status":"pending","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"in_progress","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>","content":"alpha\nbeta\n"}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-1","status":"completed","content":[{"type":"diff","path":"<scratch-file>","oldText":null,"newText":"alpha\nbeta\n"}]}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"call-2","title":"read","kind":"read","status":"pending","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>"}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-2","status":"in_progress","locations":[{"path":"<scratch-file>"}],"rawInput":{"path":"<scratch-file>"}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-2","status":"completed","content":[{"type":"content","content":{"type":"text","text":"alpha\nbeta\n"}}],"rawOutput":{"content":[{"type":"text","text":"alpha\nbeta\n"}]}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"call-3","title":"cat -- <scratch-file>","kind":"execute","status":"pending","content":[{"type":"terminal","terminalId":"call-3"}],"_meta":{"terminal_info":{"terminal_id":"call-3","cwd":"<working directory>"}}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","title":"cat -- <scratch-file>","kind":"execute","status":"in_progress"}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"in_progress","_meta":{}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"in_progress","_meta":{"terminal_output":{"terminal_id":"call-3","data":"alpha\nbeta\n"}}}}}
+{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"call-3","status":"completed","_meta":{"terminal_exit":{"terminal_id":"call-3","exit_code":0,"signal":null}}}}}
+
+// Agent message is collected, then displayed after the turn completes
+{"method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Completed"}}}}
+// agent_message_chunk repeated until it says:
+// Completed: wrote, read, and displayed the specified scratch file.
+
+// After the turn completes, the collected agent-message text is sent together.
+```
