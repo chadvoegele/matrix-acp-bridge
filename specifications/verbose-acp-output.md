@@ -8,74 +8,84 @@ last_update = 2026-09-25
 
 ## Purpose
 
-Let Matrix readers see useful progress from an ACP agent, beyond its final answer, without exposing private data by default. First determine what the agent actually sends over ACP; choose the Matrix presentation separately.
+Show users progress from an ACP agent during the agent loop, rather than just showing the final response.
 
 ## Context
 
-The bridge currently forwards text from `agent_message_chunk`. Its ACP adapter recognizes `agent_thought_chunk`, `tool_call`, and `tool_call_update` but discards their payloads; the coordinator ignores those update kinds. The adapter also recognizes plan, command, mode, configuration, and usage updates without forwarding their payloads. A `session/prompt` response supplies a stop reason, not the missing progress details. These observations about the bridge code do not imply that every agent emits every update.
+The bridge currently shows text from `agent_message_chunk`. The ACP adapter also recognizes `agent_thought_chunk`, `tool_call`, and `tool_call_update` but discards their payloads.
 
 ## Goals
 
-- Establish which progress and tool details the configured ACP agent emits during a real tool-using turn, including the order of updates and whether data arrives incrementally.
-- Preserve useful agent commentary and available tool-call arguments and results for a future Matrix rendering design.
-- Keep progress attributable to its turn and tool call without duplicating the final answer.
+- Preserve agent commentary and available tool-call arguments and results.
+- Display preserved commentary and tool calls using a progressive-disclosure technique.
+- Make live agent activity the most visible.
+- Past agent activity is available to the user but not immediately visible.
+- Show agent messages as soon as they are available, rather than waiting until turn end.
 
 ## Non-goals
 
-- Specify Matrix message layout, edits, threading, or a verbosity setting yet.
-- Promise raw chain-of-thought, or infer hidden reasoning from tool activity. Only agent-provided, explicitly available content is in scope.
-- Publish raw ACP traces or automatically expose tool inputs, outputs, paths, credentials, or private context to Matrix users.
+- Display data that isn't passed through ACP.
+- Use Matrix as an archival store for agent traces.
 
 ## Specification
 
-### Observed ACP stream
+### Available ACP Data
 
-Two isolated sessions of the configured agent answered “What's the weather in New York right now? Use a weather tool to check.” Both completed with `session/prompt` stop reason `end_turn`. The following is a **redacted field-shape inventory**, not a transcript or a guarantee across agents or turns:
+The example ACP trace shows agent activity in repeated `session/update` messages.
 
-| Update | Observed fields and sequence |
-| --- | --- |
-| `agent_message_chunk` | Text chunks arrived before and after tool calls. The initial messages included a startup prelude and startup metadata; subsequent small chunks formed the final answer. No separate commentary label or `messageId` appeared in these samples. Do not mistake startup text for turn commentary. |
-| `agent_thought_chunk` | Two text chunks preceded the first tool call. Thinking descriptions are therefore available in this sample, but their content is not reproduced here. Availability depends on the agent and turn. |
-| First `tool_call` | `toolCallId`, `title`, `kind`, `status: pending`, `locations`, and structured `rawInput` appeared. The input included a `path` key; its value is deliberately omitted. An `in_progress` update repeated the input; a `completed` update provided a `content` block (`type: content`, nested text content) and structured `rawOutput` with a `content` key. |
-| Second `tool_call` | A terminal-style content block and terminal metadata appeared on the pending call. Updates progressed through `in_progress` to `completed`. Terminal output and exit information appeared in update metadata, **not** as `rawOutput` in this sample. |
-| Other | `session_info_update` and `available_commands_update` also appeared. No plan or usage update was seen in these turns. |
+1. method = "session/update"
+    1. params.update.sessionUpdate = "agent_thought_chunk"
+    1. params.update.sessionUpdate = "tool_call"
+        1. params.update.kind = "read"
+        1. params.update.kind = "edit"
+        1. params.update.kind = "execute"
+    1. params.update.sessionUpdate = "tool_call_update"
 
-A separate isolated turn wrote, read, edited, then read a new scratch file. The resulting file was verified and removed. It also ended with `end_turn`:
 
-| Tool | Observed pending / in-progress input | Observed completed output |
-| --- | --- | --- |
-| Write | `rawInput` with `path` and `content` | `content` block of `type: diff` with `path`, `oldText`, and `newText`; no `rawOutput` |
-| Read (twice) | `rawInput` with `path` | `content` block of `type: content` with nested text, plus `rawOutput.content` |
-| Edit | `rawInput` with `path` and `edits` | `content` block of `type: diff` with `path`, `oldText`, and `newText`; no `rawOutput` |
+### Eager Message Rendering
 
-Each operation had `pending`, `in_progress`, and `completed` updates. This turn emitted no `agent_thought_chunk`; only startup and final agent text was observed.
+In the example ACP trace, the following text is sent together at the end of the turn:
 
-Tool calls are correlated by `toolCallId`; arguments, outputs, and content-block forms differ between tools. A renderer must not assume `rawOutput` is always present or that `content` alone contains all tool results. Neither update type nor optional message ID distinguishes mid-turn commentary from final-answer `agent_message_chunk` text. Never commit unreviewed transcripts, endpoint addresses, session IDs, credentials, or private paths to this public repository.
+"""
+I’ll create only the specified scratch file at its explicit /tmp path, verify its contents, then display it with the exact allowed cat -- command. No other files or commands will be touched.Completed: wrote, read, and displayed the specified scratch file.
+"""
 
-### Future behavior boundaries
+The first sentence is produced before the tool calls but only displayed at the end. We should display the message chunk when the agent finished writing. We can tell in this case because the tool calls start after.
 
-- An implementation must associate updates with the correct ACP session and active turn; it must not display late or replayed updates as a new turn.
-- Tool updates must be correlated by tool-call ID so changes to status and output do not appear as unrelated calls.
-- Untrusted ACP text and tool data must be bounded by output limits and treated as data, not commands or trusted markup.
-- A turn without progress updates must retain today's final-answer behavior. Errors, cancellation, and restart must not leave misleading in-progress output.
-- Explicitly decide what categories of tool input/output can be shown to authorized Matrix room members before forwarding any of them. Room authorization alone does not make arbitrary tool output safe to disclose.
+### Progressive Disclosure via Collapsible Trees
+
+We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays more information to the user.
+
+1. Past agent activity
+    1. Thought 1
+    1. Thought 2
+    1. (status) Tool Call 1 Abbreviated Command
+        1. Tool Call 1 Full Command
+        1. Tool Call 1 Abbreviated Result
+            1. Tool Call 1 Full Result
+1. (status) Tool Call 2 Abbreviated Command
+    1. Tool Call 2 Full Command
+    1. Tool Call 2 Abbreviated Result
+        1. Tool Call 2 Full Result
+
+The most recent message is always displayed at depth 2. Past activity is collapsed and shown at depth 1.
+
+Full commands and results are shown only if their abbreviated versions were truncated.
+
+Use color cues where possible to make activity easy to understand at a glance. For example, tool-call status should be gray when pending, black when running, green when completed successfully, and red when failed. For file diffs, red text is old and green text is new.
 
 ## Verification
 
-- The redacted live probe inventory above is reproducible with a tool-using turn; no raw trace enters the repository.
-- Adapter tests cover observed update shapes, partial and repeated tool updates, multiple tools, missing optional fields, and late updates.
-- Bridge tests confirm that non-verbose behavior remains unchanged and that progress is scoped to the active room turn and bounded under cancellation and failure.
 
 ## Open questions
 
-- Can commentary be distinguished from final answer text in other turns? Are thought chunks suitable as brief thinking descriptions, or could they contain sensitive reasoning?
-- For which tools do arguments and results appear in `rawInput`, `rawOutput`, content blocks, or metadata? How are incremental terminal updates bounded?
-- What should be hidden, summarized, or opt-in for tool arguments, outputs, and thought-like content?
-- How should Matrix present the available content (separate messages, edits, threading, or another form)?
 
-## Example ACP trace
+## Appendix
 
-This is the user's trimmed read/write/exec example. JSON-RPC IDs and session IDs were already omitted in the trimmed copy. File paths are shown as the illustrative `/tmp/output.txt`; tool-call and terminal IDs are substituted for this public specification. The displayed text and tool results are unchanged; comments describe the bridge's **current** behavior. Repeated text chunks are summarized, not reproduced individually. This is not a complete wire transcript.
+
+### Example ACP Trace
+
+Here is a full sequence of ACP messages, trimmed and commented for readability.
 
 ```jsonc
 // User prompt
