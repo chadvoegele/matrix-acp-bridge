@@ -48,19 +48,16 @@ ACP v1 references:
 - [Terminals](https://agentclientprotocol.com/protocol/v1/terminals): standard terminal capability and output methods.
 - [Extensibility](https://agentclientprotocol.com/protocol/v1/extensibility): implementation-specific `_meta` data.
 
-The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard** labels mark protocol-defined structures; **pi-acp extension** labels mark implementation-specific fields. Optional standard fields and exact tool-input shapes are not guaranteed for every agent.
-
 #### Thought chunk
 
-> **ACP v1 standard:** `agent_thought_chunk` carries streamed agent reasoning. Its presence is optional.
-
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
   "params": {
     "sessionId": "example-session",
     "update": {
+      // ACP v1: optional streamed agent reasoning; agents need not emit it.
       "sessionUpdate": "agent_thought_chunk",
       "content": { "type": "text", "text": "**Planning tools for text processing**" }
     }
@@ -70,39 +67,42 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
 
 #### Read tool call
 
-> **ACP v1 standard:** `tool_call` identifies the call; `tool_call_update` patches its status and content. `rawInput` and `rawOutput` are optional, and their internal shapes are tool-specific.
-
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
   "params": {
     "sessionId": "example-session",
     "update": {
+      // ACP v1: new tool call, correlated by toolCallId.
       "sessionUpdate": "tool_call",
       "toolCallId": "call-read",
       "title": "read",
       "kind": "read",
       "status": "pending",
+      // ACP v1: rawInput is optional; "path" is this tool's input, not an ACP field.
       "rawInput": { "path": "/tmp/output.txt" }
     }
   }
 }
 ```
 
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
   "params": {
     "sessionId": "example-session",
     "update": {
+      // ACP v1: patch an existing tool call; completed means success.
       "sessionUpdate": "tool_call_update",
       "toolCallId": "call-read",
       "status": "completed",
+      // ACP v1: displayable tool result content.
       "content": [
         { "type": "content", "content": { "type": "text", "text": "alpha\nbeta\n" } }
       ],
+      // ACP v1: rawOutput is optional; its inner shape is tool-specific.
       "rawOutput": { "content": [{ "type": "text", "text": "alpha\nbeta\n" }] }
     }
   }
@@ -111,9 +111,7 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
 
 #### Edit tool call
 
-> **ACP v1 standard:** `kind: "edit"` covers modifications, including this agent's write operation. A `diff` content block reports the new file (`oldText: null`).
-
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
@@ -123,15 +121,17 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
       "sessionUpdate": "tool_call",
       "toolCallId": "call-write",
       "title": "write",
+      // ACP v1: edit means modifying content; pi-acp classifies its write tool this way.
       "kind": "edit",
       "status": "pending",
+      // ACP v1: optional rawInput; its path/content keys are tool-specific.
       "rawInput": { "path": "/tmp/output.txt", "content": "alpha\nbeta\n" }
     }
   }
 }
 ```
 
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
@@ -141,6 +141,7 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
       "sessionUpdate": "tool_call_update",
       "toolCallId": "call-write",
       "status": "completed",
+      // ACP v1: diff content; oldText: null means a new file.
       "content": [
         { "type": "diff", "path": "/tmp/output.txt", "oldText": null, "newText": "alpha\nbeta\n" }
       ]
@@ -151,9 +152,7 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
 
 #### Execute tool call
 
-> **ACP v1 standard:** `kind: "execute"` and a `terminal` content block describe an executable tool call and terminal reference. `title` is a human-readable label; this agent puts the command there, but ACP does not require that. Standard terminal methods require a negotiated client terminal capability.
-
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
@@ -162,18 +161,21 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
     "update": {
       "sessionUpdate": "tool_call",
       "toolCallId": "call-exec",
+      // ACP v1: title is a human-readable label, NOT a guaranteed command field.
+      // pi-acp happens to put the exact command in it.
       "title": "cat -- /tmp/output.txt",
       "kind": "execute",
       "status": "pending",
-      "content": [{ "type": "terminal", "terminalId": "terminal-1" }]
+      // ACP v1: terminal reference; standard terminal methods require client capability.
+      "content": [{ "type": "terminal", "terminalId": "terminal-1" }],
+      // pi-acp extension: terminal_info is not an ACP-defined _meta key.
+      "_meta": { "terminal_info": { "terminal_id": "terminal-1", "cwd": "/tmp" } }
     }
   }
 }
 ```
 
-> **pi-acp extension:** The appendix also shows `_meta.terminal_info` on the initial call. This agent streams terminal data and exit information in `_meta.terminal_output` and `_meta.terminal_exit`, rather than standard `terminal/output` responses. ACP permits `_meta`, but does not define these keys or their values.
-
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
@@ -183,6 +185,8 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
       "sessionUpdate": "tool_call_update",
       "toolCallId": "call-exec",
       "status": "in_progress",
+      // pi-acp extension: ACP permits _meta but does not define terminal_output.
+      // This is not a standard terminal/output response.
       "_meta": {
         "terminal_output": { "terminal_id": "terminal-1", "data": "alpha\nbeta\n" }
       }
@@ -191,7 +195,7 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
 }
 ```
 
-```json
+```jsonc
 {
   "jsonrpc": "2.0",
   "method": "session/update",
@@ -200,7 +204,9 @@ The examples below use `/tmp/output.txt` and substitute IDs. **ACP v1 standard**
     "update": {
       "sessionUpdate": "tool_call_update",
       "toolCallId": "call-exec",
+      // ACP v1: completed means the tool call succeeded.
       "status": "completed",
+      // pi-acp extension: ACP does not define terminal_exit or its fields.
       "_meta": {
         "terminal_exit": { "terminal_id": "terminal-1", "exit_code": 0, "signal": null }
       }
