@@ -1,7 +1,7 @@
 +++
 status = "draft"
 created = 2026-09-24
-last_update = 2026-09-24
+last_update = 2026-09-25
 +++
 
 # Verbose ACP output in Matrix
@@ -51,6 +51,8 @@ A separate isolated turn wrote, read, edited, then read a new scratch file. The 
 Each operation had `pending`, `in_progress`, and `completed` updates. This turn emitted no `agent_thought_chunk`; only startup and final agent text was observed.
 
 ### Redacted wire examples
+
+For an event-complete trace from `initialize` through a read/write/exec turn and its final `session/prompt` result, see the [redacted end-to-end ACP example](examples/acp-read-write-exec.md). Consecutive streamed text chunks are counted there rather than copied verbatim.
 
 These examples show **selected fields** of actual `params.update` objects within ACP `session/update` notifications, in stream order. They omit the JSON-RPC envelope, `sessionId`, titles, locations, and other fields. IDs and paths are substituted; the scratch file's test text is safe to show. A file creation used the agent's `write` tool but was labeled `kind: edit` on the wire:
 
