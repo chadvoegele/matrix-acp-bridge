@@ -249,6 +249,38 @@ Render each grouped thought as a standalone, single-paragraph entry: a thought-b
 
 The corresponding plain-text `body` is `💭 Preparing initial write`. For this heading-like thought, omit the source's surrounding Markdown `**` rather than displaying bold text; trailing `\n\n` is spacing, not another thought. Escape thought text before producing HTML. Keep the entry independent so it can later be nested in the progressive-disclosure tree. A single paragraph does not guarantee no visual wrapping in every Matrix client.
 
+### Read tool call rendering
+
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Prefix its label with 🔧 and show `Read(path)` plus a written status; color is a secondary cue. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
+
+1. **Pending — gray (`#808080`):**
+
+   ```html
+   <p><span data-mx-color="#808080">🔧 Read(/tmp/output.txt) — pending</span></p>
+   ```
+
+2. **Running — black (`#000000`):**
+
+   ```html
+   <p><span data-mx-color="#000000">🔧 Read(/tmp/output.txt) — running</span></p>
+   ```
+
+3. **Completed successfully — green (`#008000`), with output:**
+
+   ```html
+   <p><span data-mx-color="#008000">🔧 Read(/tmp/output.txt) — completed</span></p>
+   <pre><code>alpha&#10;beta&#10;</code></pre>
+   ```
+
+4. **Failed — red (`#C00000`), with an illustrative error if available:**
+
+   ```html
+   <p><span data-mx-color="#C00000">🔧 Read(/tmp/output.txt) — failed</span></p>
+   <pre><code>Permission denied</code></pre>
+   ```
+
+The plain-text `body` should contain the same status, path, and available result without relying on color. Use the displayable `content` once; do not duplicate it from `rawOutput`. Additional or missing status updates must not break the evolving event. These blocks can later become children of the progressive-disclosure tree.
+
 ### Progressive Disclosure via Collapsible Trees
 
 We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays more information to the user.
@@ -297,6 +329,7 @@ Permitted attributes and Matrix extensions:
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
+- One read tool event transitions through pending, running, and either completed or failed; the label includes `Read(path)`, result text is not duplicated, and the plain-text fallback includes the status.
 
 ## Open questions
 
