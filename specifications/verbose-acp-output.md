@@ -251,33 +251,32 @@ The corresponding plain-text `body` is `💭 Preparing initial write`. For this 
 
 ### Read tool call rendering
 
-Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Show the 🔧 `Read(path)` title on the top line. A heavy left rail (`┃`) carries the status color; the title and output remain black, with no status suffix in the HTML. Prefix each output line with the same rail and put its text in `<code>` within the `<pre>` block. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Show 🔧 `Read(path)` beside one heavy left rail (`┃`). The rail carries the status color; a light status-tinted background covers both the rail and the black title, with no status suffix in the HTML. Put the output separately in `<pre><code>`, without a rail. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
 
 1. **Pending — gray (`#808080`):**
 
    ```html
-   <pre><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></pre>
+   <p><span data-mx-bg-color="#EAEAEA"><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
    ```
 
 2. **Running — black (`#000000`):**
 
    ```html
-   <pre><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></pre>
+   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
    ```
 
 3. **Completed successfully — green (`#008000`), with output:**
 
    ```html
-   <pre><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span>
-   <span data-mx-color="#008000">┃</span> <code>alpha</code>
-   <span data-mx-color="#008000">┃</span> <code>beta</code></pre>
+   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
+   <pre><code>alpha&#10;beta&#10;</code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
-   <pre><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span>
-   <span data-mx-color="#C00000">┃</span> <code>Permission denied</code></pre>
+   <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
+   <pre><code>Permission denied</code></pre>
    ```
 
 The plain-text `body` should name the status, path, and available result without relying on color. Use the displayable `content` once; do not duplicate it from `rawOutput`. Additional or missing status updates must not break the evolving event. These blocks can later become children of the progressive-disclosure tree.
@@ -330,7 +329,7 @@ Permitted attributes and Matrix extensions:
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
-- One read tool event transitions through pending, running, and either completed or failed; the label includes `Read(path)`, result text is not duplicated, and the plain-text fallback includes the status.
+- One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
 
 ## Open questions
 
