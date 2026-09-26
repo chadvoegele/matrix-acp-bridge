@@ -249,9 +249,7 @@ Use color cues where possible to make activity easy to understand at a glance. F
 
 ### Matrix HTML subset
 
-The [Matrix `m.room.message` specification](https://spec.matrix.org/v1.16/client-server-api/#mroommessage-msgtypes) supports HTML via `format: "org.matrix.custom.html"` and `formatted_body`, alongside a plain-text `body`. The bridge already uses this format for Markdown (`src/matrix-markdown.ts` and `src/matrix-client.ts`); its Markdown renderer disables raw HTML input.
-
-Matrix strongly suggests the following safe HTML tags, grouped by purpose. Client support for individual tags is not guaranteed:
+The [Matrix `m.room.message` specification](https://spec.matrix.org/v1.16/client-server-api/#mroommessage-msgtypes) supports HTML via `format: "org.matrix.custom.html"` and `formatted_body`, alongside a plain-text `body`.
 
 1. **Structure:** `p`, `h1`–`h6`, `blockquote`, `div`, `br`, `hr`.
 2. **Inline text:** `strong`, `b`, `em`, `i`, `u`, `s`, `del`, `sup`, `sub`, `span`.
@@ -261,15 +259,13 @@ Matrix strongly suggests the following safe HTML tags, grouped by purpose. Clien
 6. **Tables:** `table`, `thead`, `tbody`, `tr`, `th`, `td`, `caption`.
 7. **Collapsible sections:** `details`, `summary`.
 
-Matrix-specific attributes extend that subset:
+Permitted attributes and Matrix extensions:
 
 - **Color:** `span` may use `data-mx-color` and `data-mx-bg-color`, each with a `#RRGGBB` value.
 - **Spoilers:** `span` may use `data-mx-spoiler`.
 - **Math:** `span` and `div` may use `data-mx-maths`.
-
-Other permitted attributes are tag-specific: for example, `code` accepts `language-` classes, links require an approved absolute URI scheme, and image sources must use `mxc://`. Arbitrary CSS (`style`), scripts, and event-handler attributes are not permitted. Clients may support fewer tags, so collapsible sections and color cannot be the only way to understand activity or status.
-
-Verbose output must provide a readable plain-text `body` as well as safe `formatted_body`. ACP text, paths, arguments, and results must be escaped before inserting them into HTML; do not enable raw HTML in the Markdown renderer to implement collapsible trees. Collapsing content is a display choice, not a privacy boundary: both bodies can be visible to clients, notifications, and room members. Keep nesting within the Matrix spec's 100-level limit.
+- **Other attributes:** `code` accepts `language-` classes, links require an approved absolute URI scheme, and image sources must use `mxc://`.
+- **Limits:** Arbitrary CSS (`style`), scripts, and event-handler attributes are not permitted. Clients may support fewer tags, so collapsible sections and color cannot be the only way to understand activity or status.
 
 ## Verification
 
