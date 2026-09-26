@@ -251,32 +251,33 @@ The corresponding plain-text `body` is `💭 Preparing initial write`. For this 
 
 ### Read tool call rendering
 
-Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Prefix its label with 🔧 and show `Read(path)`; the label's color indicates status without status text in the HTML. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Show the 🔧 `Read(path)` title on the top line. A heavy left rail (`┃`) carries the status color; the title and output remain black, with no status suffix in the HTML. Prefix each output line with the same rail. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
 
 1. **Pending — gray (`#808080`):**
 
    ```html
-   <p><span data-mx-color="#808080">🔧 Read(/tmp/output.txt)</span></p>
+   <pre><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></pre>
    ```
 
 2. **Running — black (`#000000`):**
 
    ```html
-   <p><span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></p>
+   <pre><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></pre>
    ```
 
 3. **Completed successfully — green (`#008000`), with output:**
 
    ```html
-   <p><span data-mx-color="#008000">🔧 Read(/tmp/output.txt)</span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
+   <pre><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span>
+   <span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">alpha</span>
+   <span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">beta</span></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
-   <p><span data-mx-color="#C00000">🔧 Read(/tmp/output.txt)</span></p>
-   <pre><code>Permission denied</code></pre>
+   <pre><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span>
+   <span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">Permission denied</span></pre>
    ```
 
 The plain-text `body` should name the status, path, and available result without relying on color. Use the displayable `content` once; do not duplicate it from `rawOutput`. Additional or missing status updates must not break the evolving event. These blocks can later become children of the progressive-disclosure tree.
