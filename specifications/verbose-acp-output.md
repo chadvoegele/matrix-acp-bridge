@@ -244,10 +244,10 @@ In the GPT-6 Luna probe, `"**Preparing initial write**"` followed by `"\n\n"` fo
 Render each grouped thought as a standalone, single-paragraph entry: a thought-bubble emoji followed by the thought text. For the first observed thought, the proposed Matrix `formatted_body` is:
 
 ```html
-<p>💭 <strong>Preparing initial write</strong></p>
+<p>💭 Preparing initial write</p>
 ```
 
-The corresponding plain-text `body` is `💭 Preparing initial write`. The `<strong>` represents the source thought's Markdown `**...**`; trailing `\n\n` is spacing, not another thought. Escape thought text before producing HTML. Keep the entry independent so it can later be nested in the progressive-disclosure tree. A single paragraph does not guarantee no visual wrapping in every Matrix client.
+The corresponding plain-text `body` is `💭 Preparing initial write`. For this heading-like thought, omit the source's surrounding Markdown `**` rather than displaying bold text; trailing `\n\n` is spacing, not another thought. Escape thought text before producing HTML. Keep the entry independent so it can later be nested in the progressive-disclosure tree. A single paragraph does not guarantee no visual wrapping in every Matrix client.
 
 ### Progressive Disclosure via Collapsible Trees
 
@@ -296,7 +296,7 @@ Permitted attributes and Matrix extensions:
 - A text thought chunk followed by `"\n\n"` appears as one live thought entry and counts once.
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
-- The thought example renders as a single paragraph with 💭 and bold text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
+- The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 
 ## Open questions
 
