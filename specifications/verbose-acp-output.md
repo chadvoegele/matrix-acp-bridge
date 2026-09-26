@@ -225,6 +225,8 @@ I’ll create only the specified scratch file at its explicit /tmp path, verify 
 
 The first sentence is produced before the tool calls but only displayed at the end. We should display the message chunk when the agent finished writing. We can tell in this case because the tool calls start after.
 
+Whitespace is another possible boundary heuristic: after joining chunks, a double newline can indicate a paragraph break. It is not an ACP end-of-message marker. In a separate five-tool probe, the agent sent two `agent_thought_chunk` updates—a heading and a `\n\n` chunk—which together formed one thought, not two. It also sent agent-message text before each tool call, with no double newlines or `messageId` in those text runs. Tool-call transitions helped segment that trace; whitespace alone would not have. Eager messages should remain provisional when boundaries are inferred this way.
+
 ### Progressive Disclosure via Collapsible Trees
 
 We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays more information to the user.
