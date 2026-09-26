@@ -227,6 +227,18 @@ The first sentence is produced before the tool calls but only displayed at the e
 
 Whitespace is another possible boundary heuristic: after joining chunks, a double newline can indicate a paragraph break. It is not an ACP end-of-message marker. In a separate five-tool probe, the agent sent two `agent_thought_chunk` updates—a heading and a `\n\n` chunk—which together formed one thought, not two. It also sent agent-message text before each tool call, with no double newlines or `messageId` in those text runs. Tool-call transitions helped segment that trace; whitespace alone would not have. In a harder six-tool arithmetic probe, four thought chunks formed two thought runs after tool results: each run contained text followed by a `\n\n` chunk. Type transitions (`tool_call_update` → thought → agent message) helped group those runs, but neither they nor whitespace signaled the end of an agent message reliably; the agent-message runs still had no double newlines or `messageId`. Eager messages should remain provisional when boundaries are inferred this way.
 
+### Identifying and displaying thought events
+
+The UI should display thought text in its own entries, separate from agent messages and tool calls. Group ACP chunks into those entries using these rules, in priority order:
+
+1. Only `session/update` notifications with `sessionUpdate: "agent_thought_chunk"` are thought chunks. Do not infer thoughts from an `agent_message_chunk`'s wording or Markdown.
+2. When a thought chunk has a `messageId`, append chunks with that ID to the same thought entry; a different ID starts another. ACP v1 permits IDs but does not require them.
+3. Without an ID, join consecutive thought chunks for the active turn into one entry. A whitespace-only chunk, including `"\n\n"`, does not create or increment a thought entry. Render it as spacing within the entry if useful; a double newline alone is not an ACP end marker.
+4. Without IDs, an agent-message or tool-call transition closes the provisional thought entry; a later thought chunk starts a new one. Do not split solely on unrelated session metadata or usage updates. These are UI heuristics, not guaranteed ACP message boundaries.
+5. Render an entry incrementally while its chunks arrive. Count grouped thought entries, not individual chunk notifications, in **Past Agent Events**. A late update after the turn closes must not create a new visible thought for that turn.
+
+In the GPT-6 Luna probe, `"**Preparing initial write**"` followed by `"\n\n"` formed one entry; after intervening activity, `"**Summing file integers**"` followed by `"\n\n"` formed another. The four chunks therefore represented two visible thought entries.
+
 ### Progressive Disclosure via Collapsible Trees
 
 We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays more information to the user.
@@ -271,6 +283,9 @@ Permitted attributes and Matrix extensions:
 
 ## Verification
 
+- A text thought chunk followed by `"\n\n"` appears as one live thought entry and counts once.
+- Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
+- Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 
 ## Open questions
 
