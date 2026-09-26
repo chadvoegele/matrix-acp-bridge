@@ -251,35 +251,35 @@ The corresponding plain-text `body` is `💭 Preparing initial write`. For this 
 
 ### Read tool call rendering
 
-Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Prefix its label with 🔧 and show `Read(path)` plus a written status; color is a secondary cue. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Prefix its label with 🔧 and show `Read(path)`; the label's color indicates status without status text in the HTML. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
 
 1. **Pending — gray (`#808080`):**
 
    ```html
-   <p><span data-mx-color="#808080">🔧 Read(/tmp/output.txt) — pending</span></p>
+   <p><span data-mx-color="#808080">🔧 Read(/tmp/output.txt)</span></p>
    ```
 
 2. **Running — black (`#000000`):**
 
    ```html
-   <p><span data-mx-color="#000000">🔧 Read(/tmp/output.txt) — running</span></p>
+   <p><span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></p>
    ```
 
 3. **Completed successfully — green (`#008000`), with output:**
 
    ```html
-   <p><span data-mx-color="#008000">🔧 Read(/tmp/output.txt) — completed</span></p>
+   <p><span data-mx-color="#008000">🔧 Read(/tmp/output.txt)</span></p>
    <pre><code>alpha&#10;beta&#10;</code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
-   <p><span data-mx-color="#C00000">🔧 Read(/tmp/output.txt) — failed</span></p>
+   <p><span data-mx-color="#C00000">🔧 Read(/tmp/output.txt)</span></p>
    <pre><code>Permission denied</code></pre>
    ```
 
-The plain-text `body` should contain the same status, path, and available result without relying on color. Use the displayable `content` once; do not duplicate it from `rawOutput`. Additional or missing status updates must not break the evolving event. These blocks can later become children of the progressive-disclosure tree.
+The plain-text `body` should name the status, path, and available result without relying on color. Use the displayable `content` once; do not duplicate it from `rawOutput`. Additional or missing status updates must not break the evolving event. These blocks can later become children of the progressive-disclosure tree.
 
 ### Progressive Disclosure via Collapsible Trees
 
