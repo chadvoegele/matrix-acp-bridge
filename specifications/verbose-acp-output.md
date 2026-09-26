@@ -229,7 +229,7 @@ The first sentence is produced before the tool calls but only displayed at the e
 
 We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays more information to the user.
 
-1. Past agent activity
+1. Past Agent Events: # events = # thoughts + # tool calls
     1. Thought 1
     1. Thought 2
     1. (status) Tool Call 1 Abbreviated Command
