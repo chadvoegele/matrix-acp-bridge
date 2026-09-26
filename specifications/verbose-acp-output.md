@@ -1,7 +1,7 @@
 +++
 status = "draft"
 created = 2026-09-24
-last_update = 2026-09-25
+last_update = 2026-09-26
 +++
 
 # Verbose ACP output in Matrix
@@ -246,6 +246,14 @@ The most recent message is always displayed at depth 2. Past activity is collaps
 Full commands and results are shown only if their abbreviated versions were truncated.
 
 Use color cues where possible to make activity easy to understand at a glance. For example, tool-call status should be gray when pending, black when running, green when completed successfully, and red when failed. For file diffs, red text is old and green text is new.
+
+### Matrix HTML subset
+
+The [Matrix `m.room.message` formatting specification](https://spec.matrix.org/v1.16/client-server-api/#mroommessage-msgtypes) defines `format: "org.matrix.custom.html"` and `formatted_body` alongside a plain-text `body`. The bridge already uses this format to display Markdown (`src/matrix-markdown.ts` and `src/matrix-client.ts`); raw HTML input is disabled in that Markdown renderer.
+
+The spec **strongly suggests**, rather than guarantees that every client supports, this safe tag subset: `del`, `h1`–`h6`, `blockquote`, `p`, `a`, `ul`, `ol`, `sup`, `sub`, `li`, `b`, `i`, `u`, `strong`, `em`, `s`, `code`, `hr`, `br`, `div`, `table`, `thead`, `tbody`, `tr`, `th`, `td`, `caption`, `pre`, `span`, `img`, `details`, and `summary`. For this design, `details`/`summary` can express collapsible sections; `span` can express color via `data-mx-color` and `data-mx-bg-color` with `#RRGGBB` values. Other permitted attributes are limited by tag (for example, `code` accepts `language-` classes, `a` accepts approved absolute URI schemes, and `img` requires an `mxc://` source). Arbitrary CSS (`style`), scripts, and event-handler attributes are not permitted. Clients may support fewer tags, so collapsible presentation and color cannot be the only way to understand activity or status.
+
+Verbose output must provide a readable plain-text `body` as well as safe `formatted_body`. ACP text, paths, arguments, and results must be escaped before inserting them into HTML; do not enable raw HTML in the Markdown renderer to implement collapsible trees. Collapsing content is a display choice, not a privacy boundary: both bodies can be visible to clients, notifications, and room members. Keep nesting within the Matrix spec's 100-level limit.
 
 ## Verification
 
