@@ -26,9 +26,6 @@ export type AcpMessageId = string;
 
 export type AcpIgnoredUpdateKind =
   | "user_message_chunk"
-  | "agent_thought_chunk"
-  | "tool_call"
-  | "tool_call_update"
   | "plan"
   | "available_commands"
   | "current_mode_update"
@@ -49,7 +46,37 @@ export interface AcpIgnoredUpdate {
   readonly messageId?: AcpMessageId;
 }
 
-export type AcpUpdate = AcpAgentMessageChunk | AcpIgnoredUpdate;
+export interface AcpAgentThoughtChunk {
+  readonly sessionId: AcpSessionId;
+  readonly kind: "agent_thought_chunk";
+  readonly text: string;
+  readonly messageId?: AcpMessageId;
+}
+
+export type AcpToolContent =
+  | { readonly type: "content"; readonly text: string }
+  | { readonly type: "diff"; readonly path: string; readonly oldText?: string | null; readonly newText?: string }
+  | { readonly type: "terminal"; readonly terminalId: string };
+
+export type AcpToolInput = string | number | boolean | null | readonly AcpToolInput[] | { readonly [key: string]: AcpToolInput };
+
+export interface AcpToolCallUpdate {
+  readonly sessionId: AcpSessionId;
+  readonly kind: "tool_call" | "tool_call_update";
+  readonly messageId?: AcpMessageId;
+  readonly toolCallId?: string;
+  readonly title?: string;
+  readonly toolKind?: string;
+  readonly status?: string;
+  readonly content?: readonly AcpToolContent[];
+  readonly locations?: readonly { readonly path: string; readonly line?: number }[];
+  readonly rawInput?: AcpToolInput;
+  readonly rawOutput?: AcpToolInput;
+  readonly terminalOutput?: { readonly terminalId?: string; readonly data: string };
+  readonly terminalExit?: { readonly terminalId?: string; readonly exitCode?: number; readonly signal?: string | null };
+}
+
+export type AcpUpdate = AcpAgentMessageChunk | AcpAgentThoughtChunk | AcpToolCallUpdate | AcpIgnoredUpdate;
 export type AcpUpdateListener = (update: AcpUpdate) => void;
 
 export type AcpStopReason =
@@ -507,6 +534,109 @@ function stopReason(value: unknown): AcpStopReason | undefined {
 
 function messageId(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+const ACP_FIELD_LIMIT = 8192;
+
+function boundedString(value: unknown): string | undefined {
+  return typeof value === "string" ? value.slice(0, ACP_FIELD_LIMIT) : undefined;
+}
+
+/** Copy JSON input within a shared budget; never retain the agent's raw object. */
+function boundedInput(value: unknown): AcpToolInput | undefined {
+  let remaining = ACP_FIELD_LIMIT;
+  const copy = (item: unknown, depth: number): AcpToolInput | undefined => {
+    if (remaining <= 0 || depth > 4) return undefined;
+    if (typeof item === "string") {
+      const result = item.slice(0, remaining);
+      remaining -= result.length;
+      return result;
+    }
+    if (item === null || typeof item === "boolean") {
+      remaining -= 1;
+      return item;
+    }
+    if (typeof item === "number" && Number.isFinite(item)) {
+      remaining -= 1;
+      return item;
+    }
+    if (Array.isArray(item)) {
+      remaining -= 1;
+      return item.slice(0, 32).flatMap((entry: unknown) => {
+        const parsed = copy(entry, depth + 1);
+        return parsed === undefined ? [] : [parsed];
+      });
+    }
+    if (isRecord(item)) {
+      remaining -= 1;
+      const entries: Array<[string, AcpToolInput]> = [];
+      for (const [key, entry] of Object.entries(item).slice(0, 32)) {
+        if (remaining <= 0) break;
+        const parsed = copy(entry, depth + 1);
+        if (parsed !== undefined) entries.push([key.slice(0, 128), parsed]);
+      }
+      return Object.fromEntries(entries);
+    }
+    return undefined;
+  };
+  return copy(value, 0);
+}
+
+function toolContent(value: unknown): readonly AcpToolContent[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.slice(0, 32).flatMap((entry: unknown): AcpToolContent[] => {
+    if (!isRecord(entry)) return [];
+    if (entry.type === "content" && isRecord(entry.content) && entry.content.type === "text") {
+      const text = boundedString(entry.content.text);
+      return text === undefined ? [] : [{ type: "content", text }];
+    }
+    if (entry.type === "diff" && typeof entry.path === "string") {
+      const oldText = boundedString(entry.oldText);
+      const newText = boundedString(entry.newText);
+      const oldField = entry.oldText === null ? { oldText: null } : (oldText === undefined ? {} : { oldText });
+      return [{ type: "diff", path: entry.path.slice(0, ACP_FIELD_LIMIT),
+        ...oldField,
+        ...(newText === undefined ? {} : { newText }),
+      }];
+    }
+    if (entry.type === "terminal" && typeof entry.terminalId === "string") {
+      return [{ type: "terminal", terminalId: entry.terminalId.slice(0, ACP_FIELD_LIMIT) }];
+    }
+    return [];
+  });
+}
+
+function toolLocations(value: unknown): AcpToolCallUpdate["locations"] {
+  if (!Array.isArray(value)) return undefined;
+  return value.slice(0, 32).flatMap((entry: unknown) =>
+    isRecord(entry) && typeof entry.path === "string"
+      ? [{ path: entry.path.slice(0, ACP_FIELD_LIMIT),
+        ...(typeof entry.line === "number" && Number.isSafeInteger(entry.line) && entry.line > 0 ? { line: entry.line } : {}) }]
+      : []);
+}
+
+function terminalMetadata(value: unknown): Pick<AcpToolCallUpdate, "terminalOutput" | "terminalExit"> {
+  if (!isRecord(value)) return {};
+  const result: Record<string, unknown> = {};
+  if (isRecord(value.terminal_output) && typeof value.terminal_output.data === "string") {
+    const terminalId = boundedString(value.terminal_output.terminal_id);
+    result.terminalOutput = {
+      data: value.terminal_output.data.slice(0, ACP_FIELD_LIMIT),
+      ...(terminalId === undefined ? {} : { terminalId }),
+    };
+  }
+  if (isRecord(value.terminal_exit)) {
+    const exit = value.terminal_exit;
+    const terminalId = boundedString(exit.terminal_id);
+    const signal = boundedString(exit.signal);
+    const signalField = exit.signal === null ? { signal: null } : (signal === undefined ? {} : { signal });
+    result.terminalExit = {
+      ...(terminalId === undefined ? {} : { terminalId }),
+      ...(typeof exit.exit_code === "number" && Number.isSafeInteger(exit.exit_code) ? { exitCode: exit.exit_code } : {}),
+      ...signalField,
+    };
+  }
+  return result;
 }
 
 function startupInfo(value: unknown): string | undefined {
@@ -1103,7 +1233,7 @@ export class InheritedStdioAcpClient implements AcpClient {
   }
 
   #handleUpdate(parameters: SessionNotification): void {
-    const update = parameters.update as unknown as Record<string, unknown>;
+    const update: Record<string, unknown> = isRecord(parameters.update) ? parameters.update : {};
     const sessionId = parameters.sessionId;
     const kind = update.sessionUpdate;
     const id = messageId(update.messageId);
@@ -1137,6 +1267,42 @@ export class InheritedStdioAcpClient implements AcpClient {
       return;
     }
 
+    if (kind === "agent_thought_chunk") {
+      const content = update.content;
+      if (isRecord(content) && content.type === "text" && typeof content.text === "string") {
+        this.#notifyUpdate({ sessionId, kind, text: content.text.slice(0, ACP_FIELD_LIMIT),
+          ...(id === undefined ? {} : { messageId: id }) });
+      }
+      return;
+    }
+
+    if (kind === "tool_call" || kind === "tool_call_update") {
+      const toolCallId = boundedString(update.toolCallId);
+      const title = boundedString(update.title);
+      const toolKind = boundedString(update.kind);
+      const status = boundedString(update.status);
+      const content = toolContent(update.content);
+      const locations = toolLocations(update.locations);
+      const rawInput = boundedInput(update.rawInput);
+      const rawOutput = boundedInput(update.rawOutput);
+      const mapped: AcpToolCallUpdate = {
+        sessionId,
+        kind,
+        ...(id === undefined ? {} : { messageId: id }),
+        ...(toolCallId === undefined ? {} : { toolCallId }),
+        ...(title === undefined ? {} : { title }),
+        ...(toolKind === undefined ? {} : { toolKind }),
+        ...(status === undefined ? {} : { status }),
+        ...(content === undefined ? {} : { content }),
+        ...(locations === undefined ? {} : { locations }),
+        ...(rawInput === undefined ? {} : { rawInput }),
+        ...(rawOutput === undefined ? {} : { rawOutput }),
+        ...terminalMetadata(update._meta),
+      };
+      this.#notifyUpdate(mapped);
+      return;
+    }
+
     const ignoredKind = this.#ignoredUpdateKind(kind);
     const mapped: AcpIgnoredUpdate = {
       sessionId,
@@ -1150,15 +1316,6 @@ export class InheritedStdioAcpClient implements AcpClient {
     switch (value) {
       case "user_message_chunk": {
         return "user_message_chunk";
-      }
-      case "agent_thought_chunk": {
-        return "agent_thought_chunk";
-      }
-      case "tool_call": {
-        return "tool_call";
-      }
-      case "tool_call_update": {
-        return "tool_call_update";
       }
       case "plan":
       case "plan_update":

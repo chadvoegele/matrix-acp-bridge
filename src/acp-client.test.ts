@@ -424,9 +424,92 @@ void test("maps text and ignored updates and joins distinct message IDs", async 
     {
       sessionId,
       kind: "agent_thought_chunk",
+      text: "hidden",
       messageId: "thought-1",
     },
   ]);
+  await client.close();
+});
+
+void test("preserves bounded thought and tool activity with optional fields and pi terminal metadata", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const client = newClient(input, output);
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const updates: unknown[] = [];
+  client.onUpdate((update) => updates.push(update));
+  const prompt = client.prompt(sessionId, "hello", {
+    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+  });
+  const frame = await output.nextFrame();
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "agent_thought_chunk", messageId: "thought", content: { type: "text", text: "thinking" },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call", toolCallId: "tool-1", kind: "edit", status: "pending", title: "write",
+    rawInput: { path: "/tmp/example", content: "x".repeat(20_000) },
+    locations: [{ path: "/tmp/example", line: 3 }],
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed",
+    content: [{ type: "diff", path: "/tmp/example", oldText: null, newText: "new" }],
+    _meta: { terminal_output: { terminal_id: "terminal-1", data: "ok" },
+      terminal_exit: { terminal_id: "terminal-1", exit_code: 0, signal: null } },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
+  input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+  await prompt;
+  assert.deepEqual(updates[0], { sessionId, kind: "agent_thought_chunk", messageId: "thought", text: "thinking" });
+  assert.deepEqual(updates[1], { sessionId, kind: "tool_call", toolCallId: "tool-1", title: "write",
+    toolKind: "edit", status: "pending", rawInput: { path: "/tmp/example", content: "x".repeat(8179) },
+    locations: [{ path: "/tmp/example", line: 3 }],
+  });
+  assert.deepEqual(updates[2], { sessionId, kind: "tool_call_update", toolCallId: "tool-1", status: "completed",
+    content: [{ type: "diff", path: "/tmp/example", oldText: null, newText: "new" }],
+    terminalOutput: { terminalId: "terminal-1", data: "ok" },
+    terminalExit: { terminalId: "terminal-1", exitCode: 0, signal: null },
+  });
+  await client.close();
+});
+
+void test("malformed optional activity fields do not escape into updates or diagnostics", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const diagnostics: unknown[] = [];
+  const client = newClient(input, output, { diagnostics: {
+    ...createDiagnostics(),
+    emit(_level: unknown, _event: unknown, fields: unknown) { diagnostics.push(fields); },
+  } });
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const updates: unknown[] = [];
+  client.onUpdate((update) => updates.push(update));
+  const prompt = client.prompt(sessionId, "hello", {
+    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+  });
+  const frame = await output.nextFrame();
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call_update", toolCallId: "tool-2", title: 8, status: false,
+    content: [{ type: "diff", path: 4 }, { type: "content", content: { type: "image", data: "private" } }],
+    locations: [{ path: 3 }], rawInput: { invalid: undefined },
+    _meta: { terminal_output: { data: 9 }, terminal_exit: { exit_code: "private" } },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call_update", toolCallId: "tool-3",
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
+  input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+  await prompt;
+  assert.deepEqual(updates, [
+    { sessionId, kind: "tool_call_update", toolCallId: "tool-2",
+      content: [], locations: [], rawInput: {}, terminalExit: {} },
+    { sessionId, kind: "tool_call_update", toolCallId: "tool-3" },
+  ]);
+  assert.equal(JSON.stringify(diagnostics).includes("private"), false);
   await client.close();
 });
 

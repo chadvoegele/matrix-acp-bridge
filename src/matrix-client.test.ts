@@ -12,6 +12,7 @@ import {
   classifyMatrixError,
   createMatrixClientAdapter,
   createMatrixCryptoAdapter,
+  matrixHtml,
   type MatrixClientCreateOptions,
   type MatrixSdkClientLike,
   type MatrixSdkEventLike,
@@ -182,11 +183,12 @@ class FakeSdkClient implements MatrixSdkClientLike {
     roomId: string,
     content: Readonly<Record<string, unknown>>,
     transactionId?: string,
-  ): Promise<void> {
+  ): Promise<{ event_id: string }> {
     this.sent.push({ roomId, content, transactionId });
     if (this.sendError !== undefined) {
       throw this.sendError;
     }
+    return { event_id: "$sent:example.org" };
   }
 
   async sendTyping(roomId: string, isTyping: boolean, timeoutMs: number): Promise<void> {
@@ -1431,6 +1433,46 @@ void test("sends Markdown as the standard Matrix formatted-body representation",
     format: "org.matrix.custom.html",
     formatted_body: "<p><em>hi</em></p>",
   });
+});
+
+void test("sends escaped HTML and edits the returned event with stable transaction IDs", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const formattedBody = matrixHtml`<p>${"<unsafe & quoted \"text\" '"}</p>`;
+  const initial = { roomId: ROOM_ID, transactionId: "html-initial", body: "<unsafe & quoted>", formattedBody };
+  const eventId = await adapter.sendHtmlMessage(initial);
+  assert.equal(eventId, "$sent:example.org");
+  assert.deepEqual(fake.sent[0], { roomId: ROOM_ID, transactionId: "html-initial", content: {
+    msgtype: "m.text", body: "<unsafe & quoted>", format: "org.matrix.custom.html",
+    formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
+  } });
+
+  const edit = { ...initial, transactionId: "html-edit", body: "updated", targetEventId: eventId };
+  fake.sendError = { httpStatus: 503 };
+  await assert.rejects(() => adapter.sendHtmlMessage(edit), (error: unknown) =>
+    error instanceof MatrixAdapterError && error.failure.retryable);
+  fake.sendError = undefined;
+  assert.equal(await adapter.sendHtmlMessage(edit), eventId);
+  assert.deepEqual(fake.sent.slice(1).map((send) => send.transactionId), ["html-edit", "html-edit"]);
+  assert.deepEqual(fake.sent[2]?.content, {
+    msgtype: "m.text", body: "* updated", format: "org.matrix.custom.html",
+    formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
+    "m.new_content": { msgtype: "m.text", body: "updated", format: "org.matrix.custom.html",
+      formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>" },
+    "m.relates_to": { rel_type: "m.replace", event_id: eventId },
+  });
+});
+
+void test("HTML sends enforce configured rooms and required encryption", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const message = { roomId: OTHER_ROOM_ID, transactionId: "html-other", body: "text", formattedBody: matrixHtml`<p>text</p>` };
+  await assert.rejects(() => adapter.sendHtmlMessage(message), /not configured/u);
+  assert.equal(fake.sent.length, 0);
+
+  const required = requiredAdapterFor(fake);
+  await assert.rejects(() => required.sendHtmlMessage({ ...message, roomId: ROOM_ID }), /encryption is not ready/u);
+  assert.equal(fake.sent.length, 0);
 });
 
 void test("required outbound responses use the validated SDK encryption path and never fall back", async () => {
