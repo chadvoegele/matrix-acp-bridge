@@ -273,12 +273,12 @@ These are initial limits, measured on the unescaped source text before HTML form
 
 | Content | Visible summary | Maximum in expanded detail |
 | --- | ---: | ---: |
-| Tool result (read, write, edit, or terminal output) | 1 KiB UTF-8 | 8 KiB UTF-8 |
+| Tool result (read, write, edit, MCP, or terminal output) | 256 UTF-8 bytes or 3 lines, whichever comes first | 8 KiB UTF-8 |
 | Terminal command/title | 160 Unicode characters | 2 KiB UTF-8 |
 
 Show short results directly. For a longer result, put the abbreviated output itself in a closed `<details>` element's `<summary>`; expanding it reveals the detailed `<pre><code>` output. For terminal commands over 160 characters, make the abbreviated status-tinted title its own clickable `<summary>` with the command in `<pre><code>` beneath it. If the source exceeds a detailed-view cap, append ` (truncated)` to that summary. The plain-text `body` contains the previews and any truncation notices, not hidden detailed content.
 
-Read, write, and edit previews and details start at the beginning of their result. For terminal output, show the most recent 1 KiB in the visible summary. When it exceeds 8 KiB, keep the first 6 KiB and last 2 KiB in the expanded view, separated by a blank line; otherwise show all of it. Bound streaming accumulation, avoid splitting UTF-8 characters, and keep old/new edit text identifiable. If ten events exceed the Matrix event-size limit after HTML escaping, roll over early; if one event alone is too large, further shorten its detailed view and mark its summary as truncated.
+Read, write, edit, and other tool previews and details start at the beginning of their result. For terminal output, show the most recent 256 UTF-8 bytes or 3 lines, whichever comes first, in the visible summary. When it exceeds 8 KiB, keep the first 6 KiB and last 2 KiB in the expanded view, separated by a blank line; otherwise show all of it. Bound streaming accumulation, avoid splitting UTF-8 characters, and keep old/new edit text identifiable. If ten events exceed the Matrix event-size limit after HTML escaping, roll over early; if one event alone is too large, further shorten its detailed view and mark its summary as truncated.
 
 ```html
 <details><summary><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(python3 -c '…') (truncated)</span></span></summary><pre><code>python3 -c 'print("alpha")'</code></pre></details>
@@ -389,6 +389,10 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
    <pre><code>Could not apply edit</code></pre>
    ```
+
+#### MCP and other tools
+
+ACP reports pi-acp's MCP dispatcher as `kind: "other"` with `title: "mcp"`. A search call's `rawInput.search` holds the query; its completed result may be a plain-text list of available tools, not individual tool-call events. Show `MCP(search)` for that call. If an invocation's bounded `rawInput` contains a recognizable tool name (`tool`, `toolName`, `name`, or a `call` object with one of those fields), show `MCP(toolname)`; otherwise show `MCP`. Do not infer a called tool from its search-result text or display arbitrary arguments as a tool name. Keep the same status styling, result preview and expanded cap as other tools.
 
 #### Terminal execution
 

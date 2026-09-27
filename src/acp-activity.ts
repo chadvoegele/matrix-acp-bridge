@@ -1,6 +1,8 @@
 import type { AcpToolCallUpdate, AcpToolContent, AcpUpdate } from "./acp-client.js";
+import { isRecord, stringProperty } from "./object-validation.js";
 
-export const ACTIVITY_RESULT_PREVIEW_BYTES = 1024;
+export const ACTIVITY_RESULT_PREVIEW_BYTES = 256;
+export const ACTIVITY_RESULT_PREVIEW_LINES = 3;
 export const ACTIVITY_RESULT_DETAIL_BYTES = 8192;
 export const ACTIVITY_TITLE_PREVIEW_CHARACTERS = 160;
 export const ACTIVITY_TITLE_DETAIL_BYTES = 2048;
@@ -28,6 +30,7 @@ export interface AcpToolActivity {
   status: string;
   path?: string;
   isWrite: boolean;
+  mcpOperation?: string;
   content?: readonly AcpToolContent[];
   contentCut: boolean;
   rawFallback: BoundedText | undefined;
@@ -84,11 +87,31 @@ function clipSegments(segments: readonly Segment[], limit: number, fromEnd = fal
   return { segments: result, cut };
 }
 function plain(segments: readonly Segment[]): string { return segments.map((part) => part.text).join(""); }
+function previewSegments(segments: readonly Segment[], fromEnd: boolean): { segments: Segment[]; cut: boolean } {
+  const bounded = clipSegments(segments, ACTIVITY_RESULT_PREVIEW_BYTES, fromEnd);
+  const text = plain(bounded.segments);
+  const trailingNewline = text.endsWith("\n");
+  const lines = (trailingNewline ? text.slice(0, -1) : text).split("\n");
+  if (lines.length <= ACTIVITY_RESULT_PREVIEW_LINES) return bounded;
+  const selected = fromEnd ? lines.slice(-ACTIVITY_RESULT_PREVIEW_LINES) : lines.slice(0, ACTIVITY_RESULT_PREVIEW_LINES);
+  const excerpt = `${selected.join("\n")}${fromEnd && trailingNewline ? "\n" : ""}`;
+  const clipped = clipSegments(bounded.segments, Buffer.byteLength(excerpt, "utf8"), fromEnd);
+  return { segments: clipped.segments, cut: true };
+}
+function mcpOperation(value: AcpToolCallUpdate["rawInput"]): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const nested = value.call;
+  const candidate = typeof nested === "string" ? nested
+    : stringProperty(nested, "tool", "toolName", "name") ?? stringProperty(value, "tool", "toolName", "name");
+  if (candidate !== undefined && /^[\w.\-/:]{1,128}$/u.test(candidate)) return candidate;
+  return typeof value.search === "string" ? "search" : undefined;
+}
 function inputPath(value: AcpToolCallUpdate["rawInput"]): string | undefined {
   if (value && typeof value === "object" && !Array.isArray(value) && "path" in value && typeof value.path === "string") return value.path;
   return undefined;
 }
 function toolName(tool: AcpToolActivity): string {
+  if (tool.title?.toLowerCase() === "mcp") return "MCP";
   if (tool.toolKind === "execute") return "Execute";
   if (tool.toolKind === "read") return "Read";
   if (tool.toolKind === "edit") {
@@ -100,6 +123,7 @@ function toolName(tool: AcpToolActivity): string {
 function toolTitle(tool: AcpToolActivity): string {
   const name = toolName(tool);
   const path = tool.path ?? tool.content?.find((item) => item.type === "diff")?.path;
+  if (name === "MCP") return tool.mcpOperation ? `MCP(${tool.mcpOperation})` : "MCP";
   const argument = name === "Execute" || name === "Tool" ? tool.title : path;
   return `${name}(${clean(argument ?? "")})`;
 }
@@ -267,6 +291,8 @@ export class AcpActivityModel {
       if (path !== undefined) event.path = takeBytes(clean(path), 1024).text;
       if (update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput) &&
         "content" in update.rawInput && typeof update.rawInput.content === "string") event.isWrite = true;
+      const operation = mcpOperation(update.rawInput);
+      if (operation !== undefined) event.mcpOperation = operation;
     }
     if (update.locations?.[0]?.path && !event.path) event.path = takeBytes(clean(update.locations[0].path), 1024).text;
     if (update.content !== undefined) {
@@ -331,9 +357,9 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
       const tail = takeBytes(event.terminalTail, detailBytes - Buffer.byteLength(head.text, "utf8"), true);
       detail = { segments: [{ text: `${head.text}\n\n${tail.text}` }], cut: true };
     }
-    const preview = output.terminal
-      ? clipSegments(output.segments, previewBytes, true)
-      : clipSegments(output.segments, previewBytes);
+    const bytePreview = clipSegments(output.segments, previewBytes, output.terminal);
+    const linePreview = previewSegments(bytePreview.segments, output.terminal);
+    const preview = { segments: linePreview.segments, cut: bytePreview.cut || linePreview.cut };
     const truncated = output.cut || detail.cut;
     const detailDiffers = preview.cut || truncated;
     const body = `[${palette.label}] 🔧 ${titleSummary}\n${plain(preview.segments)}${truncated ? " (truncated)" : ""}`;
