@@ -1,7 +1,7 @@
 +++
 name = "ACP activity HTML renderer"
 creation_date = 2026-09-27T12:20:06Z
-status = "pending"
+status = "in-progress"
 depends_on = ["tt-acp-and-matrix-edit-foundations"]
 +++
 
