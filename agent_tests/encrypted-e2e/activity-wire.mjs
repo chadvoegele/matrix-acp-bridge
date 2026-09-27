@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
+import { startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
 import { installLiveDecryptionFailureHandler } from "./decryption-failure-gate.mjs";
 import { createAdapter, readEnvironment, readToken } from "./lib.mjs";
 
@@ -42,7 +43,9 @@ async function wireType(eventId) {
   return event.type;
 }
 
+let pair;
 try {
+  pair = await startBridgePair(environment);
   await adapter.start();
   beginLiveExchange();
   await adapter.sendMessage({ roomId: environment.roomId,
@@ -73,4 +76,5 @@ try {
   clearTimeout(timer);
   await adapter.stop().catch(() => {});
   await adapter.closeCrypto().catch(() => {});
+  if (pair) await stopBridgePair(pair);
 }

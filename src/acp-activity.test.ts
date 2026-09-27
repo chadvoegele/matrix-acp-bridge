@@ -100,6 +100,7 @@ void test("long command and output have separate clickable summaries, exact caps
   assert.match(rendered.body, /TAIL \(truncated\)$/);
   assert.ok(Buffer.byteLength(firstTool(model).terminalHead, "utf8") <= 6144);
   assert.ok(Buffer.byteLength(firstTool(model).terminalTail, "utf8") <= 2048);
+  assert.match(rendered.formattedBody, /TAIL<\/code><\/pre>/);
   assert.equal(firstTool(model).terminalSmall, "");
 
   const exact = new AcpActivityModel();
@@ -153,11 +154,22 @@ void test("streamed short lines and a large first chunk remain bounded", () => {
   const event = firstTool(model);
   model.accept(update({ terminalOutput: { data: "x\n".repeat(50_000) } }));
   assert.equal(event.terminalSmall, "");
-  assert.equal(Buffer.byteLength(event.terminalHead, "utf8"), 6144);
+  assert.equal(Buffer.byteLength(event.terminalHead, "utf8"), 6142);
   assert.equal(Buffer.byteLength(event.terminalTail, "utf8"), 2048);
   model.accept(update({ terminalOutput: { data: "LATEST\n" } }));
   assert.match(renderAcpActivity(event).body, /LATEST\n \(truncated\)$/);
   assert.ok(renderAcpActivity(event).formattedBody.length < 35_000);
+});
+
+void test("terminal head and tail fit together without clipping the final bytes", () => {
+  const model = new AcpActivityModel();
+  model.accept(tool({ title: "run", toolKind: "execute" }));
+  model.accept(update({ terminalOutput: { data: `FIRST_OUTPUT${"x".repeat(12_000)}LAST_OUTPUT`, originalBytes: 12_023 } }));
+  const event = firstTool(model);
+  const rendered = renderAcpActivity(event);
+  assert.equal(event.terminalBytes, 12_023);
+  assert.match(rendered.formattedBody, /FIRST_OUTPUT/);
+  assert.match(rendered.formattedBody, /LAST_OUTPUT<\/code><\/pre>/);
 });
 
 void test("pathological short diff lines fit the HTML message limit by shrinking detail first", () => {

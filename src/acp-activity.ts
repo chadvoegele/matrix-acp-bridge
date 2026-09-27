@@ -280,10 +280,10 @@ export class AcpActivityModel {
     if (update.terminalOutput?.data) {
       const chunk = clean(update.terminalOutput.data);
       const bytes = Buffer.byteLength(chunk, "utf8");
-      event.terminalBytes = Math.min(Number.MAX_SAFE_INTEGER, event.terminalBytes + bytes);
+      event.terminalBytes = Math.min(Number.MAX_SAFE_INTEGER, event.terminalBytes + (update.terminalOutput.originalBytes ?? bytes));
       if (event.terminalBytes <= ACTIVITY_RESULT_DETAIL_BYTES) event.terminalSmall += chunk;
       else {
-        if (event.terminalHead === "") event.terminalHead = takeBytes(event.terminalSmall + chunk, 6144).text;
+        if (event.terminalHead === "") event.terminalHead = takeBytes(event.terminalSmall + chunk, 6142).text;
         event.terminalSmall = "";
       }
       event.terminalTail = takeBytes(event.terminalTail + chunk, 2048, true).text;

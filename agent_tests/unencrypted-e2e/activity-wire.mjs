@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
+import { startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
 import { readEnvironment, readToken } from "./lib.mjs";
 
 const environment = await readEnvironment(process.argv[2]);
@@ -26,6 +27,8 @@ const sync = (since, timeout) => request(`/sync?${new URLSearchParams({ timeout:
 const baseline = await sync(undefined, 0);
 let cursor = baseline.next_batch;
 assert.equal(typeof cursor, "string", "initial sync cursor");
+const pair = await startBridgePair(environment);
+try {
 const sent = await request(`/rooms/${room}/send/m.room.message/activity_${marker}`,
   { method: "PUT", body: JSON.stringify({ msgtype: "m.text", body: prompt }) });
 const promptEvent = await request(`/rooms/${room}/event/${encodeURIComponent(sent.event_id)}`);
@@ -113,3 +116,6 @@ assert(archived?.body.includes("READ_RESULT_ONCE"), "late update did not edit ar
 assert(raw.some((event) => event.content?.body === "I will show activity before the tools."),
   "first agent message was not sent eagerly");
 process.stdout.write("Scripted plaintext ACP activity wire test passed.\n");
+} finally {
+  await stopBridgePair(pair);
+}

@@ -72,7 +72,7 @@ export interface AcpToolCallUpdate {
   readonly locations?: readonly { readonly path: string; readonly line?: number }[];
   readonly rawInput?: AcpToolInput;
   readonly rawOutput?: AcpToolInput;
-  readonly terminalOutput?: { readonly terminalId?: string; readonly data: string };
+  readonly terminalOutput?: { readonly terminalId?: string; readonly data: string; readonly originalBytes?: number };
   readonly terminalExit?: { readonly terminalId?: string; readonly exitCode?: number; readonly signal?: string | null };
 }
 
@@ -538,6 +538,30 @@ function messageId(value: unknown): string | undefined {
 
 const ACP_FIELD_LIMIT = 8192;
 
+function boundedTerminalData(value: string): { data: string; originalBytes?: number } {
+  const originalBytes = Buffer.byteLength(value, "utf8");
+  if (originalBytes <= ACP_FIELD_LIMIT) return { data: value };
+  const headLimit = 6142;
+  const tailLimit = 2048;
+  let head = "";
+  let headBytes = 0;
+  for (const character of value) {
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (headBytes + bytes > headLimit) break;
+    head += character;
+    headBytes += bytes;
+  }
+  let tail = "";
+  let tailBytes = 0;
+  for (const character of [...value].reverse()) {
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (tailBytes + bytes > tailLimit) break;
+    tail = character + tail;
+    tailBytes += bytes;
+  }
+  return { data: `${head}\n\n${tail}`, originalBytes };
+}
+
 function boundedString(value: unknown): string | undefined {
   return typeof value === "string" ? value.slice(0, ACP_FIELD_LIMIT) : undefined;
 }
@@ -621,7 +645,7 @@ function terminalMetadata(value: unknown): Pick<AcpToolCallUpdate, "terminalOutp
   if (isRecord(value.terminal_output) && typeof value.terminal_output.data === "string") {
     const terminalId = boundedString(value.terminal_output.terminal_id);
     result.terminalOutput = {
-      data: value.terminal_output.data.slice(0, ACP_FIELD_LIMIT),
+      ...boundedTerminalData(value.terminal_output.data),
       ...(terminalId === undefined ? {} : { terminalId }),
     };
   }

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createAcpClient,
   type AcpClient,
+  type AcpToolCallUpdate,
 } from "./acp-client.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 
@@ -472,6 +473,35 @@ void test("preserves bounded thought and tool activity with optional fields and 
     terminalOutput: { terminalId: "terminal-1", data: "ok" },
     terminalExit: { terminalId: "terminal-1", exitCode: 0, signal: null },
   });
+  await client.close();
+});
+
+void test("large terminal notification preserves the first and last UTF-8 bytes", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const client = newClient(input, output);
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const updates: unknown[] = [];
+  client.onUpdate((update) => updates.push(update));
+  const prompt = client.prompt(sessionId, "hello", {
+    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+  });
+  const frame = await output.nextFrame();
+  const data = `FIRST_OUTPUT${"😀".repeat(3000)}LAST_OUTPUT`;
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call_update", toolCallId: "tool-1",
+    _meta: { terminal_output: { data } },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
+  input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+  await prompt;
+  const terminal = (updates[0] as AcpToolCallUpdate).terminalOutput;
+  assert.equal(terminal?.originalBytes, Buffer.byteLength(data, "utf8"));
+  assert.ok(Buffer.byteLength(terminal?.data ?? "", "utf8") <= 8192);
+  assert.match(terminal?.data ?? "", /^FIRST_OUTPUT/u);
+  assert.match(terminal?.data ?? "", /LAST_OUTPUT$/u);
+  assert.doesNotMatch(terminal?.data ?? "", /�/u);
   await client.close();
 });
 
