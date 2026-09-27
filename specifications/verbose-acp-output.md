@@ -330,7 +330,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#000000">newText:</span>&#10;<span data-mx-color="#008000">alpha&#10;beta&#10;</span></code></pre>
+   <pre><code><span data-mx-color="#008000">alpha&#10;beta&#10;</span></code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -342,7 +342,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
 #### Edits
 
-Show `Edit(path)` with the same four status colors. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update included optional `locations[].line`, and the completed `diff` contained full-file `oldText` and `newText`. Display those strings as returned, labeled by their ACP field names. Do not generate hunk positions, `-`/`+` prefixes, or inferred unchanged context; the optional location is not a hunk range.
+Show `Edit(path)` with the same four status colors. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update included optional `locations[].line`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Do not generate hunk positions, `-`/`+` prefixes, or inferred unchanged context; the optional location is not a hunk range.
 
 1. **Pending — gray (`#808080`):**
 
@@ -356,11 +356,11 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
    ```
 
-3. **Completed successfully — green (`#008000`), with returned `oldText` and `newText`:**
+3. **Completed successfully — green (`#008000`), with the returned old text in red and new text in green:**
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#000000">oldText:</span>&#10;<span data-mx-color="#C00000">2&#10;3&#10;5&#10;7&#10;</span><span data-mx-color="#000000">newText:</span>&#10;<span data-mx-color="#008000">2&#10;3&#10;5&#10;11&#10;</span></code></pre>
+   <pre><code><span data-mx-color="#C00000">2&#10;3&#10;5&#10;7&#10;</span>&#10;<span data-mx-color="#008000">2&#10;3&#10;5&#10;11&#10;</span></code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -370,7 +370,7 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    <pre><code>Could not apply edit</code></pre>
    ```
 
-The plain-text fallback should also label and reproduce the returned strings without synthesized hunks or line numbers. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
+The plain-text fallback should preserve the returned strings in the same order with a blank line between them; without color or labels, it cannot identify which text is old and which is new. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
 
 ## Verification
 
@@ -379,7 +379,7 @@ The plain-text fallback should also label and reproduce the returned strings wit
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 - One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
-- Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit labels and colors the returned `oldText` and `newText` without synthesized line numbers, hunk headers, or `-`/`+` prefixes. The plain-text fallback retains the text and labels.
+- Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit colors the returned `oldText` red and `newText` green without labels, synthesized line numbers, hunk headers, or `-`/`+` prefixes. The plain-text fallback retains the text in order.
 
 ## Open questions
 
