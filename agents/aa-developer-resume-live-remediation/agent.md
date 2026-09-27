@@ -2,6 +2,7 @@
 name = "Developer resume live remediation"
 creation_date = 2026-09-27T18:21:22Z
 status = "running"
+session_id = "01a0e41a-1774-7ee1-8286-afc908455c6b"
 system = "codex"
 +++
 
