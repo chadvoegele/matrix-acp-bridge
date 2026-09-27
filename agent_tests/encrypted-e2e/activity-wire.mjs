@@ -71,10 +71,13 @@ try {
     event.content?.formatted_body ?? "").join("\n");
   assert(html.includes("Past agent events (10)"), "encrypted activity ten-event rollover missing");
   assert(html.includes("READ_RESULT_ONCE"), "encrypted archived tool update missing");
-  process.stdout.write("Scripted encrypted ACP activity wire test passed.\n");
 } finally {
   clearTimeout(timer);
   await adapter.stop().catch(() => {});
   await adapter.closeCrypto().catch(() => {});
   if (pair) await stopBridgePair(pair);
 }
+process.stdout.write("Scripted encrypted ACP activity wire test passed.\n");
+// The Matrix SDK can leave idle handles after its crypto client is closed.
+// All device, crypto, and child-process cleanup has completed at this point.
+process.exit(0);
