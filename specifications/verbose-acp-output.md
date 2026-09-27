@@ -227,21 +227,25 @@ The first sentence is produced before the tool calls but only displayed at the e
 
 ### Progressive Disclosure via Collapsible Trees
 
-Group consecutive thought and tool events into Matrix activity messages, with a configurable maximum of **10 events per message** by default (minimum 1). A grouped thought counts once; a tool call counts once regardless of its status or output updates. Agent messages are sent separately and do not count toward the activity limit.
+We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays mo e information to the user.
 
-The newest activity message shows all its event entries directly, in order. Long commands and results within an entry retain their own closed disclosure controls. When an eleventh event arrives, finalize the previous ten-event message as one collapsed `<details>` element with a summary such as `Past agent events (10)` and begin a new, expanded activity message with the eleventh event. When a new agent message begins, likewise finalize the current activity message before showing the agent's text eagerly; subsequent activity starts a new message. Count the first nonempty `agent_message_chunk` as this boundary, not every streamed chunk. If a turn ends without an agent message, keep its most recent activity message expanded until a later boundary.
+1. Past Agent Events: # events = # thoughts + # tool calls
+    1. Thought 1
+    1. Thought 2
+    1. (status) Tool Call 1 Abbreviated Command
+        1. Tool Call 1 Full Command
+        1. Tool Call 1 Abbreviated Result
+            1. Tool Call 1 Full Result
+1. (status) Tool Call 2 Abbreviated Command
+    1. Tool Call 2 Full Command
+    1. Tool Call 2 Abbreviated Result
+        1. Tool Call 2 Full Result
 
-For example, after a rollover:
+Let up to a configurable maximum of 10 events per message by default (minimum 1). The newest activity message shows all its event entries directly. When an eleventh event arrives, finalize the previous ten-event message as one collapsed `<details>` element with a summary such as `Past agent events (10)` and begin a new, expanded activity message with the eleventh event.
 
-1. `Past agent events (10)` — collapsed; opening it reveals those ten thought/tool entries.
-1. Live activity message — expanded; shows tool 11 directly, with its abbreviated command and output.
-    1. Clicking an abbreviated command or output reveals its bounded detailed text.
-
-While live, update the same activity message as thoughts stream and tool statuses/results change; correlate updates by `toolCallId` rather than adding new events. Finalize each old batch with **one** edit that wraps it in the collapsed tree, then never edit it again. Element may reset an opened disclosure on a live message edit; batching cannot prevent that while output streams, but it avoids repeated edits to disclosures the user opens in past messages. If a batch reaches the limit while a tool in it is still running, start the next batch but defer collapsing the older batch until its tool finishes. Likewise, an agent message must not block waiting for a tool; finalize that batch when the tool finishes. This may temporarily leave more than one expanded activity message. A Matrix event-size limit may force an earlier rollover.
+While live, update in-place the same activity message as thoughts stream and tool statuses/results change; correlate updates by `toolCallId`.
 
 Full commands and results are shown only if their abbreviated versions were truncated.
-
-Use color cues where possible to make activity easy to understand at a glance. For example, tool-call status should be gray when pending, black when running, green when completed successfully, and red when failed. For file diffs, red text is old and green text is new.
 
 ### Matrix HTML subset
 
@@ -272,18 +276,12 @@ These are initial limits, measured on the unescaped source text before HTML form
 | Tool result (read, write, edit, or terminal output) | 1 KiB UTF-8 | 8 KiB UTF-8 |
 | Terminal command/title | 160 Unicode characters | 2 KiB UTF-8 |
 
-Show short results directly. For a longer result, put the abbreviated output itself in the closed `<details>` element's `<summary>`; clicking that preview reveals the detailed result in `<pre><code>` beneath it. Do not show a separate preview followed by a generic “Detailed result” control. If the expanded result exceeds the 8 KiB cap, append ` (truncated)` to the preview in `<summary>`, not to the detailed code. The plain-text `body` contains the preview and a truncation notice, not a hidden copy of the entire result. If a client does not support `details`, the preview remains readable and indicates any truncation. Preserve the outer tree: live activity stays visible; past events collapse, and expanding one reveals its result preview.
-
-For read, write, and edit, show the first bytes in the preview and detailed view. For terminal output, show the most recent 1 KiB in the preview so live progress remains visible; show the entire output once if it is at most 8 KiB, otherwise retain the first 6 KiB and most recent 2 KiB for the detailed view, separated by a blank line. Append incoming chunks to this bounded view rather than retaining unbounded output. Never split a UTF-8 character; prefer whole lines, but do not exceed the limits to preserve a line. For an edit's two full-file strings, share each result limit evenly between old and new so both remain visible. Count displayed file line numbers against the original text, not truncated excerpts. Because `<summary>` is inline content, render multiline previews with escaped `<code>` and `<br>`; reserve `<pre><code>` for expanded content.
-
-For a long terminal title, make the status-tinted `🔧 Execute(abbreviated title…)` itself the clickable `<summary>`; expanding it reveals the command/title text (up to 2 KiB) in `<pre><code>`. Append ` (truncated)` inside the title summary only when the expanded text was cut at 2 KiB. ACP's title is a display label, not necessarily a runnable command. Keep output disclosure separate: the abbreviated output is its own clickable summary below the title, so either can be expanded independently. A schematic long-running terminal event looks like this (the short placeholder text is not a literal threshold example):
+Show short results directly. For a longer result, put the abbreviated output itself in the closed `<details>` element's `<summary>`. If the expanded result exceeds the 8 KiB cap, append ` (truncated)` to the details. The plain-text `body` contains the preview and a truncation notice.
 
 ```html
 <details><summary><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(python3 -c '…') (truncated)</span></span></summary><pre><code>python3 -c 'print("alpha")'</code></pre></details>
 <details><summary><code>recent output…</code> (truncated)</summary><pre><code>first output&#10;&#10;recent output</code></pre></details>
 ```
-
-The limits are defaults, not a promise that Matrix will accept every formatted event: cap the serialized Matrix event (including HTML markup and the plain-text fallback) at 48 KiB by reducing detailed content before the preview, updating the corresponding `<summary>` to indicate truncation. Escape text after selecting excerpts, and avoid duplicating output from `rawOutput` or other ACP fields. These bounds apply while streaming and across status updates, not only at turn completion.
 
 ## Event Rendering
 ### Thoughts
@@ -297,6 +295,8 @@ Render each chunked thought as a single entry. Use a thought-bubble emoji follow
 ### Tool Calls
 
 Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool-call status. Then use a 🔧  to indicate a tool call. Then include the specific tool call title.
+
+Use color cues where possible to make activity easy to understand at a glance. For example, tool-call status should be gray when pending, black when running, green when completed successfully, and red when failed. For file diffs, red text is old and green text is new.
 
 #### Reads
 
