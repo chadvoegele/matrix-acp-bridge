@@ -1,7 +1,7 @@
 +++
 name = "Developer live activity remediation"
 creation_date = 2026-09-27T13:28:10Z
-status = "running"
+status = "failed"
 session_id = "01a0e30d-7420-7372-873a-ea1d97c12f96"
 system = "codex"
 +++
