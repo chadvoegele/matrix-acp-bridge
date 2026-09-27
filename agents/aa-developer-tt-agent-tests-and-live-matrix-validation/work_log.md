@@ -9,3 +9,4 @@
 - Ran `npm ci`, `npm run check` successfully (246 tests), shell syntax checks, Node syntax checks, and a direct scripted ACP protocol smoke test successfully.
 - Live Matrix test commands were not run: no test homeserver, room, account credentials, or real ACP command are configured in this worktree, and no ignored environment file is present. These are external prerequisites for the opt-in live tests.
 - Created a signed implementation commit and fast-forward merged it into the sole shared feature branch. No PR was created and main was not changed.
+- Tightened real-agent failure cleanup to wait for bridge and ACP proxy shutdown before the outer device cleanup. Re-ran `npm run check` successfully (246 tests), signed a follow-up commit, and fast-forward merged it into the feature branch.
