@@ -278,7 +278,7 @@ Render each chunked thought as a single entry. Use a thought-bubble emoji follow
 
 ### Tool Calls
 
-Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool-call status. Then use a 🔧  to indicate a tool call. Then include the specific tool call title. If a matching ACP `locations[]` entry supplies a `line`, include it with the path (for example, `path:3`); omit it when absent. Keep the last reported location across sparse updates, but never calculate or reindex the line number.
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool-call status. Then use a 🔧  to indicate a tool call. Then include the specific tool call title.
 
 #### Reads
 
@@ -312,7 +312,7 @@ For reads, use `Read(path)` as the title.
 
 #### Writes
 
-The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; display the returned `newText` without synthesizing diff headers, prefixes, or line numbers.
+The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; display the returned `newText` with a simple line-number gutter counted from the beginning of that full-file text, without synthesizing diff headers or prefixes.
 
 1. **Pending — gray (`#808080`):**
 
@@ -330,7 +330,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#008000">alpha&#10;beta&#10;</span></code></pre>
+   <pre><code><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">alpha</span>&#10;<span data-mx-color="#000000">2 </span><span data-mx-color="#008000">beta</span>&#10;</code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -342,7 +342,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
 #### Edits
 
-Show `Edit(path)` with the same four status colors, adding `:line` once ACP reports it. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update reported `locations[].line: 3`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Do not generate hunk positions, `-`/`+` prefixes, or inferred unchanged context; the optional location is not a hunk range.
+Show `Edit(path)` with the same four status colors; do not put the location in the title. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update reported `locations[].line: 3`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Count lines from the beginning of each returned full-file string and show those numbers in a black gutter beside its lines. This is line counting, not diff matching: do not use the single ACP location as a hunk range or generate hunk positions, `-`/`+` prefixes, or inferred unchanged context. If full-file text is unavailable, omit the gutter rather than imply absolute line positions.
 
 1. **Pending — gray (`#808080`):**
 
@@ -353,14 +353,14 @@ Show `Edit(path)` with the same four status colors, adding `:line` once ACP repo
 2. **Running — black (`#000000`):**
 
    ```html
-   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt:3)</span></span></p>
+   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
    ```
 
 3. **Completed successfully — green (`#008000`), with the returned old text in red and new text in green:**
 
    ```html
-   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt:3)</span></span></p>
-   <pre><code><span data-mx-color="#C00000">2&#10;3&#10;5&#10;7&#10;</span>&#10;<span data-mx-color="#008000">2&#10;3&#10;5&#10;11&#10;</span></code></pre>
+   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
+   <pre><code><span data-mx-color="#000000">1 </span><span data-mx-color="#C00000">2</span>&#10;<span data-mx-color="#000000">2 </span><span data-mx-color="#C00000">3</span>&#10;<span data-mx-color="#000000">3 </span><span data-mx-color="#C00000">5</span>&#10;<span data-mx-color="#000000">4 </span><span data-mx-color="#C00000">7</span>&#10;&#10;<span data-mx-color="#000000">1 </span><span data-mx-color="#008000">2</span>&#10;<span data-mx-color="#000000">2 </span><span data-mx-color="#008000">3</span>&#10;<span data-mx-color="#000000">3 </span><span data-mx-color="#008000">5</span>&#10;<span data-mx-color="#000000">4 </span><span data-mx-color="#008000">11</span>&#10;</code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -370,7 +370,7 @@ Show `Edit(path)` with the same four status colors, adding `:line` once ACP repo
    <pre><code>Could not apply edit</code></pre>
    ```
 
-The plain-text fallback should preserve the returned strings in the same order with a blank line between them; without color or labels, it cannot identify which text is old and which is new. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
+The plain-text fallback should preserve the returned strings in the same order with their counted line numbers and a blank line between them; without color or labels, it cannot identify which text is old and which is new. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
 
 #### Terminal execution
 
@@ -412,7 +412,7 @@ Append pi-acp terminal-output chunks in arrival order to the same tool event rat
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 - One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
-- Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit colors the returned `oldText` red and `newText` green without labels, synthesized hunk headers, or `-`/`+` prefixes. The edit title gains `:3` when ACP reports `locations[].line: 3`; no line is invented when absent. The plain-text fallback retains the text in order.
+- Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit colors the returned `oldText` red and `newText` green without labels, synthesized hunk headers, or `-`/`+` prefixes. When the result contains full-file text, count its lines into a gutter beside each block; leave the title unchanged and do not treat optional `locations[].line` as a hunk offset. The plain-text fallback retains the text and line numbers in order.
 - A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
 
 ## Open questions
