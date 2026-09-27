@@ -1,7 +1,7 @@
 +++
 name = "ACP and Matrix edit foundations"
 creation_date = 2026-09-27T12:20:00Z
-status = "in-progress"
+status = "completed"
 +++
 
 # ACP activity and Matrix message-edit foundations
