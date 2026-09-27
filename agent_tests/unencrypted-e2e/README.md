@@ -114,3 +114,37 @@ node agent_tests/unencrypted-e2e/cleanup.mjs
 ```
 
 Cleanup preserves local state if ACP deletion or Matrix device revocation fails.
+
+## Verbose ACP activity over plaintext Matrix
+
+The opt-in scripted test uses the same two test accounts and plaintext room. It
+replaces `E2E_ACP_COMMAND` for this invocation with a deterministic local ACP
+peer, while preserving the existing `test.sh` entry point and its configured
+real-agent command. It checks raw Matrix events, edits and `m.new_content`,
+fallback text, HTML details, colors, output truncation, a ten-event rollover,
+the agent-message boundary, and a late update to an archived batch:
+
+```sh
+agent_tests/unencrypted-e2e/test-activity.sh
+```
+
+Source an ignored environment file first, as above. The command provisions
+fresh devices and deletes the scripted ACP session and local private state on
+exit. Room events remain. It does not require a real ACP server.
+
+For an optional real `pi-acp` metadata check, keep `E2E_ACP_COMMAND` set to
+the real ACP endpoint. Set an ACP-visible scratch directory and a JSON command
+that removes one file path passed as its final argument. For a local agent:
+
+```sh
+export E2E_REAL_SCRATCH_DIR=/tmp
+export E2E_REAL_SCRATCH_CLEANUP_COMMAND='["rm","-f","--"]'
+agent_tests/unencrypted-e2e/test-real-activity.sh
+```
+
+For a remote agent, supply a cleanup command that runs on that agent's host.
+The runner generates a unique scratch filename, requests write, read, edit,
+and bash activity, checks exact ACP fields and Matrix activity/edit events,
+then runs the cleanup command even on failure. Agent tool choices vary, so it
+prints `INCOMPLETE` with missing field names when a turn did not provide full
+coverage. Device and session cleanup still run through the usual harness.
