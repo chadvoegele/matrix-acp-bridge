@@ -1,4 +1,6 @@
 import { createCancellationController } from "./cancellation.js";
+import { createHash } from "node:crypto";
+import { AcpActivityModel, renderAcpActivity, type AcpActivity, type RenderedAcpActivity } from "./acp-activity.js";
 import { systemClock } from "./clock.js";
 import type {
   CancellationController,
@@ -42,6 +44,8 @@ import type {
   MatrixEventId,
   MatrixFailureClassification,
   MatrixRoomId,
+  MatrixHtmlMessage,
+  MatrixSafeHtml,
 } from "./matrix-client.js";
 
 const QUIET_DRAIN_MS = 300;
@@ -135,12 +139,38 @@ interface ActiveRun {
 
 interface TextGroup {
   readonly messageId: string | undefined;
+  readonly continuation: boolean;
   text: string;
+  eventId?: MatrixEventId;
+  revision: number;
+  pending: boolean;
+  dirty: boolean;
+}
+
+interface ActivityBatch {
+  readonly index: number;
+  readonly events: AcpActivity[];
+  archived: boolean;
+  eventId?: MatrixEventId;
+  revision: number;
+  pending: boolean;
+  dirty: boolean;
 }
 
 interface TurnCollector {
   readonly sessionId: AcpSessionId;
   readonly groups: TextGroup[];
+  readonly textById: Map<string, TextGroup>;
+  readonly activity: AcpActivityModel;
+  readonly eventBatches: WeakMap<AcpActivity, ActivityBatch>;
+  batches: ActivityBatch[];
+  currentBatch: ActivityBatch | undefined;
+  outboundTail: Promise<void>;
+  liveFailed: boolean;
+  liveTextSent: boolean;
+  lastTextGroup: TextGroup | undefined;
+  readonly room: RoomState;
+  readonly inboundEventId: MatrixEventId;
   readonly messageIds: Set<string>;
   readonly messageOrder: string[];
   hasText: boolean;
@@ -307,10 +337,55 @@ function sessionOptions(config: BridgeConfig): { readonly cwd: string; readonly 
 }
 
 function joinedGroups(groups: readonly TextGroup[]): string {
-  return groups
-    .map((group) => group.text)
-    .filter((text) => text.length > 0)
-    .join("\n\n");
+  let result = "";
+  for (const group of groups) {
+    if (!group.text) continue;
+    if (result && !group.continuation) result += "\n\n";
+    result += group.text;
+  }
+  return result;
+}
+
+function renderLiveText(body: string): RenderedAcpActivity {
+  const escaped = body.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;").replaceAll("'", "&#39;").replaceAll("\n", "<br>");
+  return { body, formattedBody: `<p>${escaped}</p>` };
+}
+
+function liveContentBytes(rendered: RenderedAcpActivity): number {
+  return Buffer.byteLength(JSON.stringify({ msgtype: "m.text", body: `* ${rendered.body}`,
+    format: "org.matrix.custom.html", formatted_body: rendered.formattedBody,
+    "m.new_content": { msgtype: "m.text", body: rendered.body,
+      format: "org.matrix.custom.html", formatted_body: rendered.formattedBody },
+    "m.relates_to": { rel_type: "m.replace", event_id: `$${"x".repeat(255)}` } }), "utf8");
+}
+
+function liveTransactionId(turn: TurnCollector, kind: string, index: number, revision: number): string {
+  const digest = createHash("sha256")
+    .update(`${turn.room.roomId}\u0000${turn.inboundEventId}\u0000${kind}\u0000${index}\u0000${revision}`)
+    .digest("hex");
+  return `matrix-acp-live-${digest}`;
+}
+
+function renderedActivityBatch(batch: ActivityBatch, limit: number): RenderedAcpActivity {
+  const wrapperStart = batch.archived ? `<details><summary>Past agent events (${batch.events.length})</summary>` : "";
+  const wrapperEnd = batch.archived ? "</details>" : "";
+  let budget = Math.max(64, Math.floor(limit / batch.events.length));
+  for (;;) {
+    const entries = batch.events.map((event) => renderAcpActivity(event, budget));
+    const body = entries.map((entry) => entry.body).join("\n");
+    const formattedBody = `${wrapperStart}${entries.map((entry) => entry.formattedBody).join("\n")}${wrapperEnd}`;
+    // Matrix edits repeat both bodies in m.new_content. Budget for the full
+    // serialized content rather than only the formatted body.
+    const rendered = { body, formattedBody };
+    if (liveContentBytes(rendered) <= limit || budget <= 16) return rendered;
+    budget = Math.max(16, Math.floor(budget * 0.7));
+  }
+}
+
+function batchFits(batch: ActivityBatch, limit: number): boolean {
+  const rendered = renderedActivityBatch(batch, limit);
+  return liveContentBytes(rendered) <= limit;
 }
 
 function normalizeThrownPrompt(value: unknown): AcpOutcome {
@@ -1121,6 +1196,17 @@ export class BridgeCoordinator {
       const turn: TurnCollector = {
         sessionId: session.sessionId,
         groups: [],
+        textById: new Map(),
+        activity: new AcpActivityModel(),
+        eventBatches: new WeakMap(),
+        batches: [],
+        currentBatch: undefined,
+        outboundTail: Promise.resolve(),
+        liveFailed: false,
+        liveTextSent: false,
+        lastTextGroup: undefined,
+        room: run.room,
+        inboundEventId: run.entry.event.eventId,
         messageIds: new Set(),
         messageOrder: [],
         hasText: false,
@@ -1164,7 +1250,7 @@ export class BridgeCoordinator {
 
       let text = "";
       if (isRecord(outcome) && typeof outcome.text === "string" && joinedGroups(turn.groups).length === 0 && outcome.text.length > 0) {
-          turn.groups.push({ messageId: undefined, text: outcome.text });
+          turn.groups.push({ messageId: undefined, continuation: false, text: outcome.text, revision: 0, pending: false, dirty: false });
           turn.hasText = true;
           turn.lastTextChangeAt = this.#clock.now();
         }
@@ -1186,11 +1272,21 @@ export class BridgeCoordinator {
         return;
       }
 
+      await turn.outboundTail;
+      if (this.#stopping || this.#fatal !== undefined) return;
+
+      const streamed = this.#matrix.sendHtmlMessage !== undefined && turn.liveTextSent && !turn.liveFailed;
+
       const response: RenderableResponse = prompt.timedOut
-        ? { kind: "timeout", ...(text.length === 0 ? {} : { text }) }
+        ? { kind: "timeout", ...(!streamed && text.length > 0 ? { text } : {}) }
         : (outcome.kind === "method_error"
-          ? { kind: "error", ...(text.length === 0 ? {} : { text }) }
-          : { ...outcome, ...(text.length === 0 ? {} : { text }) });
+          ? { kind: "error", ...(!streamed && text.length > 0 ? { text } : {}) }
+          : { ...outcome, ...(!streamed && text.length > 0 ? { text } : {}), ...(streamed ? { text: "" } : {}) });
+      if (streamed && outcome.kind === "turn" && outcome.stopReason === "end_turn") {
+        this.#stopTyping(run);
+        await this.#completeTerminal(run.entry.terminalCompletion);
+        return;
+      }
       const parts = renderMatrixResponse({
         roomId: run.room.roomId,
         inboundEventId: run.entry.event.eventId,
@@ -1618,6 +1714,7 @@ export class BridgeCoordinator {
       return;
     }
     turn.closed = true;
+    turn.activity.close();
     if (turn.quietTimer !== undefined) {
       this.#clock.clearTimeout(turn.quietTimer);
     }
@@ -1647,10 +1744,7 @@ export class BridgeCoordinator {
   #handleAcpUpdate(update: AcpUpdate): void {
     if (
       !isRecord(update) ||
-      update.kind !== "agent_message_chunk" ||
-      typeof update.sessionId !== "string" ||
-      typeof update.text !== "string" ||
-      update.text.length === 0
+      typeof update.sessionId !== "string"
     ) {
       return;
     }
@@ -1661,6 +1755,18 @@ export class BridgeCoordinator {
     if (turn === undefined || turn.closed || turn.drainComplete) {
       return;
     }
+    if (update.kind !== "agent_message_chunk") {
+      if (update.kind === "agent_thought_chunk" || update.kind === "tool_call" || update.kind === "tool_call_update") {
+        if (this.#matrix.sendHtmlMessage === undefined) return;
+        const activity = turn.activity.accept(update);
+        if (activity !== undefined) {
+          turn.lastTextGroup = undefined;
+          this.#acceptActivity(turn, activity);
+        }
+      }
+      return;
+    }
+    if (typeof update.text !== "string" || update.text.length === 0) return;
     const messageId = update.messageId;
     if (
       messageId !== undefined &&
@@ -1672,23 +1778,179 @@ export class BridgeCoordinator {
       turn.messageIds.add(messageId);
       turn.messageOrder.push(messageId);
     }
-    const last = turn.groups.at(-1);
-    if (
-      last === undefined ||
-      (messageId !== undefined &&
-        last.messageId !== undefined &&
-        last.messageId !== messageId)
-    ) {
-      turn.groups.push({ messageId, text: update.text });
-    } else if (last !== undefined) {
-      last.text += update.text;
+    if (update.text.trim() && turn.currentBatch !== undefined) {
+      turn.currentBatch.archived = true;
+      this.#scheduleBatch(turn, turn.currentBatch);
+      turn.currentBatch = undefined;
     }
+    turn.activity.accept(update);
+    this.#appendText(turn, messageId, update.text);
     if (update.text.length > 0) {
       turn.hasText = true;
       turn.lastTextChangeAt = this.#clock.now();
       if (turn.promptResolved) {
         this.#scheduleQuietDrain(turn);
       }
+    }
+  }
+
+  #appendText(turn: TurnCollector, messageId: string | undefined, value: string): void {
+    let group = messageId === undefined ? turn.lastTextGroup : turn.textById.get(messageId);
+    if (group === undefined || (messageId === undefined && group.messageId !== undefined)) {
+      group = { messageId, continuation: false, text: "", revision: 0, pending: false, dirty: false };
+      turn.groups.push(group);
+      if (messageId !== undefined) turn.textById.set(messageId, group);
+    }
+    turn.lastTextGroup = group;
+    if (this.#matrix.sendHtmlMessage === undefined || turn.liveFailed) {
+      group.text += value;
+      return;
+    }
+    const characters = [...value];
+    let offset = 0;
+    while (offset < characters.length) {
+      let low = 1;
+      let high = characters.length - offset;
+      let fitting = 0;
+      while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        const candidate = group.text + characters.slice(offset, offset + middle).join("");
+        if (liveContentBytes(renderLiveText(candidate)) <= this.#config.limits.maxMatrixMessageBytes) {
+          fitting = middle;
+          low = middle + 1;
+        } else high = middle - 1;
+      }
+      if (fitting === 0) {
+        if (group.text.length === 0) {
+          turn.liveFailed = true;
+          group.text += characters.slice(offset).join("");
+          return;
+        }
+        group = { messageId, continuation: true, text: "", revision: 0, pending: false, dirty: false };
+        turn.groups.push(group);
+        turn.lastTextGroup = group;
+        if (messageId !== undefined) turn.textById.set(messageId, group);
+        continue;
+      }
+      group.text += characters.slice(offset, offset + fitting).join("");
+      offset += fitting;
+      if (group.text.trim()) this.#scheduleText(turn, group);
+    }
+  }
+
+  #acceptActivity(turn: TurnCollector, activity: AcpActivity): void {
+    if (this.#matrix.sendHtmlMessage === undefined) return;
+    const existing = turn.eventBatches.get(activity);
+    if (existing !== undefined) {
+      this.#scheduleBatch(turn, existing);
+      return;
+    }
+    let batch = turn.currentBatch;
+    if (batch !== undefined && batch.events.length >= this.#config.limits.maxActivityEventsPerMessage) {
+      batch.archived = true;
+      this.#scheduleBatch(turn, batch);
+      batch = undefined;
+    }
+    if (batch === undefined) {
+      batch = { index: turn.batches.length, events: [], archived: false, revision: 0, pending: false, dirty: false };
+      turn.batches.push(batch);
+      turn.currentBatch = batch;
+    }
+    batch.events.push(activity);
+    if (batch.events.length > 1 && !batchFits(batch, this.#config.limits.maxMatrixMessageBytes)) {
+      batch.events.pop();
+      batch.archived = true;
+      this.#scheduleBatch(turn, batch);
+      batch = { index: turn.batches.length, events: [activity], archived: false, revision: 0, pending: false, dirty: false };
+      turn.batches.push(batch);
+      turn.currentBatch = batch;
+    }
+    turn.eventBatches.set(activity, batch);
+    this.#scheduleBatch(turn, batch);
+  }
+
+  #enqueueLive(turn: TurnCollector, operation: () => Promise<void>): void {
+    turn.outboundTail = turn.outboundTail.then(operation).catch(() => {
+      turn.liveFailed = true;
+      this.#diagnostic("warn", "matrix-live-abandoned", { kind: "unexpected" });
+    });
+  }
+
+  #scheduleBatch(turn: TurnCollector, batch: ActivityBatch): void {
+    if (this.#matrix.sendHtmlMessage === undefined || turn.liveFailed) return;
+    batch.dirty = true;
+    if (batch.pending) return;
+    batch.pending = true;
+    this.#enqueueLive(turn, async () => {
+      try {
+        while (batch.dirty && !turn.liveFailed) {
+          batch.dirty = false;
+          const rendered = renderedActivityBatch(batch, this.#config.limits.maxMatrixMessageBytes);
+          if (liveContentBytes(rendered) > this.#config.limits.maxMatrixMessageBytes) {
+            turn.liveFailed = true;
+            this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
+            break;
+          }
+          const id = await this.#deliverLive(turn, `activity-${batch.index}`, batch.revision++, rendered, batch.eventId);
+          if (id === undefined) { turn.liveFailed = true; break; }
+          batch.eventId = id;
+        }
+      } finally { batch.pending = false; }
+    });
+  }
+
+  #scheduleText(turn: TurnCollector, group: TextGroup): void {
+    if (this.#matrix.sendHtmlMessage === undefined || turn.liveFailed) return;
+    group.dirty = true;
+    if (group.pending) return;
+    group.pending = true;
+    this.#enqueueLive(turn, async () => {
+      try {
+        while (group.dirty && !turn.liveFailed) {
+          group.dirty = false;
+          const rendered = renderLiveText(group.text);
+          const id = await this.#deliverLive(turn, `text-${turn.groups.indexOf(group)}`, group.revision++, rendered, group.eventId);
+          if (id === undefined) { turn.liveFailed = true; break; }
+          group.eventId = id;
+          turn.liveTextSent = true;
+        }
+      } finally { group.pending = false; }
+    });
+  }
+
+  async #deliverLive(turn: TurnCollector, kind: string, revision: number, rendered: RenderedAcpActivity,
+    targetEventId?: MatrixEventId): Promise<MatrixEventId | undefined> {
+    if (this.#matrix.sendHtmlMessage === undefined || this.#stopping || this.#fatal !== undefined) return;
+    if (liveContentBytes(rendered) > this.#config.limits.maxMatrixMessageBytes) {
+      this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
+      return;
+    }
+    const message: MatrixHtmlMessage = { roomId: turn.room.roomId,
+      transactionId: liveTransactionId(turn, kind, 0, revision), body: rendered.body,
+      formattedBody: rendered.formattedBody as MatrixSafeHtml,
+      ...(targetEventId === undefined ? {} : { targetEventId }) };
+    this.#outboundOperations += 1;
+    try {
+      return await turn.room.outbound.run(async () => {
+        let attempt = 0;
+        for (;;) {
+          if (this.#stopping || this.#fatal !== undefined) return;
+          try { return await this.#matrix.sendHtmlMessage!(message); }
+          catch (error) {
+            const failure = matrixFailureFor(error);
+            if (!failure.retryable) {
+              this.#diagnostic("warn", "matrix-live-abandoned", { kind: "delivery" });
+              return;
+            }
+            const delay = retryDelay(failure, attempt++, this.#random);
+            if (!(await this.#waitForRetry(delay))) return;
+          }
+        }
+      });
+    } finally {
+      this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
+      this.#resolveIdleWaiters();
+      this.#maybeFinalizeStop();
     }
   }
 

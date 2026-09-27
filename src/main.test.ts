@@ -55,6 +55,7 @@ const CONFIG: BridgeConfig = {
     maxInputBytes: 16_384,
     maxOutputBytes: 256,
     maxMatrixMessageBytes: 128,
+    maxActivityEventsPerMessage: 10,
     maxQueuedTurnsPerRoom: 2,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 10,

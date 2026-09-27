@@ -115,6 +115,16 @@ function titleMarkup(title: string, status: string): string {
   const colors = statusPalette(status);
   return `<span data-mx-bg-color="${colors.background}"><span data-mx-color="${colors.rail}">┃</span> ${span(`🔧 ${title}`, "#000000")}</span>`;
 }
+function compactTool(title: string, label: string, maxHtmlBytes: number): RenderedAcpActivity {
+  let budget = Math.min(Buffer.byteLength(title, "utf8"), maxHtmlBytes);
+  for (;;) {
+    const bounded = takeBytes(title, budget);
+    const body = `[${label}] 🔧 ${bounded.text} (truncated)`;
+    const formattedBody = `<p>🔧 ${html(bounded.text)} (truncated)</p>`;
+    if (Buffer.byteLength(formattedBody, "utf8") <= maxHtmlBytes || budget <= 0) return { body, formattedBody };
+    budget = Math.max(0, Math.floor(budget / 2));
+  }
+}
 function lineSegments(text: string, sign: "-" | "+", color: Color): { segments: Segment[]; cut: boolean } {
   const bounded = takeBytes(text, ACTIVITY_RESULT_DETAIL_BYTES);
   const lines = bounded.text.split("\n");
@@ -284,8 +294,15 @@ export class AcpActivityModel {
 
 export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): RenderedAcpActivity {
   if (event.type === "thought") {
-    const value = clean(event.text);
-    return { body: `💭 ${value}`, formattedBody: `<p>💭 ${html(value)}</p>` };
+    const source = clean(event.text);
+    let budget = Math.min(ACTIVITY_RESULT_DETAIL_BYTES, maxHtmlBytes);
+    for (;;) {
+      const bounded = takeBytes(source, budget);
+      const suffix = bounded.cut ? " (truncated)" : "";
+      const result = { body: `💭 ${bounded.text}${suffix}`, formattedBody: `<p>💭 ${html(bounded.text)}${suffix}</p>` };
+      if (Buffer.byteLength(result.formattedBody, "utf8") <= maxHtmlBytes || budget <= 0) return result;
+      budget = Math.max(0, Math.floor(budget / 2));
+    }
   }
   const fullTitle = toolTitle(event);
   const command = toolName(event) === "Execute" ? clean(event.title ?? "") : fullTitle;
@@ -301,7 +318,10 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     ? `<p>${titleMarkup(titleSummary, event.status)}</p>`
     : `<details><summary>${titleMarkup(titleSummary, event.status)}</summary>${code([{ text: titleDetail.text }])}</details>`;
   const output = resultFromContent(event);
-  if (!output || output.plain.length === 0) return { body: `[${palette.label}] 🔧 ${titleSummary}`, formattedBody: titleHtml };
+  if (!output || output.plain.length === 0) {
+    if (Buffer.byteLength(titleHtml, "utf8") <= maxHtmlBytes) return { body: `[${palette.label}] 🔧 ${titleSummary}`, formattedBody: titleHtml };
+    return compactTool(titleSummary, palette.label, maxHtmlBytes);
+  }
   let detailBytes = ACTIVITY_RESULT_DETAIL_BYTES;
   let previewBytes = ACTIVITY_RESULT_PREVIEW_BYTES;
   for (;;) {
@@ -325,6 +345,6 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     if (detailBytes > previewBytes) detailBytes = Math.max(previewBytes, Math.floor(detailBytes / 2));
     else if (previewBytes > 16) previewBytes = Math.floor(previewBytes / 2);
     else if (detailBytes > 16) detailBytes = Math.floor(detailBytes / 2);
-    else return { body: `[${palette.label}] 🔧 Activity (truncated)`, formattedBody: `<p>🔧 Activity (truncated)</p>` };
+    else return compactTool(titleSummary, palette.label, maxHtmlBytes);
   }
 }

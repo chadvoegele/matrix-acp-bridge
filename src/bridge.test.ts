@@ -24,6 +24,7 @@ import type {
   MatrixIdentity,
   MatrixSyncBatch,
   MatrixSyncStateChange,
+  MatrixHtmlMessage,
 } from "./matrix-client.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 
@@ -48,6 +49,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       maxInputBytes: 1000,
       maxOutputBytes: 10_000,
       maxMatrixMessageBytes: 10_000,
+      maxActivityEventsPerMessage: 10,
       maxQueuedTurnsPerRoom: 1,
       maxConcurrentPrompts: 2,
       maxTurnSeconds: 60,
@@ -155,6 +157,20 @@ class FakeMatrix implements MatrixClientAdapter {
   stop(): Promise<void> {
     this.stopped = true;
     return Promise.resolve();
+  }
+}
+
+class FakeLiveMatrix extends FakeMatrix {
+  readonly html: MatrixHtmlMessage[] = [];
+  readonly attempts: MatrixHtmlMessage[] = [];
+  htmlSend: (message: MatrixHtmlMessage) => Promise<string> = async (message) => {
+    this.html.push(message);
+    return message.targetEventId ?? `$live-${this.html.length}:example.org`;
+  };
+
+  sendHtmlMessage(message: MatrixHtmlMessage): Promise<string> {
+    this.attempts.push(message);
+    return this.htmlSend(message);
   }
 }
 
@@ -1456,4 +1472,166 @@ void test("prunes removed-room mappings and keeps restored sessions isolated by 
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
+});
+
+void test("live activity rolls over after ten events, archives at agent text, and edits late tools", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  const completion = bridge.handleTimelineEvent(event("$activity:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  for (let index = 0; index < 9; index += 1) {
+    acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: `thought-${index}`, text: `thought ${index}` });
+  }
+  acp.emit({ sessionId, kind: "tool_call", toolCallId: "late-tool", title: "read", toolKind: "read", status: "pending" });
+  await waitFor(() => matrix.html.length > 0);
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "thought-11", text: "eleventh" });
+  await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (10)")));
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "Hello" });
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: " world" });
+  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "late-tool", status: "completed",
+    content: [{ type: "content", text: "result" }] });
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "!" });
+  await waitFor(() => matrix.html.some((message) => message.body === "Hello world!") &&
+    matrix.html.some((message) => message.formattedBody.includes("result")));
+  const firstBatch = matrix.html.filter((message) => message.formattedBody.includes("Past agent events (10)"));
+  assert.equal(firstBatch.at(-1)?.targetEventId, firstBatch[0]?.targetEventId);
+  assert.equal(matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")), true);
+  assert.equal(matrix.html.some((message) => message.body.includes("eleventh")), true);
+  assert.equal(matrix.html.filter((message) => message.body.startsWith("Hello") && message.targetEventId === undefined).length, 1);
+  resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+  await flush();
+  clock.advanceBy(300);
+  await completion;
+  assert.equal(matrix.sent.length, 0);
+  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "late-tool", status: "failed" });
+  await flush();
+  assert.equal(matrix.html.at(-1)?.body.includes("failed"), false);
+  await bridge.stop();
+});
+
+void test("live Matrix retry reuses the transaction ID and keeps rooms independent", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  const resolvers: Array<(outcome: AcpOutcome) => void> = [];
+  acp.promptImpl = () => new Promise((resolve) => { resolvers.push(resolve); });
+  let failed = false;
+  matrix.htmlSend = async (message) => {
+    if (!failed && message.roomId === ROOM_ONE) {
+      failed = true;
+      throw { failure: { kind: "transient", retryable: true, sdkRetryable: false, retryAfterMs: 0 } };
+    }
+    matrix.html.push(message);
+    return message.targetEventId ?? `$live-${matrix.html.length}:example.org`;
+  };
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock, random: () => 0 });
+  const one = bridge.handleTimelineEvent(event("$live-one:example.org", ROOM_ONE));
+  const two = bridge.handleTimelineEvent(event("$live-two:example.org", ROOM_TWO));
+  await waitFor(() => acp.promptCalls.length === 2);
+  for (const call of acp.promptCalls) {
+    acp.emit({ sessionId: call.sessionId, kind: "agent_message_chunk", text: call.sessionId });
+  }
+  await waitFor(() => matrix.attempts.length >= 2);
+  clock.advanceBy(0);
+  await waitFor(() => matrix.html.length === 2);
+  const attempts = matrix.attempts.filter((message) => message.roomId === ROOM_ONE);
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0]?.transactionId, attempts[1]?.transactionId);
+  assert.equal(matrix.html.some((message) => message.roomId === ROOM_TWO), true);
+  for (const resolve of resolvers) resolve({ kind: "turn", stopReason: "end_turn" });
+  await flush();
+  clock.advanceBy(300);
+  await Promise.all([one, two]);
+  await bridge.stop();
+});
+
+void test("long live text splits at the Matrix limit without a duplicate final response", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
+  const bridge = new BridgeCoordinator({ config: config({ maxMatrixMessageBytes: 800 }), acp, matrix, clock });
+  const completion = bridge.handleTimelineEvent(event("$long-live:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  const answer = "α&<>".repeat(400);
+  acp.emit({ sessionId, kind: "agent_message_chunk", text: answer });
+  await waitFor(() => matrix.html.map((message) => message.body).join("").length === answer.length);
+  assert.equal(matrix.html.length > 1, true);
+  assert.equal(matrix.html.map((message) => message.body).join(""), answer);
+  for (const message of matrix.html) {
+    const bytes = Buffer.byteLength(JSON.stringify({ msgtype: "m.text", body: `* ${message.body}`,
+      formatted_body: message.formattedBody, "m.new_content": { body: message.body, formatted_body: message.formattedBody },
+      "m.relates_to": { event_id: message.targetEventId ?? "$example:example.org" } }), "utf8");
+    assert.equal(bytes <= 800, true);
+  }
+  resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+  await flush();
+  clock.advanceBy(300);
+  await completion;
+  assert.equal(matrix.sent.length, 0);
+  await bridge.stop();
+});
+
+void test("oversized activity truncates detail and rolls over before the encoded Matrix limit", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
+  const bridge = new BridgeCoordinator({ config: config({ maxMatrixMessageBytes: 800 }), acp, matrix, clock });
+  const completion = bridge.handleTimelineEvent(event("$oversized-activity:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "one", text: "<&".repeat(3000) });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "two", text: "second thought" });
+  await waitFor(() => matrix.html.some((message) => message.body.includes("second thought")));
+  assert.equal(matrix.html.some((message) => message.body.includes("(truncated)")), true);
+  for (const message of matrix.html) {
+    const bytes = Buffer.byteLength(JSON.stringify({ msgtype: "m.text", body: `* ${message.body}`,
+      formatted_body: message.formattedBody, "m.new_content": { body: message.body, formatted_body: message.formattedBody },
+      "m.relates_to": { event_id: message.targetEventId ?? "$example:example.org" } }), "utf8");
+    assert.equal(bytes <= 800, true);
+  }
+  resolvePrompt({ kind: "turn", stopReason: "end_turn", text: "done" });
+  await flush();
+  clock.advanceBy(300);
+  await completion;
+  await bridge.stop();
+});
+
+void test("live timeout keeps partial text once and rejects late chunks in the next turn", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  const resolvers: Array<(outcome: AcpOutcome) => void> = [];
+  acp.promptImpl = () => new Promise((resolve) => { resolvers.push(resolve); });
+  const bridge = new BridgeCoordinator({ config: config({ maxTurnSeconds: 1 }), acp, matrix, clock });
+  const first = bridge.handleTimelineEvent(event("$live-timeout:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "first", text: "partial" });
+  await waitFor(() => matrix.html.some((message) => message.body === "partial"));
+  clock.advanceBy(1000);
+  assert.equal(acp.cancelCalls.length, 1);
+  resolvers.shift()!({ kind: "turn", stopReason: "cancelled" });
+  await first;
+  assert.equal(matrix.sent.at(-1)?.content.body, "[agent timed out]");
+  const second = bridge.handleTimelineEvent(event("$live-after-timeout:example.org"));
+  await waitFor(() => acp.promptCalls.length === 2);
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "first", text: "stale" });
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "second", text: "fresh" });
+  await waitFor(() => matrix.html.some((message) => message.body === "fresh"));
+  resolvers.shift()!({ kind: "turn", stopReason: "end_turn" });
+  await flush();
+  clock.advanceBy(300);
+  await second;
+  assert.equal(matrix.html.some((message) => message.body.includes("stale")), false);
+  await bridge.stop();
 });

@@ -86,13 +86,14 @@ void test("parses the documented shape and applies every default limit", () => {
 });
 
 void test("parses operator-supplied limits and TOML comments", () => {
-  const source = `${validConfigText("/tmp/matrix-acp-config-state")}\n\n[limits]\nmax_input_bytes = 1_000 # byte limit\nmax_output_bytes = 20\nmax_matrix_message_bytes = 64\nmax_queued_turns_per_room = 2\nmax_concurrent_prompts = 1\nmax_turn_seconds = 2_147_483\nshutdown_grace_seconds = 1\nstartup_timeout_seconds = 120\nmax_catchup_age_seconds = 120\nmax_catchup_events_per_room = 3\n`;
+  const source = `${validConfigText("/tmp/matrix-acp-config-state")}\n\n[limits]\nmax_input_bytes = 1_000 # byte limit\nmax_output_bytes = 20\nmax_matrix_message_bytes = 64\nmax_activity_events_per_message = 7\nmax_queued_turns_per_room = 2\nmax_concurrent_prompts = 1\nmax_turn_seconds = 2_147_483\nshutdown_grace_seconds = 1\nstartup_timeout_seconds = 120\nmax_catchup_age_seconds = 120\nmax_catchup_events_per_room = 3\n`;
   const config = parseConfigText(source);
 
   assert.deepEqual(config.limits, {
     maxInputBytes: 1000,
     maxOutputBytes: 20,
     maxMatrixMessageBytes: 64,
+    maxActivityEventsPerMessage: 7,
     maxQueuedTurnsPerRoom: 2,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 2_147_483,
@@ -201,6 +202,9 @@ void test("enforces positive integer, minimum byte, and Node timer bounds", asyn
     "max_input_bytes = 1.5",
     "max_output_bytes = 19",
     "max_matrix_message_bytes = 63",
+    "max_activity_events_per_message = 0",
+    "max_activity_events_per_message = -1",
+    "max_activity_events_per_message = 1.5",
     "max_turn_seconds = 2147484",
     "shutdown_grace_seconds = 2147484",
     "startup_timeout_seconds = 2147484",
@@ -227,6 +231,7 @@ void test("enforces positive integer, minimum byte, and Node timer bounds", asyn
   const maxTimerSource = `${valid}max_turn_seconds = 2147483\nshutdown_grace_seconds = 2147483\nstartup_timeout_seconds = 2147483\nmax_catchup_age_seconds = 2147483\n`;
   assert.equal(parseConfigText(maxTimerSource).limits.maxTurnSeconds, 2_147_483);
   assert.equal(parseConfigText(maxTimerSource).limits.maxCatchupAgeSeconds, 2_147_483);
+  assert.equal(parseConfigText(`${valid}max_activity_events_per_message = 1\n`).limits.maxActivityEventsPerMessage, 1);
 });
 
 void test("creates a private state directory and resolves existing ACP cwd once", async () => {

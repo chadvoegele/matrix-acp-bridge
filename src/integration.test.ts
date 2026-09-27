@@ -22,7 +22,6 @@ import {
   type MatrixSdkEventLike,
   type MatrixSdkRoomLike,
 } from "./matrix-client.js";
-import { computeMatrixTransactionId } from "./response-rendering.js";
 import type { BridgeConfig, MatrixConfig } from "./config.js";
 import type { BridgeStateStore } from "./bridge-state.js";
 import type { DiagnosticSink } from "./diagnostics.js";
@@ -83,6 +82,7 @@ const CONFIG: BridgeConfig = {
     maxInputBytes: 16_384,
     maxOutputBytes: 262_144,
     maxMatrixMessageBytes: 32_768,
+    maxActivityEventsPerMessage: 10,
     maxQueuedTurnsPerRoom: 2,
     maxConcurrentPrompts: 2,
     maxTurnSeconds: 60,
@@ -398,7 +398,7 @@ class MatrixSdkHarness implements MatrixSdkClientLike {
     roomId: string,
     content: Readonly<Record<string, unknown>>,
     transactionId?: string,
-  ): Promise<void> {
+  ): Promise<{ event_id: string }> {
     const attempt: MatrixSendAttempt = {
       roomId,
       content,
@@ -409,6 +409,7 @@ class MatrixSdkHarness implements MatrixSdkClientLike {
     this.operations.push(`message:${typeof content.body === "string" ? content.body : ""}`);
     await this.sendBehavior(attempt);
     this.sent.push(attempt);
+    return { event_id: `$sent-${this.sent.length}:example.org` };
   }
 
   async sendTyping(roomId: string, isTyping: boolean, timeoutMs: number): Promise<void> {
@@ -927,6 +928,9 @@ async function completePrompt(
     () => rig.matrixSdk.sent.some((attempt) => attempt.content.body === reply),
     `Matrix delivery for ${call.text}`,
   );
+  await flushMany(10);
+  await waitFor(() => rig.bridge.snapshot.activeRooms === 0 || rig.peer.prompts.length > call.index + 1,
+    `terminal completion for ${call.text}`);
 }
 
 async function completeAbandonedPrompt(
@@ -1009,15 +1013,7 @@ void test("integration suppresses the complete first sync, delivers live text, a
       format: "org.matrix.custom.html",
       formatted_body: "<p>live reply</p>",
     });
-    assert.equal(
-      liveSend.transactionId,
-      computeMatrixTransactionId({
-        roomId: ROOM_ONE,
-        inboundEventId: "$live:example.org",
-        responseKind: "agent",
-        oneBasedPartNumber: 1,
-      }),
-    );
+    assert.match(liveSend.transactionId ?? "", /^matrix-acp-live-[0-9a-f]{64}$/u);
     assert.equal(rig.peer.prompts.some((prompt) => prompt.text === "must be suppressed"), false);
     assert.equal(rig.peer.prompts.some((prompt) => prompt.text.includes("bridge output")), false);
 
@@ -1172,7 +1168,8 @@ void test("integration reconnects Matrix, retries transient sends with one trans
     const permanentAttempts = rig.matrixSdk.attempts.filter(
       (attempt) => attempt.content.body === "abandoned reply",
     );
-    assert.equal(permanentAttempts.length, 1);
+    assert.equal(permanentAttempts.length, 2);
+    assert.notEqual(permanentAttempts[0]?.transactionId, permanentAttempts[1]?.transactionId);
 
     rig.matrixSdk.emitInbound(sdkEvent({
       eventId: "$after-permanent:example.org",
@@ -1568,7 +1565,7 @@ void test("M2 scenario 6: typing spans only an active ACP turn", async () => {
     await completePrompt(rig, rig.peer.prompts[1]!, "typing two response");
 
     assert.deepEqual(rig.matrixSdk.typing.map(({ isTyping }) => isTyping), [true, true, false, true, false]);
-    assert.ok(rig.matrixSdk.operations.indexOf("typing:off") < rig.matrixSdk.operations.indexOf("message:typing one response"));
+    assert.ok(rig.matrixSdk.operations.indexOf("message:typing one response") < rig.matrixSdk.operations.indexOf("typing:off"));
   } finally {
     await stopRig(rig, run);
   }
@@ -1872,7 +1869,7 @@ void test("M3 scenario 3: a live encrypted message reaches ACP once and gets an 
     const responses = rig.matrixSdk.sent.filter(
       (attempt) => attempt.content.body === "encrypted live response",
     );
-    assert.equal(responses.length, 1);
+    assert.equal(responses.length, 1, JSON.stringify(responses.map((value) => ({ transactionId: value.transactionId, content: value.content }))));
     assert.equal(responses[0]?.wireEncrypted, true);
   } finally {
     if (run !== undefined && rig !== undefined) {

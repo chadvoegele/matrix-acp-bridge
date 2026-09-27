@@ -79,6 +79,7 @@ cwd = "/srv/acp-agent/workspace"
 max_input_bytes = 16384
 max_output_bytes = 262144
 max_matrix_message_bytes = 32768
+max_activity_events_per_message = 10
 max_queued_turns_per_room = 16
 max_concurrent_prompts = 4
 max_turn_seconds = 1800
