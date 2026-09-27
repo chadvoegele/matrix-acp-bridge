@@ -1,7 +1,8 @@
 +++
 name = "Developer live activity remediation"
 creation_date = 2026-09-27T13:28:10Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer remediation
