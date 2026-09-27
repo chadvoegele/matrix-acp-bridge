@@ -1,7 +1,7 @@
 +++
 name = "Agent tests and live Matrix validation"
 creation_date = 2026-09-27T12:20:07Z
-status = "in-progress"
+status = "completed"
 depends_on = ["tt-live-activity-batching-coordinator"]
 +++
 
