@@ -312,7 +312,7 @@ For reads, use `Read(path)` as the title.
 
 #### Writes
 
-The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; display the returned `newText` with a simple line-number gutter counted from the beginning of that full-file text. Put a green `+` to the left of each line number as presentation, without synthesizing diff headers.
+The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; display the returned `newText` with a simple line-number gutter counted from the beginning of that full-file text. Put a green `+` to the left of each line number as presentation.
 
 1. **Pending — gray (`#808080`):**
 
@@ -342,7 +342,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
 #### Edits
 
-Show `Edit(path)` with the same four status colors; do not put the location in the title. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update reported `locations[].line: 3`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Count lines from the beginning of each returned full-file string and show those numbers in a black gutter beside its lines. Put red `-` to the left of each old line number and green `+` to the left of each new line number; these are presentation markers, not an ACP-supplied patch. This is line counting, not diff matching: do not use the single ACP location as a hunk range or generate hunk positions or inferred unchanged context. If full-file text is unavailable, omit the gutter rather than imply absolute line positions.
+Show `Edit(path)` with the same four status colors. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update reported `locations[].line: 3`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green. Count lines from the beginning of each returned full-file string and show those numbers in a black gutter beside its lines. Put red `-` to the left of each old line number and green `+` to the left of each new line number. If full-file text is unavailable, omit the gutter rather than imply absolute line positions.
 
 1. **Pending — gray (`#808080`):**
 
@@ -370,11 +370,9 @@ Show `Edit(path)` with the same four status colors; do not put the location in t
    <pre><code>Could not apply edit</code></pre>
    ```
 
-The plain-text fallback should preserve the returned strings in the same order with `-`/`+` prefixes before counted line numbers, separated by a blank line. The prefixes identify old and new text even without color. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
-
 #### Terminal execution
 
-Show `Execute(title)` with the same status rail and tinted background. In the observed pi-acp call, `title` was the command, but ACP only promises a human-readable title; `rawInput` was absent. Do not parse the title as a command or assume another agent will put arguments there. The initial ACP `content` contained a terminal reference. pi-acp then sent output in `_meta.terminal_output.data` while `in_progress` and exit information in `_meta.terminal_exit` when `completed`. These `_meta` keys are pi-acp extensions, not portable ACP fields.
+Show `Execute(title)` with the same status rail and tinted background. In the observed pi-acp call, `title` was the command, but ACP only promises a human-readable title. The initial ACP `content` contained a terminal reference. pi-acp then sent output in `_meta.terminal_output.data` while `in_progress` and exit information in `_meta.terminal_exit` when `completed`. These `_meta` keys are pi-acp extensions.
 
 1. **Pending — gray (`#808080`):**
 
@@ -402,8 +400,6 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
    <pre><code>Command exited with code 1</code></pre>
    ```
-
-Append pi-acp terminal-output chunks in arrival order to the same tool event rather than replacing or duplicating earlier output. Render output separately in `<pre><code>` and escape HTML and terminal control sequences. An agent may omit pi-acp's `_meta` data, so show only the title and available ACP content when output is unavailable. The plain-text fallback should include the status, title, and any output. The failed example is illustrative; the observed command completed successfully.
 
 ## Verification
 
