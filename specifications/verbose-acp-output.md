@@ -223,11 +223,11 @@ In the example ACP trace, the following text is sent together at the end of the 
 I’ll create only the specified scratch file at its explicit /tmp path, verify its contents, then display it with the exact allowed cat -- command. No other files or commands will be touched.Completed: wrote, read, and displayed the specified scratch file.
 ```
 
-The first sentence is produced before the tool calls but only displayed at the end. We should display the message chunk when the agent finished writing. The specification mentions a `messageId` field, but it is not required. Possible heuristics to delineate thought chunks are double newlines or the start of a tool call in the next message.
+The first sentence is produced before the tool calls but currently displayed at the end. Send the first nonempty `agent_message_chunk` eagerly, then append subsequent chunks to that agent message as they arrive. `messageId` can identify a message but is optional; without it, group consecutive chunks and use tool/agent-message transitions to separate entries. A `"\n\n"` thought chunk is spacing, not another thought.
 
 ### Progressive Disclosure via Collapsible Trees
 
-We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays mo e information to the user.
+Model the agent's activity as a tree. Each depth reveals more information.
 
 1. Past Agent Events: # events = # thoughts + # tool calls
     1. Thought 1
@@ -241,9 +241,9 @@ We can model the agent's activity for the UI as a tree. Each level of tree depth
     1. Tool Call 2 Abbreviated Result
         1. Tool Call 2 Full Result
 
-Let up to a configurable maximum of 10 events per message by default (minimum 1). The newest activity message shows all its event entries directly. When an eleventh event arrives, finalize the previous ten-event message as one collapsed `<details>` element with a summary such as `Past agent events (10)` and begin a new, expanded activity message with the eleventh event.
+Group at most a configurable 10 activity events per Matrix message by default (minimum 1). Each grouped thought and each tool call counts once; status/output updates to a tool do not count again. The newest activity message shows its entries directly. When an eleventh event arrives, wrap the previous ten-event message in a collapsed `<details>` element with a summary such as `Past agent events (10)` and begin a new, expanded message. A new agent message is also a boundary: on its first nonempty chunk, collapse the current activity batch even if it has fewer than ten events, then show the agent's text eagerly in a separate message.
 
-While live, update in-place the same activity message as thoughts stream and tool statuses/results change; correlate updates by `toolCallId`.
+While live, edit the same activity message as thoughts stream and tool statuses/results change; correlate updates by `toolCallId`. If a tool in an archived batch is still running, continue updating that batch when its status/output changes, even though this may re-collapse a disclosure someone opened. Tool updates must not be lost or counted as new events. Close a batch early if needed to fit the configured Matrix message-size limit, including HTML and plain-text bodies.
 
 Full commands and results are shown only if their abbreviated versions were truncated.
 
@@ -276,7 +276,9 @@ These are initial limits, measured on the unescaped source text before HTML form
 | Tool result (read, write, edit, or terminal output) | 1 KiB UTF-8 | 8 KiB UTF-8 |
 | Terminal command/title | 160 Unicode characters | 2 KiB UTF-8 |
 
-Show short results directly. For a longer result, put the abbreviated output itself in the closed `<details>` element's `<summary>`. If the expanded result exceeds the 8 KiB cap, append ` (truncated)` to the details. The plain-text `body` contains the preview and a truncation notice.
+Show short results directly. For a longer result, put the abbreviated output itself in a closed `<details>` element's `<summary>`; expanding it reveals the detailed `<pre><code>` output. For terminal commands over 160 characters, make the abbreviated status-tinted title its own clickable `<summary>` with the command in `<pre><code>` beneath it. If the source exceeds a detailed-view cap, append ` (truncated)` to that summary. The plain-text `body` contains the previews and any truncation notices, not hidden detailed content.
+
+Read, write, and edit previews and details start at the beginning of their result. For terminal output, show the most recent 1 KiB in the visible summary. When it exceeds 8 KiB, keep the first 6 KiB and last 2 KiB in the expanded view, separated by a blank line; otherwise show all of it. Bound streaming accumulation, avoid splitting UTF-8 characters, and keep old/new edit text identifiable. If ten events exceed the Matrix event-size limit after HTML escaping, roll over early; if one event alone is too large, further shorten its detailed view and mark its summary as truncated.
 
 ```html
 <details><summary><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(python3 -c '…') (truncated)</span></span></summary><pre><code>python3 -c 'print("alpha")'</code></pre></details>
@@ -430,10 +432,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 - A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
 - Short tool results and commands stay visible. For long results, the abbreviated output is the clickable `<summary>` revealing a detailed view capped at 8 KiB. For long terminal titles, the abbreviated status-tinted `Execute(…)` is a separate clickable `<summary>` revealing command text capped at 2 KiB. A ` (truncated)` suffix appears on either summary only if the source exceeded its expanded-content cap; the plain-text fallback also notes truncation.
 - Streaming terminal output preserves a recent visible tail and a bounded head-and-tail detail; older output does not grow bridge memory or Matrix event size without limit. An oversized encoded event shrinks details before its preview while keeping truncation explicit.
-- With the default batch size, events 1–10 appear together in an expanded live activity message; event 11 starts a new expanded message and the prior batch collapses once. A new agent message also closes the current batch before appearing eagerly. Tool updates do not count as additional events or edit finalized batches; in-flight tools defer archival without delaying later events or agent text.
-
-## Open questions
-
+- With the default batch size, events 1–10 appear together in an expanded live activity message; event 11 starts a new expanded message and the prior batch collapses. The first nonempty agent-message chunk also closes the batch before appearing eagerly. Tool updates do not count as additional events; a late update edits its archived batch rather than losing the result. Oversized batches roll over early.
 
 ## Appendix
 
