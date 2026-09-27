@@ -219,67 +219,11 @@ ACP v1 references:
 
 In the example ACP trace, the following text is sent together at the end of the turn:
 
-"""
+```
 I’ll create only the specified scratch file at its explicit /tmp path, verify its contents, then display it with the exact allowed cat -- command. No other files or commands will be touched.Completed: wrote, read, and displayed the specified scratch file.
-"""
-
-The first sentence is produced before the tool calls but only displayed at the end. We should display the message chunk when the agent finished writing. We can tell in this case because the tool calls start after.
-
-Whitespace is another possible boundary heuristic: after joining chunks, a double newline can indicate a paragraph break. It is not an ACP end-of-message marker. In a separate five-tool probe, the agent sent two `agent_thought_chunk` updates—a heading and a `\n\n` chunk—which together formed one thought, not two. It also sent agent-message text before each tool call, with no double newlines or `messageId` in those text runs. Tool-call transitions helped segment that trace; whitespace alone would not have. In a harder six-tool arithmetic probe, four thought chunks formed two thought runs after tool results: each run contained text followed by a `\n\n` chunk. Type transitions (`tool_call_update` → thought → agent message) helped group those runs, but neither they nor whitespace signaled the end of an agent message reliably; the agent-message runs still had no double newlines or `messageId`. Eager messages should remain provisional when boundaries are inferred this way.
-
-### Identifying and displaying thought events
-
-The UI should display thought text in its own entries, separate from agent messages and tool calls. Group ACP chunks into those entries using these rules, in priority order:
-
-1. Only `session/update` notifications with `sessionUpdate: "agent_thought_chunk"` are thought chunks. Do not infer thoughts from an `agent_message_chunk`'s wording or Markdown.
-2. When a thought chunk has a `messageId`, append chunks with that ID to the same thought entry; a different ID starts another. ACP v1 permits IDs but does not require them.
-3. Without an ID, join consecutive thought chunks for the active turn into one entry. A whitespace-only chunk, including `"\n\n"`, does not create or increment a thought entry. Render it as spacing within the entry if useful; a double newline alone is not an ACP end marker.
-4. Without IDs, an agent-message or tool-call transition closes the provisional thought entry; a later thought chunk starts a new one. Do not split solely on unrelated session metadata or usage updates. These are UI heuristics, not guaranteed ACP message boundaries.
-5. Render an entry incrementally while its chunks arrive. Count grouped thought entries, not individual chunk notifications, in **Past Agent Events**. A late update after the turn closes must not create a new visible thought for that turn.
-
-In the GPT-6 Luna probe, `"**Preparing initial write**"` followed by `"\n\n"` formed one entry; after intervening activity, `"**Summing file integers**"` followed by `"\n\n"` formed another. The four chunks therefore represented two visible thought entries.
-
-### Thought event rendering
-
-Render each grouped thought as a standalone, single-paragraph entry: a thought-bubble emoji followed by the thought text. For the first observed thought, the proposed Matrix `formatted_body` is:
-
-```html
-<p>💭 Preparing initial write</p>
 ```
 
-The corresponding plain-text `body` is `💭 Preparing initial write`. For this heading-like thought, omit the source's surrounding Markdown `**` rather than displaying bold text; trailing `\n\n` is spacing, not another thought. Escape thought text before producing HTML. Keep the entry independent so it can later be nested in the progressive-disclosure tree. A single paragraph does not guarantee no visual wrapping in every Matrix client.
-
-### Read tool call rendering
-
-Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Show 🔧 `Read(path)` beside one heavy left rail (`┃`). The rail carries the status color; a light status-tinted background covers both the rail and the black title, with no status suffix in the HTML. Put the output separately in `<pre><code>`, without a rail. Use `rawInput.path` when present, falling back to a path in `locations`. Escape the path and output as HTML. The following are `formatted_body` snapshots of **one** call, not four separate messages to retain in the room:
-
-1. **Pending — gray (`#808080`):**
-
-   ```html
-   <p><span data-mx-bg-color="#EAEAEA"><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   ```
-
-2. **Running — black (`#000000`):**
-
-   ```html
-   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   ```
-
-3. **Completed successfully — green (`#008000`), with output:**
-
-   ```html
-   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
-   ```
-
-4. **Failed — red (`#C00000`), with an illustrative error if available:**
-
-   ```html
-   <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   <pre><code>Permission denied</code></pre>
-   ```
-
-The plain-text `body` should name the status, path, and available result without relying on color. Use the displayable `content` once; do not duplicate it from `rawOutput`. Additional or missing status updates must not break the evolving event. These blocks can later become children of the progressive-disclosure tree.
+The first sentence is produced before the tool calls but only displayed at the end. We should display the message chunk when the agent finished writing. The specification mentions a `messageId` field, but it is not required. Possible heuristics to delineate thought chunks are double newlines or the start of a tool call in the next message.
 
 ### Progressive Disclosure via Collapsible Trees
 
@@ -322,6 +266,49 @@ Permitted attributes and Matrix extensions:
 - **Math:** `span` and `div` may use `data-mx-maths`.
 - **Other attributes:** `code` accepts `language-` classes, links require an approved absolute URI scheme, and image sources must use `mxc://`.
 - **Limits:** Arbitrary CSS (`style`), scripts, and event-handler attributes are not permitted. Clients may support fewer tags, so collapsible sections and color cannot be the only way to understand activity or status.
+
+## Event Rendering
+### Thoughts
+
+Render each chunked thought as a single entry. Use a thought-bubble emoji followed by the thought text.
+
+```html
+<p>💭 Preparing initial write</p>
+```
+
+### Tool Calls
+
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool call stauts. Then use a 🔧  to indicate a tool call. Then include the specific tool call title.
+
+#### Reads
+
+For reads, use `Read(path)` as the title.
+
+1. **Pending — gray (`#808080`):**
+
+   ```html
+   <p><span data-mx-bg-color="#EAEAEA"><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
+   ```
+
+2. **Running — black (`#000000`):**
+
+   ```html
+   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
+   ```
+
+3. **Completed successfully — green (`#008000`), with output:**
+
+   ```html
+   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
+   <pre><code>alpha&#10;beta&#10;</code></pre>
+   ```
+
+4. **Failed — red (`#C00000`), with an illustrative error if available:**
+
+   ```html
+   <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
+   <pre><code>Permission denied</code></pre>
+   ```
 
 ## Verification
 
