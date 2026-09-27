@@ -227,21 +227,17 @@ The first sentence is produced before the tool calls but only displayed at the e
 
 ### Progressive Disclosure via Collapsible Trees
 
-We can model the agent's activity for the UI as a tree. Each level of tree depth progressively displays more information to the user.
+Group consecutive thought and tool events into Matrix activity messages, with a configurable maximum of **10 events per message** by default (minimum 1). A grouped thought counts once; a tool call counts once regardless of its status or output updates. Agent messages are sent separately and do not count toward the activity limit.
 
-1. Past Agent Events: # events = # thoughts + # tool calls
-    1. Thought 1
-    1. Thought 2
-    1. (status) Tool Call 1 Abbreviated Command
-        1. Tool Call 1 Full Command
-        1. Tool Call 1 Abbreviated Result
-            1. Tool Call 1 Full Result
-1. (status) Tool Call 2 Abbreviated Command
-    1. Tool Call 2 Full Command
-    1. Tool Call 2 Abbreviated Result
-        1. Tool Call 2 Full Result
+The newest activity message shows all its event entries directly, in order. Long commands and results within an entry retain their own closed disclosure controls. When an eleventh event arrives, finalize the previous ten-event message as one collapsed `<details>` element with a summary such as `Past agent events (10)` and begin a new, expanded activity message with the eleventh event. When a new agent message begins, likewise finalize the current activity message before showing the agent's text eagerly; subsequent activity starts a new message. Count the first nonempty `agent_message_chunk` as this boundary, not every streamed chunk. If a turn ends without an agent message, keep its most recent activity message expanded until a later boundary.
 
-The most recent message is always displayed at depth 2. Past activity is collapsed and shown at depth 1.
+For example, after a rollover:
+
+1. `Past agent events (10)` — collapsed; opening it reveals those ten thought/tool entries.
+1. Live activity message — expanded; shows tool 11 directly, with its abbreviated command and output.
+    1. Clicking an abbreviated command or output reveals its bounded detailed text.
+
+While live, update the same activity message as thoughts stream and tool statuses/results change; correlate updates by `toolCallId` rather than adding new events. Finalize each old batch with **one** edit that wraps it in the collapsed tree, then never edit it again. Element may reset an opened disclosure on a live message edit; batching cannot prevent that while output streams, but it avoids repeated edits to disclosures the user opens in past messages. If a batch reaches the limit while a tool in it is still running, start the next batch but defer collapsing the older batch until its tool finishes. Likewise, an agent message must not block waiting for a tool; finalize that batch when the tool finishes. This may temporarily leave more than one expanded activity message. A Matrix event-size limit may force an earlier rollover.
 
 Full commands and results are shown only if their abbreviated versions were truncated.
 
@@ -434,6 +430,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 - A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
 - Short tool results and commands stay visible. For long results, the abbreviated output is the clickable `<summary>` revealing a detailed view capped at 8 KiB. For long terminal titles, the abbreviated status-tinted `Execute(…)` is a separate clickable `<summary>` revealing command text capped at 2 KiB. A ` (truncated)` suffix appears on either summary only if the source exceeded its expanded-content cap; the plain-text fallback also notes truncation.
 - Streaming terminal output preserves a recent visible tail and a bounded head-and-tail detail; older output does not grow bridge memory or Matrix event size without limit. An oversized encoded event shrinks details before its preview while keeping truncation explicit.
+- With the default batch size, events 1–10 appear together in an expanded live activity message; event 11 starts a new expanded message and the prior batch collapses once. A new agent message also closes the current batch before appearing eagerly. Tool updates do not count as additional events or edit finalized batches; in-flight tools defer archival without delaying later events or agent text.
 
 ## Open questions
 
