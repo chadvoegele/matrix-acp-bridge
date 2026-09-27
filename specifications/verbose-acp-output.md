@@ -372,6 +372,39 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
 
 The plain-text fallback should preserve the returned strings in the same order with a blank line between them; without color or labels, it cannot identify which text is old and which is new. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
 
+#### Terminal execution
+
+Show `Execute(title)` with the same status rail and tinted background. In the observed pi-acp call, `title` was the command, but ACP only promises a human-readable title; `rawInput` was absent. Do not parse the title as a command or assume another agent will put arguments there. The initial ACP `content` contained a terminal reference. pi-acp then sent output in `_meta.terminal_output.data` while `in_progress` and exit information in `_meta.terminal_exit` when `completed`. These `_meta` keys are pi-acp extensions, not portable ACP fields.
+
+1. **Pending — gray (`#808080`):**
+
+   ```html
+   <p><span data-mx-bg-color="#EAEAEA"><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
+   ```
+
+2. **Running — black (`#000000`), with output as it arrives:**
+
+   ```html
+   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
+   <pre><code>alpha&#10;beta&#10;</code></pre>
+   ```
+
+3. **Completed successfully — green (`#008000`), retaining the output:**
+
+   ```html
+   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
+   <pre><code>alpha&#10;beta&#10;</code></pre>
+   ```
+
+4. **Failed — red (`#C00000`), with illustrative output if available:**
+
+   ```html
+   <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
+   <pre><code>Command exited with code 1</code></pre>
+   ```
+
+Append pi-acp terminal-output chunks in arrival order to the same tool event rather than replacing or duplicating earlier output. Render output separately in `<pre><code>` and escape HTML and terminal control sequences. An agent may omit pi-acp's `_meta` data, so show only the title and available ACP content when output is unavailable. The plain-text fallback should include the status, title, and any output. The failed example is illustrative; the observed command completed successfully.
+
 ## Verification
 
 - A text thought chunk followed by `"\n\n"` appears as one live thought entry and counts once.
@@ -380,6 +413,7 @@ The plain-text fallback should preserve the returned strings in the same order w
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 - One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
 - Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit colors the returned `oldText` red and `newText` green without labels, synthesized line numbers, hunk headers, or `-`/`+` prefixes. The plain-text fallback retains the text in order.
+- A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
 
 ## Open questions
 
