@@ -1,7 +1,7 @@
 +++
 name = "Remediate live activity validation"
 creation_date = 2026-09-27T13:28:00Z
-status = "pending"
+status = "in-progress"
 depends_on = ["tt-agent-tests-and-live-matrix-validation"]
 +++
 
