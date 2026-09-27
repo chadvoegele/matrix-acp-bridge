@@ -312,7 +312,7 @@ For reads, use `Read(path)` as the title.
 
 #### Writes
 
-The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; display the returned `newText` with a simple line-number gutter counted from the beginning of that full-file text. Prefix each displayed line with green `+` as presentation, without synthesizing diff headers.
+The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; display the returned `newText` with a simple line-number gutter counted from the beginning of that full-file text. Put a green `+` to the left of each line number as presentation, without synthesizing diff headers.
 
 1. **Pending — gray (`#808080`):**
 
@@ -330,7 +330,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">+alpha</span>&#10;<span data-mx-color="#000000">2 </span><span data-mx-color="#008000">+beta</span>&#10;</code></pre>
+   <pre><code><span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">alpha</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">beta</span>&#10;</code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -342,7 +342,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
 #### Edits
 
-Show `Edit(path)` with the same four status colors; do not put the location in the title. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update reported `locations[].line: 3`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Count lines from the beginning of each returned full-file string and show those numbers in a black gutter beside its lines. Prefix every old line with red `-` and every new line with green `+`; these are presentation markers, not an ACP-supplied patch. This is line counting, not diff matching: do not use the single ACP location as a hunk range or generate hunk positions or inferred unchanged context. If full-file text is unavailable, omit the gutter rather than imply absolute line positions.
+Show `Edit(path)` with the same four status colors; do not put the location in the title. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update reported `locations[].line: 3`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Count lines from the beginning of each returned full-file string and show those numbers in a black gutter beside its lines. Put red `-` to the left of each old line number and green `+` to the left of each new line number; these are presentation markers, not an ACP-supplied patch. This is line counting, not diff matching: do not use the single ACP location as a hunk range or generate hunk positions or inferred unchanged context. If full-file text is unavailable, omit the gutter rather than imply absolute line positions.
 
 1. **Pending — gray (`#808080`):**
 
@@ -360,7 +360,7 @@ Show `Edit(path)` with the same four status colors; do not put the location in t
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#000000">1 </span><span data-mx-color="#C00000">-2</span>&#10;<span data-mx-color="#000000">2 </span><span data-mx-color="#C00000">-3</span>&#10;<span data-mx-color="#000000">3 </span><span data-mx-color="#C00000">-5</span>&#10;<span data-mx-color="#000000">4 </span><span data-mx-color="#C00000">-7</span>&#10;&#10;<span data-mx-color="#000000">1 </span><span data-mx-color="#008000">+2</span>&#10;<span data-mx-color="#000000">2 </span><span data-mx-color="#008000">+3</span>&#10;<span data-mx-color="#000000">3 </span><span data-mx-color="#008000">+5</span>&#10;<span data-mx-color="#000000">4 </span><span data-mx-color="#008000">+11</span>&#10;</code></pre>
+   <pre><code><span data-mx-color="#C00000">-</span><span data-mx-color="#000000">1 </span><span data-mx-color="#C00000">2</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">2 </span><span data-mx-color="#C00000">3</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">3 </span><span data-mx-color="#C00000">5</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">4 </span><span data-mx-color="#C00000">7</span>&#10;&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">2</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">3</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">3 </span><span data-mx-color="#008000">5</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">4 </span><span data-mx-color="#008000">11</span>&#10;</code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -370,7 +370,7 @@ Show `Edit(path)` with the same four status colors; do not put the location in t
    <pre><code>Could not apply edit</code></pre>
    ```
 
-The plain-text fallback should preserve the returned strings in the same order with counted line numbers and `-`/`+` prefixes, separated by a blank line. The prefixes identify old and new text even without color. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
+The plain-text fallback should preserve the returned strings in the same order with `-`/`+` prefixes before counted line numbers, separated by a blank line. The prefixes identify old and new text even without color. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
 
 #### Terminal execution
 
@@ -412,7 +412,7 @@ Append pi-acp terminal-output chunks in arrival order to the same tool event rat
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 - One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
-- Write and edit use the same status progression. A new-file write displays only its returned `newText` with green `+` prefixes; an edit colors the returned `oldText` red with `-` prefixes and `newText` green with `+` prefixes, without labels or synthesized hunk headers. When the result contains full-file text, count its lines into a gutter beside each block; leave the title unchanged and do not treat optional `locations[].line` as a hunk offset. The plain-text fallback retains the text and line numbers in order.
+- Write and edit use the same status progression. A new-file write displays only its returned `newText` with green `+` prefixes; an edit colors the returned `oldText` red with `-` prefixes and `newText` green with `+` prefixes, without labels or synthesized hunk headers. When the result contains full-file text, count its lines into a gutter after the sign and before the text; leave the title unchanged and do not treat optional `locations[].line` as a hunk offset. The plain-text fallback retains the text and line numbers in order.
 - A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
 
 ## Open questions
