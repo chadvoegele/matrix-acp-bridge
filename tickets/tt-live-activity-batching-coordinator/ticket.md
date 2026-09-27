@@ -1,7 +1,7 @@
 +++
 name = "Live activity batching coordinator"
 creation_date = 2026-09-27T12:20:07Z
-status = "pending"
+status = "in-progress"
 depends_on = ["tt-acp-activity-html-renderer"]
 +++
 
