@@ -312,7 +312,7 @@ For reads, use `Read(path)` as the title.
 
 #### Writes
 
-The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; render it as an added-file diff.
+The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; display the returned `newText` without synthesizing diff headers, prefixes, or line numbers.
 
 1. **Pending — gray (`#808080`):**
 
@@ -326,11 +326,11 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
    <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
    ```
 
-3. **Completed successfully — green (`#008000`), with the added-file diff:**
+3. **Completed successfully — green (`#008000`), with returned `newText`:**
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#C00000">--- /dev/null</span>&#10;<span data-mx-color="#008000">+++ b/tmp/output.txt</span>&#10;<span data-mx-color="#000000">@@ -0,0 +1,2 @@</span>&#10;<span data-mx-color="#008000">+alpha</span>&#10;<span data-mx-color="#008000">+beta</span></code></pre>
+   <pre><code><span data-mx-color="#000000">newText:</span>&#10;<span data-mx-color="#008000">alpha&#10;beta&#10;</span></code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -342,7 +342,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
 #### Edits
 
-Show `Edit(path)` with the same four status colors. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update included optional `locations[].line`, and the completed `diff` contained full-file `oldText` and `newText` but no line-numbered hunks. Generate unified-diff lines and hunk positions from those two texts; do not treat the optional location as an authoritative hunk range.
+Show `Edit(path)` with the same four status colors. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update included optional `locations[].line`, and the completed `diff` contained full-file `oldText` and `newText`. Display those strings as returned, labeled by their ACP field names. Do not generate hunk positions, `-`/`+` prefixes, or inferred unchanged context; the optional location is not a hunk range.
 
 1. **Pending — gray (`#808080`):**
 
@@ -356,11 +356,11 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
    ```
 
-3. **Completed successfully — green (`#008000`), with a unified diff:**
+3. **Completed successfully — green (`#008000`), with returned `oldText` and `newText`:**
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#C00000">--- a/tmp/output.txt</span>&#10;<span data-mx-color="#008000">+++ b/tmp/output.txt</span>&#10;<span data-mx-color="#000000">@@ -1,4 +1,4 @@</span>&#10;<span data-mx-color="#000000"> 2</span>&#10;<span data-mx-color="#000000"> 3</span>&#10;<span data-mx-color="#000000"> 5</span>&#10;<span data-mx-color="#C00000">-7</span>&#10;<span data-mx-color="#008000">+11</span></code></pre>
+   <pre><code><span data-mx-color="#000000">oldText:</span>&#10;<span data-mx-color="#C00000">2&#10;3&#10;5&#10;7&#10;</span><span data-mx-color="#000000">newText:</span>&#10;<span data-mx-color="#008000">2&#10;3&#10;5&#10;11&#10;</span></code></pre>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
@@ -370,7 +370,7 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    <pre><code>Could not apply edit</code></pre>
    ```
 
-In both cases, preserve the `-` and `+` prefixes and uncolored context in the plain-text fallback. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large diffs by the output limit.
+The plain-text fallback should also label and reproduce the returned strings without synthesized hunks or line numbers. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large outputs by the output limit.
 
 ## Verification
 
@@ -379,7 +379,7 @@ In both cases, preserve the `-` and `+` prefixes and uncolored context in the pl
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 - One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
-- Write and edit use the same status progression. A new-file write displays only green `+` lines; an edit derives hunk positions from `oldText` and `newText`, colors `-` lines red and `+` lines green, and leaves context black. The plain-text fallback retains the prefixes.
+- Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit labels and colors the returned `oldText` and `newText` without synthesized line numbers, hunk headers, or `-`/`+` prefixes. The plain-text fallback retains the text and labels.
 
 ## Open questions
 
