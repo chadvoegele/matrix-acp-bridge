@@ -1,7 +1,8 @@
 +++
 name = "Developer resume live remediation"
 creation_date = 2026-09-27T18:21:22Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer: resume live E2E remediation
