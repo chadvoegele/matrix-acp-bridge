@@ -278,7 +278,7 @@ Render each chunked thought as a single entry. Use a thought-bubble emoji follow
 
 ### Tool Calls
 
-Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool-call status. Then use a 🔧  to indicate a tool call. Then include the specific tool call title.
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool-call status. Then use a 🔧  to indicate a tool call. Then include the specific tool call title. If a matching ACP `locations[]` entry supplies a `line`, include it with the path (for example, `path:3`); omit it when absent. Keep the last reported location across sparse updates, but never calculate or reindex the line number.
 
 #### Reads
 
@@ -342,7 +342,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
 #### Edits
 
-Show `Edit(path)` with the same four status colors. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update included optional `locations[].line`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Do not generate hunk positions, `-`/`+` prefixes, or inferred unchanged context; the optional location is not a hunk range.
+Show `Edit(path)` with the same four status colors, adding `:line` once ACP reports it. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update reported `locations[].line: 3`, and the completed `diff` contained full-file `oldText` and `newText`. Display the old text in red and the new text in green, separated by a blank line, without field-name labels. Do not generate hunk positions, `-`/`+` prefixes, or inferred unchanged context; the optional location is not a hunk range.
 
 1. **Pending — gray (`#808080`):**
 
@@ -353,13 +353,13 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
 2. **Running — black (`#000000`):**
 
    ```html
-   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
+   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt:3)</span></span></p>
    ```
 
 3. **Completed successfully — green (`#008000`), with the returned old text in red and new text in green:**
 
    ```html
-   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
+   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt:3)</span></span></p>
    <pre><code><span data-mx-color="#C00000">2&#10;3&#10;5&#10;7&#10;</span>&#10;<span data-mx-color="#008000">2&#10;3&#10;5&#10;11&#10;</span></code></pre>
    ```
 
@@ -412,7 +412,7 @@ Append pi-acp terminal-output chunks in arrival order to the same tool event rat
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 - One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
-- Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit colors the returned `oldText` red and `newText` green without labels, synthesized line numbers, hunk headers, or `-`/`+` prefixes. The plain-text fallback retains the text in order.
+- Write and edit use the same status progression. A new-file write displays only its returned `newText`; an edit colors the returned `oldText` red and `newText` green without labels, synthesized hunk headers, or `-`/`+` prefixes. The edit title gains `:3` when ACP reports `locations[].line: 3`; no line is invented when absent. The plain-text fallback retains the text in order.
 - A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
 
 ## Open questions
