@@ -108,8 +108,7 @@ try {
     : `INCOMPLETE real ACP activity metadata: ${missing.join(", ")}\n`);
 } finally {
   if (pair) {
-    pair.bridge.kill("SIGTERM");
-    pair.acp.kill("SIGTERM");
+    await stopBridgePair(pair).catch(() => {});
   }
   await cleanupScratch();
 }
