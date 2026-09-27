@@ -1,7 +1,7 @@
 +++
 status = "draft"
 created = 2026-09-24
-last_update = 2026-09-26
+last_update = 2026-09-27
 +++
 
 # Verbose ACP output in Matrix
@@ -278,7 +278,7 @@ Render each chunked thought as a single entry. Use a thought-bubble emoji follow
 
 ### Tool Calls
 
-Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool call stauts. Then use a 🔧  to indicate a tool call. Then include the specific tool call title.
+Treat `tool_call` and subsequent `tool_call_update` notifications with the same `toolCallId` as one evolving tool event. Use a color-coded heavy left rail (`┃`) to indicate the tool-call status. Then use a 🔧  to indicate a tool call. Then include the specific tool call title.
 
 #### Reads
 
@@ -310,6 +310,68 @@ For reads, use `Read(path)` as the title.
    <pre><code>Permission denied</code></pre>
    ```
 
+#### Writes
+
+The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` with the same status rail and tinted background as Read. A successful new-file write has a `diff` result with `oldText: null`; render it as an added-file diff.
+
+1. **Pending — gray (`#808080`):**
+
+   ```html
+   <p><span data-mx-bg-color="#EAEAEA"><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
+   ```
+
+2. **Running — black (`#000000`):**
+
+   ```html
+   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
+   ```
+
+3. **Completed successfully — green (`#008000`), with the added-file diff:**
+
+   ```html
+   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
+   <pre><code><span data-mx-color="#C00000">--- /dev/null</span>&#10;<span data-mx-color="#008000">+++ b/tmp/output.txt</span>&#10;<span data-mx-color="#000000">@@ -0,0 +1,2 @@</span>&#10;<span data-mx-color="#008000">+alpha</span>&#10;<span data-mx-color="#008000">+beta</span></code></pre>
+   ```
+
+4. **Failed — red (`#C00000`), with an illustrative error if available:**
+
+   ```html
+   <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
+   <pre><code>Permission denied</code></pre>
+   ```
+
+#### Edits
+
+Show `Edit(path)` with the same four status colors. In the observed edit, `rawInput.edits` contained an old/new replacement, an `in_progress` update included optional `locations[].line`, and the completed `diff` contained full-file `oldText` and `newText` but no line-numbered hunks. Generate unified-diff lines and hunk positions from those two texts; do not treat the optional location as an authoritative hunk range.
+
+1. **Pending — gray (`#808080`):**
+
+   ```html
+   <p><span data-mx-bg-color="#EAEAEA"><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
+   ```
+
+2. **Running — black (`#000000`):**
+
+   ```html
+   <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
+   ```
+
+3. **Completed successfully — green (`#008000`), with a unified diff:**
+
+   ```html
+   <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
+   <pre><code><span data-mx-color="#C00000">--- a/tmp/output.txt</span>&#10;<span data-mx-color="#008000">+++ b/tmp/output.txt</span>&#10;<span data-mx-color="#000000">@@ -1,4 +1,4 @@</span>&#10;<span data-mx-color="#000000"> 2</span>&#10;<span data-mx-color="#000000"> 3</span>&#10;<span data-mx-color="#000000"> 5</span>&#10;<span data-mx-color="#C00000">-7</span>&#10;<span data-mx-color="#008000">+11</span></code></pre>
+   ```
+
+4. **Failed — red (`#C00000`), with an illustrative error if available:**
+
+   ```html
+   <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
+   <pre><code>Could not apply edit</code></pre>
+   ```
+
+In both cases, preserve the `-` and `+` prefixes and uncolored context in the plain-text fallback. Escape file paths and text before composing HTML. If a result has no `diff` content, show its available result or error instead; bound large diffs by the output limit.
+
 ## Verification
 
 - A text thought chunk followed by `"\n\n"` appears as one live thought entry and counts once.
@@ -317,6 +379,7 @@ For reads, use `Read(path)` as the title.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
 - One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
+- Write and edit use the same status progression. A new-file write displays only green `+` lines; an edit derives hunk positions from `oldText` and `newText`, colors `-` lines red and `+` lines green, and leaves context black. The plain-text fallback retains the prefixes.
 
 ## Open questions
 
