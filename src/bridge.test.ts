@@ -1474,6 +1474,34 @@ void test("prunes removed-room mappings and keeps restored sessions isolated by 
   }
 });
 
+void test("streamed thought paragraphs stay separate and unbolded through Matrix edits", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  const completion = bridge.handleTimelineEvent(event("$thought-paragraphs:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "**First heading**" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "**Second heading**" });
+  await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Second heading")));
+  const current = matrix.html.at(-1);
+  assert.equal(current?.body, "💭 First heading\n\n💭 Second heading");
+  assert.equal(current?.formattedBody, "<p>💭 First heading</p>\n<p>💭 Second heading</p>");
+  acp.emit({ sessionId, kind: "agent_message_chunk", text: "Done" });
+  await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")));
+  const archived = [...matrix.html].reverse().find((message) => message.formattedBody.includes("Past agent events (1)"));
+  assert.match(archived?.formattedBody ?? "", /<p>💭 First heading<\/p>\n<p>💭 Second heading<\/p>/);
+  resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+  await flush();
+  clock.advanceBy(300);
+  await completion;
+  await bridge.stop();
+});
+
 void test("streamed agent text renders Markdown on the initial send, edits, and final result", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();

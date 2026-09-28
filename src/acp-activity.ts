@@ -87,6 +87,13 @@ function clipSegments(segments: readonly Segment[], limit: number, fromEnd = fal
   return { segments: result, cut };
 }
 function plain(segments: readonly Segment[]): string { return segments.map((part) => part.text).join(""); }
+function thoughtParagraphs(value: string): string[] {
+  return value.trim().split(/\n\s*\n/u).map((paragraph) => {
+    const trimmed = paragraph.trim();
+    const heading = /^(\*\*|__)([\s\S]+)\1$/u.exec(trimmed);
+    return heading ? heading[2]!.trim() : trimmed;
+  }).filter(Boolean);
+}
 function previewSegments(segments: readonly Segment[], fromEnd: boolean): { segments: Segment[]; cut: boolean } {
   const bounded = clipSegments(segments, ACTIVITY_RESULT_PREVIEW_BYTES, fromEnd);
   const text = plain(bounded.segments);
@@ -265,8 +272,8 @@ export class AcpActivityModel {
       return undefined;
     }
     if (update.kind === "agent_thought_chunk") {
-      if (!update.text.trim()) return undefined;
       let event = update.messageId ? this.#thoughts.get(update.messageId) : this.#lastThought;
+      if (!update.text.trim() && !event) return undefined;
       if (!event) {
         event = { type: "thought", text: "", ...(update.messageId ? { messageId: update.messageId } : {}) };
         this.events.push(event);
@@ -329,8 +336,14 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     let budget = Math.min(ACTIVITY_RESULT_DETAIL_BYTES, maxHtmlBytes);
     for (;;) {
       const bounded = takeBytes(source, budget);
+      const paragraphs = thoughtParagraphs(bounded.text);
       const suffix = bounded.cut ? " (truncated)" : "";
-      const result = { body: `💭 ${bounded.text}${suffix}`, formattedBody: `<p>💭 ${html(bounded.text)}${suffix}</p>` };
+      const body = paragraphs.length > 0
+        ? `${paragraphs.map((paragraph) => `💭 ${paragraph}`).join("\n\n")}${suffix}` : `💭${suffix}`;
+      const formattedBody = paragraphs.length > 0
+        ? paragraphs.map((paragraph, index) => `<p>💭 ${html(paragraph).replaceAll("&#10;", "<br>")}${index === paragraphs.length - 1 ? suffix : ""}</p>`).join("\n")
+        : `<p>💭${suffix}</p>`;
+      const result = { body, formattedBody };
       if (Buffer.byteLength(result.formattedBody, "utf8") <= maxHtmlBytes || budget <= 0) return result;
       budget = Math.max(0, Math.floor(budget / 2));
     }

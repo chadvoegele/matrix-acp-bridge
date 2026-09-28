@@ -288,10 +288,17 @@ Read, write, edit, and other tool previews and details start at the beginning of
 ## Event Rendering
 ### Thoughts
 
-Render each chunked thought as a single entry. Use a thought-bubble emoji followed by the thought text.
+Group consecutive chunks of one thought into a single activity event. Keep spacing-only chunks (including `"\n\n"`) within that event rather than discarding them or counting them as another event. Render each paragraph separately with 💭; remove surrounding Markdown `**` or `__` from heading-like paragraphs rather than showing literal markers or bold text. Escape HTML inside paragraphs.
 
 ```html
 <p>💭 Preparing initial write</p>
+```
+
+For source `**First heading**\n\n**Second heading**`, the same one event renders as:
+
+```html
+<p>💭 First heading</p>
+<p>💭 Second heading</p>
 ```
 
 ### Tool Calls
@@ -428,7 +435,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 ## Verification
 
 - Streamed agent messages use the same Markdown HTML conversion as regular replies on initial send, subsequent edits, and completion; their plain-text body preserves the original Markdown, and raw HTML stays escaped.
-- A text thought chunk followed by `"\n\n"` appears as one live thought entry and counts once.
+- A text thought chunk followed by `"\n\n"` and another paragraph appears as one live thought event, counts once, and renders separate unbolded 💭 paragraphs rather than a run-on line.
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.

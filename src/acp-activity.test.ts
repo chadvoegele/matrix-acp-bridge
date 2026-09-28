@@ -22,7 +22,7 @@ void test("thought runs ignore spacing, use IDs, and close at agent-message and 
   model.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "\n\n" });
   model.accept({ sessionId: "session", kind: "agent_thought_chunk", text: " next" });
   assert.equal(model.events.length, 1);
-  assert.equal(renderAcpActivity(model.events[0]!).formattedBody, "<p>💭 **Plan** next</p>");
+  assert.equal(renderAcpActivity(model.events[0]!).formattedBody, "<p>💭 Plan</p>\n<p>💭 next</p>");
   model.accept({ sessionId: "session", kind: "agent_message_chunk", text: "Hi" });
   model.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "second", messageId: "a" });
   model.accept(tool());
@@ -33,6 +33,21 @@ void test("thought runs ignore spacing, use IDs, and close at agent-message and 
   model.close();
   assert.equal(model.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "late" }), undefined);
   assert.equal(model.events.length, 4);
+});
+
+void test("one streamed thought retains paragraph breaks and unbolds heading-like paragraphs", () => {
+  const model = new AcpActivityModel();
+  model.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "**First heading**" });
+  model.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "\n\n" });
+  model.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "**Second heading**" });
+  assert.equal(model.events.length, 1);
+  const rendered = renderAcpActivity(model.events[0]!);
+  assert.equal(rendered.body, "💭 First heading\n\n💭 Second heading");
+  assert.equal(rendered.formattedBody, "<p>💭 First heading</p>\n<p>💭 Second heading</p>");
+  const single = new AcpActivityModel();
+  single.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "**First heading**\n\n**Second <heading>**" });
+  assert.equal(renderAcpActivity(single.events[0]!).formattedBody,
+    "<p>💭 First heading</p>\n<p>💭 Second &lt;heading&gt;</p>");
 });
 
 void test("read status progresses with one rail, content takes priority over rawOutput", () => {
