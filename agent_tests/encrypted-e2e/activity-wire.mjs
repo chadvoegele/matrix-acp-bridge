@@ -71,9 +71,13 @@ try {
     event.content?.formatted_body ?? "").join("\n");
   assert(html.includes("Past agent events (10)"), "encrypted activity ten-event rollover missing");
   assert(html.includes("READ_RESULT_ONCE"), "encrypted archived tool update missing");
-  assert(events.some((event) => event.content?.body?.includes("batch thought 11") &&
-    !event.content?.formatted_body?.includes("Past agent events")),
-  "encrypted eleventh event was first sent collapsed");
+  const newestOriginal = events.find((event) => event.content?.body?.includes("batch thought 11") &&
+    event.content?.["m.relates_to"]?.rel_type !== "m.replace" &&
+    !event.content?.formatted_body?.includes("Past agent events"));
+  assert(newestOriginal, "encrypted eleventh event was first sent collapsed");
+  assert(edits.some((event) => event.content?.["m.relates_to"]?.event_id === newestOriginal.eventId &&
+    event.content?.["m.new_content"]?.formatted_body?.includes("Past agent events (1)")),
+  "encrypted agent message did not collapse the newest activity batch");
 } finally {
   clearTimeout(timer);
   await adapter.stop().catch(() => {});

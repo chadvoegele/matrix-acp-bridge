@@ -94,9 +94,9 @@ assert(html.includes("batch thought 11"), "eleventh event is missing");
 const newestOriginal = originals.find((event) => event.content?.body?.includes("batch thought 11"));
 assert(newestOriginal && !newestOriginal.content.formatted_body.includes("Past agent events"),
   "eleventh event was first sent collapsed");
-assert(!edits.some((event) => event.content?.["m.relates_to"]?.event_id === newestOriginal.event_id &&
+assert(edits.some((event) => event.content?.["m.relates_to"]?.event_id === newestOriginal.event_id &&
   event.content?.["m.new_content"]?.formatted_body?.includes("Past agent events (1)")),
-"agent text collapsed the newest activity batch before newer activity arrived");
+"agent message did not collapse the newest activity batch after its expanded send");
 assert(html.includes("<details>") && html.includes("<summary>") && html.includes("<pre><code>"),
   "activity disclosure or code blocks are missing");
 for (const value of ["#808080", "#000000", "#008000", "#C00000"]) {

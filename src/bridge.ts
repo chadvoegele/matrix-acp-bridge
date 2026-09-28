@@ -1777,9 +1777,12 @@ export class BridgeCoordinator {
       turn.messageIds.add(messageId);
       turn.messageOrder.push(messageId);
     }
-    if (update.text.trim() && turn.currentBatch !== undefined) {
-      // Agent text ends this batch, but the newest activity remains expanded
-      // until a newer batch takes its place.
+    if (update.text.trim()) {
+      for (const batch of turn.batches) {
+        if (batch.archived) continue;
+        batch.archived = true;
+        this.#scheduleBatch(turn, batch);
+      }
       turn.currentBatch = undefined;
     }
     turn.activity.accept(update);

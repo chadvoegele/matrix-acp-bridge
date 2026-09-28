@@ -1534,9 +1534,9 @@ void test("live activity rolls over after ten events, archives at agent text, an
     matrix.html.some((message) => message.formattedBody.includes("result")));
   const firstBatch = matrix.html.filter((message) => message.formattedBody.includes("Past agent events (10)"));
   assert.equal(firstBatch.at(-1)?.targetEventId, firstBatch[0]?.targetEventId);
-  assert.equal(matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")), false);
+  assert.equal(matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")), true);
   assert.equal(matrix.html.some((message) => message.body.includes("eleventh") &&
-    !message.formattedBody.includes("Past agent events")), true);
+    message.targetEventId === undefined && !message.formattedBody.includes("Past agent events")), true);
   assert.equal(matrix.html.filter((message) => message.body.startsWith("Hello") && message.targetEventId === undefined).length, 1);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
@@ -1549,7 +1549,7 @@ void test("live activity rolls over after ten events, archives at agent text, an
   await bridge.stop();
 });
 
-void test("agent text ends a batch without collapsing the latest activity until newer activity arrives", async () => {
+void test("agent text collapses the latest activity after its first expanded send", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -1564,16 +1564,17 @@ void test("agent text ends a batch without collapsing the latest activity until 
   }
   acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "Answer" });
   await waitFor(() => matrix.html.some((message) => message.body === "Answer") &&
-    matrix.html.some((message) => message.formattedBody.includes("Past agent events (10)")));
+    matrix.html.some((message) => message.formattedBody.includes("Past agent events (10)")) &&
+    matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")));
   const latest = matrix.html.filter((message) => message.body.includes("thought 10"));
-  assert.ok(latest.length > 0);
-  assert.equal(latest.some((message) => message.formattedBody.includes("Past agent events (1)")), false);
+  assert.ok(latest.length >= 2);
   assert.equal(latest.some((message) => message.targetEventId === undefined &&
     !message.formattedBody.includes("Past agent events")), true);
+  assert.match(latest.at(-1)?.formattedBody ?? "", /Past agent events \(1\)/);
 
   acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "next", text: "newest" });
-  await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")));
-  assert.equal(matrix.html.at(-1)?.formattedBody.includes("Past agent events (1)"), false);
+  await waitFor(() => matrix.html.some((message) => message.body.includes("newest")));
+  assert.equal(matrix.html.at(-1)?.formattedBody.includes("Past agent events"), false);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(300);
