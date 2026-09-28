@@ -401,6 +401,8 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
 
 ACP reports pi-acp's MCP dispatcher as `kind: "other"` with `title: "mcp"`. A search call's `rawInput.search` holds the query; its completed result may be a plain-text list of available tools, not individual tool-call events. Show `MCP(search)` for that call. A schema lookup sends `rawInput.describe` with the named tool and displays `MCP(toolname)`. pi-acp can also report per-server tool calls with titles such as `mcp__example` and `rawInput: { "tool": "list", "args": {} }`; show `MCP(example/list)`. For other calls, show a recognizable name from bounded `rawInput` (`tool`, `toolName`, `name`, or a `call` object); otherwise show `MCP` or the known server name. Do not infer a called tool from search-result text or display arbitrary arguments as a tool name. Keep the same status styling, result preview and expanded cap as other tools.
 
+Pi's MCP scripting tool arrives as `kind: "other"`, `title: "mcpScript"`, and `rawInput.code` containing JavaScript. Show `MCP Script(<abbreviated single-line source>)` as a status-colored clickable summary; put bounded, escaped source in its `<pre><code>` detail (at most 2 KiB, or less to fit the Matrix message budget), even if there is no result yet. Include the source in the plain-text fallback. On updates, retain the same code alongside the bounded result; do not mistake `rawOutput` for new source or publish full uncapped input.
+
 #### Terminal execution
 
 Show `Execute(title)` with the same status rail and tinted background. In the observed pi-acp call, `title` was the command, but ACP only promises a human-readable title. The initial ACP `content` contained a terminal reference. pi-acp then sent output in `_meta.terminal_output.data` while `in_progress` and exit information in `_meta.terminal_exit` when `completed`. These `_meta` keys are pi-acp extensions.
@@ -435,6 +437,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 ## Verification
 
 - Streamed agent messages use the same Markdown HTML conversion as regular replies on initial send, subsequent edits, and completion; their plain-text body preserves the original Markdown, and raw HTML stays escaped.
+- `mcpScript` displays its bounded, escaped `rawInput.code` in a clickable title and plain-text fallback on the initial send and subsequent result edits.
 - A text thought chunk followed by `"\n\n"` and another paragraph appears as one live thought event, counts once, and renders separate unbolded 💭 paragraphs rather than a run-on line.
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.

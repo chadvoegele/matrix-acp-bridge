@@ -31,6 +31,7 @@ export interface AcpToolActivity {
   path?: string;
   isWrite: boolean;
   mcpOperation?: string;
+  script?: BoundedText;
   content?: readonly AcpToolContent[];
   contentCut: boolean;
   rawFallback: BoundedText | undefined;
@@ -305,6 +306,10 @@ export class AcpActivityModel {
         "content" in update.rawInput && typeof update.rawInput.content === "string") event.isWrite = true;
       const operation = mcpOperation(update.rawInput);
       if (operation !== undefined) event.mcpOperation = operation;
+      if (event.title === "mcpScript") {
+        const script = stringProperty(update.rawInput, "code");
+        if (script !== undefined) event.script = takeBytes(clean(script), ACTIVITY_RESULT_DETAIL_BYTES);
+      }
     }
     if (update.locations?.[0]?.path && !event.path) event.path = takeBytes(clean(update.locations[0].path), 1024).text;
     if (update.content !== undefined) {
@@ -349,21 +354,25 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     }
   }
   const fullTitle = toolTitle(event);
-  const command = toolName(event) === "Execute" ? clean(event.title ?? "") : fullTitle;
-  const commandCharacters = [...command];
+  const isScript = event.title === "mcpScript" && event.script !== undefined;
+  const command = isScript ? event.script!.text : (toolName(event) === "Execute" ? clean(event.title ?? "") : fullTitle);
+  const previewSource = isScript ? command.replaceAll(/\s+/gu, " ").trim() : command;
+  const commandCharacters = [...previewSource];
   const previewCommand = commandCharacters.length > ACTIVITY_TITLE_PREVIEW_CHARACTERS
-    ? `${commandCharacters.slice(0, ACTIVITY_TITLE_PREVIEW_CHARACTERS - 1).join("")}…` : command;
-  const title = toolName(event) === "Execute" ? `Execute(${previewCommand})` : previewCommand;
-  const titleDetail = takeBytes(command, ACTIVITY_TITLE_DETAIL_BYTES);
-  const titleCut = titleDetail.cut;
+    ? `${commandCharacters.slice(0, ACTIVITY_TITLE_PREVIEW_CHARACTERS - 1).join("")}…` : previewSource;
+  const title = isScript ? `MCP Script(${previewCommand})`
+    : (toolName(event) === "Execute" ? `Execute(${previewCommand})` : previewCommand);
+  const titleDetail = takeBytes(command, Math.min(ACTIVITY_TITLE_DETAIL_BYTES, Math.max(128, Math.floor(maxHtmlBytes / 3))));
+  const titleCut = titleDetail.cut || (isScript && event.script!.cut);
   const palette = statusPalette(event.status);
   const titleSummary = `${title}${titleCut ? " (truncated)" : ""}`;
-  const titleHtml = previewCommand === command
-    ? `<p>${titleMarkup(titleSummary, event.status)}</p>`
-    : `<details><summary>${titleMarkup(titleSummary, event.status)}</summary>${code([{ text: titleDetail.text }])}</details>`;
+  const titleHtml = isScript || previewCommand !== command
+    ? `<details><summary>${titleMarkup(titleSummary, event.status)}</summary>${code([{ text: titleDetail.text }])}</details>`
+    : `<p>${titleMarkup(titleSummary, event.status)}</p>`;
+  const scriptBody = isScript ? `\nScript:\n${titleDetail.text}${titleCut ? " (truncated)" : ""}` : "";
   const output = resultFromContent(event);
   if (!output || output.plain.length === 0) {
-    if (Buffer.byteLength(titleHtml, "utf8") <= maxHtmlBytes) return { body: `[${palette.label}] 🔧 ${titleSummary}`, formattedBody: titleHtml };
+    if (Buffer.byteLength(titleHtml, "utf8") <= maxHtmlBytes) return { body: `[${palette.label}] 🔧 ${titleSummary}${scriptBody}`, formattedBody: titleHtml };
     return compactTool(titleSummary, palette.label, maxHtmlBytes);
   }
   let detailBytes = ACTIVITY_RESULT_DETAIL_BYTES;
@@ -380,7 +389,7 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     const preview = { segments: linePreview.segments, cut: bytePreview.cut || linePreview.cut };
     const truncated = output.cut || detail.cut;
     const detailDiffers = preview.cut || truncated;
-    const body = `[${palette.label}] 🔧 ${titleSummary}\n${plain(preview.segments)}${truncated ? " (truncated)" : ""}`;
+    const body = `[${palette.label}] 🔧 ${titleSummary}${scriptBody}\n${plain(preview.segments)}${truncated ? " (truncated)" : ""}`;
     const resultHtml = detailDiffers
       ? `<details><summary><code>${preview.segments.map((part) => part.color ? span(part.text, part.color) : html(part.text)).join("")}</code>${truncated ? " (truncated)" : ""}</summary>${code(detail.segments)}</details>`
       : code(detail.segments);

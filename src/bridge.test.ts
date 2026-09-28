@@ -1536,6 +1536,35 @@ void test("streamed agent text renders Markdown on the initial send, edits, and 
   await bridge.stop();
 });
 
+void test("live mcpScript activity includes its ACP code input on send and result edit", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  const completion = bridge.handleTimelineEvent(event("$script-live:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  const source = "return { probe: '<sample>', sum: 2 + 3 };";
+  acp.emit({ sessionId, kind: "tool_call", toolCallId: "script", title: "mcpScript", toolKind: "other",
+    status: "pending", rawInput: { code: source } });
+  await waitFor(() => matrix.html.length > 0);
+  assert.match(matrix.html[0]?.formattedBody ?? "", /MCP Script\(/);
+  assert.match(matrix.html[0]?.formattedBody ?? "", /<pre><code>return \{ probe: &#39;&lt;sample&gt;&#39;/);
+  assert.match(matrix.html[0]?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};/);
+  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "script", status: "completed",
+    content: [{ type: "content", text: "{\"probe\":\"done\"}" }] });
+  await waitFor(() => matrix.html.some((message) => message.body.includes("done")));
+  assert.match(matrix.html.at(-1)?.formattedBody ?? "", /<pre><code>return \{ probe: &#39;&lt;sample&gt;&#39;/);
+  assert.match(matrix.html.at(-1)?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};/);
+  resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+  await flush();
+  clock.advanceBy(30_000); // Tool-only turns drain at the cap, not the text quiet period.
+  await completion;
+  await bridge.stop();
+});
+
 void test("live activity rolls over after ten events, archives at agent text, and edits late tools", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();

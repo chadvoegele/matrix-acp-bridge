@@ -50,6 +50,30 @@ void test("one streamed thought retains paragraph breaks and unbolds heading-lik
     "<p>💭 First heading</p>\n<p>💭 Second &lt;heading&gt;</p>");
 });
 
+void test("mcpScript shows bounded source like an Execute command alongside its result", () => {
+  const model = new AcpActivityModel();
+  const source = "const tag = '<sample>';\nreturn { answer: 5 };";
+  model.accept(tool({ title: "mcpScript", toolKind: "other", rawInput: { code: source } }));
+  const pending = renderAcpActivity(firstTool(model));
+  assert.match(pending.body, /MCP Script\(const tag = '<sample>'; return \{ answer: 5 \};\)/);
+  assert.match(pending.body, /Script:\nconst tag = '<sample>';\nreturn \{ answer: 5 \};/);
+  assert.match(pending.formattedBody, /<details><summary>.*MCP Script\(/);
+  assert.match(pending.formattedBody, /<pre><code>const tag = &#39;&lt;sample&gt;&#39;;&#10;return/);
+  model.accept(update({ status: "in_progress" }));
+  assert.match(renderAcpActivity(firstTool(model)).formattedBody, /#000000.*MCP Script\(/);
+  model.accept(update({ status: "completed", content: [{ type: "content", text: "{\"answer\":5}" }] }));
+  const completed = renderAcpActivity(firstTool(model));
+  assert.match(completed.formattedBody, /<pre><code>const tag = &#39;&lt;sample&gt;&#39;;&#10;return/);
+  assert.match(completed.formattedBody, /<pre><code>\{&quot;answer&quot;:5\}<\/code><\/pre>/);
+  assert.match(completed.body, /Script:\nconst tag = '<sample>';\nreturn \{ answer: 5 \};\n\{"answer":5\}/);
+
+  const long = new AcpActivityModel();
+  long.accept(tool({ title: "mcpScript", toolKind: "other", rawInput: { code: "return 'x';\n".repeat(1000) } }));
+  const bounded = renderAcpActivity(firstTool(long), 4096);
+  assert.match(bounded.body, /MCP Script\(.*\(truncated\)/);
+  assert.ok(Buffer.byteLength(bounded.formattedBody, "utf8") <= 4096);
+});
+
 void test("read status progresses with one rail, content takes priority over rawOutput", () => {
   const model = new AcpActivityModel();
   model.accept(tool({ rawInput: { path: "/tmp/a" } }));
