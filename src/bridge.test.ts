@@ -1474,6 +1474,40 @@ void test("prunes removed-room mappings and keeps restored sessions isolated by 
   }
 });
 
+void test("streamed agent text renders Markdown on the initial send, edits, and final result", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  const completion = bridge.handleTimelineEvent(event("$markdown-live:example.org"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "markdown", text: "**Wild" });
+  await waitFor(() => matrix.html.length === 1);
+  assert.equal(matrix.html[0]?.body, "**Wild");
+  assert.equal(matrix.html[0]?.formattedBody, "<p>**Wild</p>");
+  const continuation = " Card**\n\n- One\n- Two\n\n[site](https://example.com) `code` <script>";
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "markdown", text: continuation });
+  await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("<strong>Wild Card</strong>")));
+  const latest = matrix.html.at(-1);
+  assert.equal(latest?.targetEventId, "$live-1:example.org");
+  assert.equal(latest?.body, `**Wild${continuation}`);
+  assert.match(latest?.formattedBody ?? "", /<ul>\s*<li>One<\/li>\s*<li>Two<\/li>\s*<\/ul>/);
+  assert.match(latest?.formattedBody ?? "", /<a href="https:\/\/example.com">site<\/a>/);
+  assert.match(latest?.formattedBody ?? "", /<code>code<\/code>/);
+  assert.match(latest?.formattedBody ?? "", /&lt;script&gt;/);
+  assert.doesNotMatch(latest?.formattedBody ?? "", /<script>/);
+  resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+  await flush();
+  clock.advanceBy(300);
+  await completion;
+  assert.equal(matrix.sent.length, 0);
+  assert.equal(matrix.html.at(-1)?.formattedBody, latest?.formattedBody);
+  await bridge.stop();
+});
+
 void test("live activity rolls over after ten events, archives at agent text, and edits late tools", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();

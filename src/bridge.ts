@@ -23,6 +23,7 @@ import {
   type NormalizedInboundEvent,
 } from "./authorization.js";
 import { InMemorySessionStore } from "./session-store.js";
+import { markdownToMatrixHtml } from "./matrix-markdown.js";
 import type { SessionStore } from "./session-store.js";
 import type {
   AcpClient,
@@ -347,9 +348,7 @@ function joinedGroups(groups: readonly TextGroup[]): string {
 }
 
 function renderLiveText(body: string): RenderedAcpActivity {
-  const escaped = body.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;").replaceAll("'", "&#39;").replaceAll("\n", "<br>");
-  return { body, formattedBody: `<p>${escaped}</p>` };
+  return { body, formattedBody: markdownToMatrixHtml(body) };
 }
 
 function liveContentBytes(rendered: RenderedAcpActivity): number {

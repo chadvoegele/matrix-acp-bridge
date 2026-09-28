@@ -223,7 +223,7 @@ In the example ACP trace, the following text is sent together at the end of the 
 I’ll create only the specified scratch file at its explicit /tmp path, verify its contents, then display it with the exact allowed cat -- command. No other files or commands will be touched.Completed: wrote, read, and displayed the specified scratch file.
 ```
 
-The first sentence is produced before the tool calls but currently displayed at the end. Send the first nonempty `agent_message_chunk` eagerly, then append subsequent chunks to that agent message as they arrive. `messageId` can identify a message but is optional; without it, group consecutive chunks and use tool/agent-message transitions to separate entries. A `"\n\n"` thought chunk is spacing, not another thought.
+The first sentence is produced before the tool calls but currently displayed at the end. Send the first nonempty `agent_message_chunk` eagerly, then append subsequent chunks to that agent message as they arrive. Render the complete text-so-far as Markdown on every send and edit, using the same safe converter as regular replies; keep the original Markdown in the plain-text `body`. Incomplete Markdown may initially show literal syntax, but a later chunk must re-render completed bold, lists, links, and code. Raw HTML must remain escaped. `messageId` can identify a message but is optional; without it, group consecutive chunks and use tool/agent-message transitions to separate entries. A `"\n\n"` thought chunk is spacing, not another thought.
 
 ### Progressive Disclosure via Collapsible Trees
 
@@ -427,6 +427,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 
 ## Verification
 
+- Streamed agent messages use the same Markdown HTML conversion as regular replies on initial send, subsequent edits, and completion; their plain-text body preserves the original Markdown, and raw HTML stays escaped.
 - A text thought chunk followed by `"\n\n"` appears as one live thought entry and counts once.
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
