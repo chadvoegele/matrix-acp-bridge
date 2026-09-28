@@ -91,6 +91,12 @@ const body = effective.map((content) => content.body).join("\n");
 assert(html.includes("Past agent events (1)</summary>"), "agent-message boundary did not archive opening thought");
 assert(html.includes("Past agent events (10)</summary>"), "ten-event rollover did not archive the prior batch");
 assert(html.includes("batch thought 11"), "eleventh event is missing");
+const newestOriginal = originals.find((event) => event.content?.body?.includes("batch thought 11"));
+assert(newestOriginal && !newestOriginal.content.formatted_body.includes("Past agent events"),
+  "eleventh event was first sent collapsed");
+assert(!edits.some((event) => event.content?.["m.relates_to"]?.event_id === newestOriginal.event_id &&
+  event.content?.["m.new_content"]?.formatted_body?.includes("Past agent events (1)")),
+"agent text collapsed the newest activity batch before newer activity arrived");
 assert(html.includes("<details>") && html.includes("<summary>") && html.includes("<pre><code>"),
   "activity disclosure or code blocks are missing");
 for (const value of ["#808080", "#000000", "#008000", "#C00000"]) {

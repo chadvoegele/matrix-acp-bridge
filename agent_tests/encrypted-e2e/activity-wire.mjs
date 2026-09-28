@@ -71,6 +71,9 @@ try {
     event.content?.formatted_body ?? "").join("\n");
   assert(html.includes("Past agent events (10)"), "encrypted activity ten-event rollover missing");
   assert(html.includes("READ_RESULT_ONCE"), "encrypted archived tool update missing");
+  assert(events.some((event) => event.content?.body?.includes("batch thought 11") &&
+    !event.content?.formatted_body?.includes("Past agent events")),
+  "encrypted eleventh event was first sent collapsed");
 } finally {
   clearTimeout(timer);
   await adapter.stop().catch(() => {});

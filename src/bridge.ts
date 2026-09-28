@@ -1779,8 +1779,8 @@ export class BridgeCoordinator {
       turn.messageOrder.push(messageId);
     }
     if (update.text.trim() && turn.currentBatch !== undefined) {
-      turn.currentBatch.archived = true;
-      this.#scheduleBatch(turn, turn.currentBatch);
+      // Agent text ends this batch, but the newest activity remains expanded
+      // until a newer batch takes its place.
       turn.currentBatch = undefined;
     }
     turn.activity.accept(update);
@@ -1852,6 +1852,11 @@ export class BridgeCoordinator {
       batch = undefined;
     }
     if (batch === undefined) {
+      const previous = turn.batches.at(-1);
+      if (previous !== undefined && !previous.archived) {
+        previous.archived = true;
+        this.#scheduleBatch(turn, previous);
+      }
       batch = { index: turn.batches.length, events: [], archived: false, revision: 0, pending: false, dirty: false };
       turn.batches.push(batch);
       turn.currentBatch = batch;
@@ -1881,11 +1886,18 @@ export class BridgeCoordinator {
     batch.dirty = true;
     if (batch.pending) return;
     batch.pending = true;
+    // Capture the first expanded view before queued sends or a later agent
+    // message can archive this batch. Otherwise its original event may arrive
+    // already collapsed, with no live version for the user to see.
+    const initial = batch.eventId === undefined
+      ? renderedActivityBatch(batch, this.#config.limits.maxMatrixMessageBytes) : undefined;
     this.#enqueueLive(turn, async () => {
       try {
+        let first = initial;
         while (batch.dirty && !turn.liveFailed) {
           batch.dirty = false;
-          const rendered = renderedActivityBatch(batch, this.#config.limits.maxMatrixMessageBytes);
+          const rendered = first ?? renderedActivityBatch(batch, this.#config.limits.maxMatrixMessageBytes);
+          first = undefined;
           if (liveContentBytes(rendered) > this.#config.limits.maxMatrixMessageBytes) {
             turn.liveFailed = true;
             this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
@@ -1894,6 +1906,10 @@ export class BridgeCoordinator {
           const id = await this.#deliverLive(turn, `activity-${batch.index}`, batch.revision++, rendered, batch.eventId);
           if (id === undefined) { turn.liveFailed = true; break; }
           batch.eventId = id;
+          if (rendered === initial) {
+            const current = renderedActivityBatch(batch, this.#config.limits.maxMatrixMessageBytes);
+            if (current.body !== rendered.body || current.formattedBody !== rendered.formattedBody) batch.dirty = true;
+          }
         }
       } finally { batch.pending = false; }
     });
