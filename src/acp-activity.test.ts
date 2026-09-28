@@ -90,6 +90,14 @@ void test("MCP search and named calls use ACP input rather than inventing a tool
   assert.doesNotMatch(renderedCall.body, /private/);
   assert.match(renderedCall.formattedBody, /MCP\(example_recall\)/);
 
+  const description = new AcpActivityModel();
+  description.accept(tool({ title: "mcp", toolKind: "other", rawInput: { describe: "example_recall" } }));
+  assert.match(renderAcpActivity(firstTool(description)).body, /MCP\(example_recall\)/);
+
+  const server = new AcpActivityModel();
+  server.accept(tool({ title: "mcp__example", toolKind: "other", rawInput: { tool: "list", args: {} } }));
+  assert.match(renderAcpActivity(firstTool(server)).body, /MCP\(example\/list\)/);
+
   const unknown = new AcpActivityModel();
   unknown.accept(tool({ title: "mcp", toolKind: "other", rawInput: { call: { arguments: { query: "private" } } } }));
   assert.match(renderAcpActivity(firstTool(unknown)).body, /🔧 MCP$/);

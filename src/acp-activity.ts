@@ -102,7 +102,7 @@ function mcpOperation(value: AcpToolCallUpdate["rawInput"]): string | undefined 
   if (!isRecord(value)) return undefined;
   const nested = value.call;
   const candidate = typeof nested === "string" ? nested
-    : stringProperty(nested, "tool", "toolName", "name") ?? stringProperty(value, "tool", "toolName", "name");
+    : stringProperty(nested, "tool", "toolName", "name") ?? stringProperty(value, "tool", "toolName", "name", "describe");
   if (candidate !== undefined && /^[\w.\-/:]{1,128}$/u.test(candidate)) return candidate;
   return typeof value.search === "string" ? "search" : undefined;
 }
@@ -111,7 +111,7 @@ function inputPath(value: AcpToolCallUpdate["rawInput"]): string | undefined {
   return undefined;
 }
 function toolName(tool: AcpToolActivity): string {
-  if (tool.title?.toLowerCase() === "mcp") return "MCP";
+  if (tool.title?.toLowerCase() === "mcp" || /^mcp__[\w-]+$/iu.test(tool.title ?? "")) return "MCP";
   if (tool.toolKind === "execute") return "Execute";
   if (tool.toolKind === "read") return "Read";
   if (tool.toolKind === "edit") {
@@ -123,7 +123,12 @@ function toolName(tool: AcpToolActivity): string {
 function toolTitle(tool: AcpToolActivity): string {
   const name = toolName(tool);
   const path = tool.path ?? tool.content?.find((item) => item.type === "diff")?.path;
-  if (name === "MCP") return tool.mcpOperation ? `MCP(${tool.mcpOperation})` : "MCP";
+  if (name === "MCP") {
+    const server = /^mcp__([\w-]+)$/iu.exec(tool.title ?? "")?.[1];
+    if (server && tool.mcpOperation) return `MCP(${server}/${tool.mcpOperation})`;
+    if (tool.mcpOperation) return `MCP(${tool.mcpOperation})`;
+    return server ? `MCP(${server})` : "MCP";
+  }
   const argument = name === "Execute" || name === "Tool" ? tool.title : path;
   return `${name}(${clean(argument ?? "")})`;
 }

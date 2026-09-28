@@ -392,7 +392,7 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
 
 #### MCP and other tools
 
-ACP reports pi-acp's MCP dispatcher as `kind: "other"` with `title: "mcp"`. A search call's `rawInput.search` holds the query; its completed result may be a plain-text list of available tools, not individual tool-call events. Show `MCP(search)` for that call. If an invocation's bounded `rawInput` contains a recognizable tool name (`tool`, `toolName`, `name`, or a `call` object with one of those fields), show `MCP(toolname)`; otherwise show `MCP`. Do not infer a called tool from its search-result text or display arbitrary arguments as a tool name. Keep the same status styling, result preview and expanded cap as other tools.
+ACP reports pi-acp's MCP dispatcher as `kind: "other"` with `title: "mcp"`. A search call's `rawInput.search` holds the query; its completed result may be a plain-text list of available tools, not individual tool-call events. Show `MCP(search)` for that call. A schema lookup sends `rawInput.describe` with the named tool and displays `MCP(toolname)`. pi-acp can also report per-server tool calls with titles such as `mcp__example` and `rawInput: { "tool": "list", "args": {} }`; show `MCP(example/list)`. For other calls, show a recognizable name from bounded `rawInput` (`tool`, `toolName`, `name`, or a `call` object); otherwise show `MCP` or the known server name. Do not infer a called tool from search-result text or display arbitrary arguments as a tool name. Keep the same status styling, result preview and expanded cap as other tools.
 
 #### Terminal execution
 
