@@ -63,6 +63,12 @@ try {
   assert(types.every((type) => type === "m.room.encrypted"), "activity leaked as plaintext wire event");
   const edits = events.filter((event) => event.content?.["m.relates_to"]?.rel_type === "m.replace");
   assert(edits.length > 0, "encrypted activity had no decrypted edit events");
+  const textOriginals = events.filter((event) => event.content?.["m.relates_to"]?.rel_type !== "m.replace" &&
+    (event.content?.body === "I will show activity before the tools." || event.content?.body === finalText));
+  assert.equal(textOriginals.length, 2, "encrypted agent messages were not sent once each");
+  const textIds = new Set(textOriginals.map((event) => event.eventId));
+  assert(edits.every((event) => !textIds.has(event.content?.["m.relates_to"]?.event_id)),
+    "encrypted agent text was edited");
   for (const event of edits) {
     assert.equal(event.content.body, `* ${event.content["m.new_content"].body}`);
     assert.equal(event.content.formatted_body, event.content["m.new_content"].formatted_body);

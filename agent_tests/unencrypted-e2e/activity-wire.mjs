@@ -63,6 +63,15 @@ const edits = raw.filter((event) => event.content?.["m.relates_to"]?.rel_type ==
 const originalIds = new Set(originals.map((event) => event.event_id));
 assert.equal(originals.length, 5, "expected opening, two activity batches, and two eager agent messages");
 assert(edits.length > 0, "activity produced no m.replace wire edits");
+const textOriginals = originals.filter((event) => event.content?.body === "I will show activity before the tools." ||
+  event.content?.body === finalText);
+assert.equal(textOriginals.length, 2, "one send per complete agent message");
+const textIds = new Set(textOriginals.map((event) => event.event_id));
+assert(edits.every((event) => !textIds.has(event.content?.["m.relates_to"]?.event_id)),
+  "agent text was edited on the wire");
+assert(originals.findIndex((event) => event.event_id === textOriginals[0].event_id) <
+  originals.findIndex((event) => event.content?.body?.includes("Read(/tmp/activity-example.txt)")),
+"boundary text was not sent before tool activity");
 
 for (const event of [...originals, ...edits]) {
   assert.equal(event.type, "m.room.message");
