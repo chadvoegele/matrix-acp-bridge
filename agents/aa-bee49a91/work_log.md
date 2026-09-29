@@ -1,0 +1,6 @@
+# Work log — aa-bee49a91
+
+- 2026-09-29: Read ticket, developer role, specification, bridge implementation, unit tests, and scripted wire tests. Confirmed the isolated worktree was clean, fetched the current `feat/verbose-acp-output` head, and reset only this agent worktree to it. Marked ticket in progress.
+- Replaced per-chunk agent-text sends and edits with immutable sends when a tool, nonempty thought, distinct message ID, or completed turn closes a message. Kept serialized activity edits and collapse behavior. Added serialized-size-aware text continuation sends and a fallback for any undelivered text; retained completion/status behavior without duplicating already sent text.
+- Revised the specification and bridge tests for boundary timing, completed Markdown, thought spacing, late chunks, retry transaction IDs, timeout handling, and long Unicode continuations. Updated plaintext and encrypted scripted wire assertions to reject agent-text edits. Live provisioning tests were not run because they require external provisioning; their wire assertions were updated.
+- `npm run check` passed with 261 tests before the final small refinements. `waap check` passed. GitHub CLI has no authenticated session, so the PR description could not be updated through `gh`.
