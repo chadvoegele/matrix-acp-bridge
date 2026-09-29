@@ -1,7 +1,7 @@
 +++
 name = "Send agent messages at tool and thought boundaries"
 creation_date = 2026-09-29T00:49:44Z
-status = "in-progress"
+status = "completed"
 +++
 
 # Send completed agent messages at activity boundaries without text edits
