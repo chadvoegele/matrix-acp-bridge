@@ -393,7 +393,7 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     const resultHtml = detailDiffers
       ? `<details><summary><code>${preview.segments.map((part) => part.color ? span(part.text, part.color) : html(part.text)).join("")}</code>${truncated ? " (truncated)" : ""}</summary>${code(detail.segments)}</details>`
       : code(detail.segments);
-    const formattedBody = `${titleHtml}\n${resultHtml}`;
+    const formattedBody = `${titleHtml}\n<blockquote>${resultHtml}</blockquote>`;
     if (Buffer.byteLength(formattedBody, "utf8") <= maxHtmlBytes) return { body, formattedBody };
     if (detailBytes > previewBytes) detailBytes = Math.max(previewBytes, Math.floor(detailBytes / 2));
     else if (previewBytes > 16) previewBytes = Math.floor(previewBytes / 2);

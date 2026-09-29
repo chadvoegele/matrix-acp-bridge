@@ -1557,7 +1557,14 @@ void test("live mcpScript activity includes its ACP code input on send and resul
     content: [{ type: "content", text: "{\"probe\":\"done\"}" }] });
   await waitFor(() => matrix.html.some((message) => message.body.includes("done")));
   assert.match(matrix.html.at(-1)?.formattedBody ?? "", /<pre><code>return \{ probe: &#39;&lt;sample&gt;&#39;/);
+  assert.match(matrix.html.at(-1)?.formattedBody ?? "", /<\/details>\n<blockquote><pre><code>\{&quot;probe&quot;:&quot;done&quot;\}<\/code><\/pre><\/blockquote>$/);
   assert.match(matrix.html.at(-1)?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};/);
+  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "script", status: "completed",
+    content: [{ type: "content", text: "<result>\nline 2\nline 3\nline 4" }] });
+  await waitFor(() => matrix.html.some((message) => message.body.includes("line 3")));
+  const longResult = matrix.html.at(-1);
+  assert.match(longResult?.formattedBody ?? "", /<\/details>\n<blockquote><details><summary><code>&lt;result&gt;&#10;line 2&#10;line 3<\/code><\/summary><pre><code>&lt;result&gt;&#10;line 2&#10;line 3&#10;line 4<\/code><\/pre><\/details><\/blockquote>$/);
+  assert.match(longResult?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};\n<result>\nline 2\nline 3$/);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(30_000); // Tool-only turns drain at the cap, not the text quiet period.
@@ -1591,6 +1598,7 @@ void test("live activity rolls over after ten events, archives at agent text, an
     matrix.html.some((message) => message.formattedBody.includes("result")));
   const firstBatch = matrix.html.filter((message) => message.formattedBody.includes("Past agent events (10)"));
   assert.equal(firstBatch.at(-1)?.targetEventId, firstBatch[0]?.targetEventId);
+  assert.match(firstBatch.at(-1)?.formattedBody ?? "", /<blockquote><pre><code>result<\/code><\/pre><\/blockquote>/);
   assert.equal(matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")), true);
   assert.equal(matrix.html.some((message) => message.body.includes("eleventh") &&
     message.targetEventId === undefined && !message.formattedBody.includes("Past agent events")), true);

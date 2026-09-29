@@ -1,7 +1,7 @@
 +++
 status = "draft"
 created = 2026-09-24
-last_update = 2026-09-27
+last_update = 2026-09-29
 +++
 
 # Verbose ACP output in Matrix
@@ -278,11 +278,13 @@ These are initial limits, measured on the unescaped source text before HTML form
 
 Show short results directly. For a longer result, put the abbreviated output itself in a closed `<details>` element's `<summary>`; expanding it reveals the detailed `<pre><code>` output. For terminal commands over 160 characters, make the abbreviated status-tinted title its own clickable `<summary>` with the command in `<pre><code>` beneath it. If the source exceeds a detailed-view cap, append ` (truncated)` to that summary. The plain-text `body` contains the previews and any truncation notices, not hidden detailed content.
 
+Indent the entire tool result beneath its title with `<blockquote>`. A short result uses `<blockquote><pre><code>…</code></pre></blockquote>`; a long result places both its preview `<summary><code>` and expanded `<pre><code>` inside `<blockquote><details>…</details></blockquote>`. The quote bar is outside the code, never literal output. Keep the tool title and any command or `mcpScript` source disclosure outside the result quote. Do not add a `Result · completed` label or connector line; the title rail and plain-text fallback carry status. Budget the blockquote tags with the rest of the encoded Matrix event.
+
 Read, write, edit, and other tool previews and details start at the beginning of their result. For terminal output, show the most recent 256 UTF-8 bytes or 3 lines, whichever comes first, in the visible summary. When it exceeds 8 KiB, keep the first 6 KiB and last 2 KiB in the expanded view, separated by a blank line; otherwise show all of it. Bound streaming accumulation, avoid splitting UTF-8 characters, and keep old/new edit text identifiable. If ten events exceed the Matrix event-size limit after HTML escaping, roll over early; if one event alone is too large, further shorten its detailed view and mark its summary as truncated.
 
 ```html
 <details><summary><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(python3 -c '…') (truncated)</span></span></summary><pre><code>python3 -c 'print("alpha")'</code></pre></details>
-<details><summary><code>recent output…</code> (truncated)</summary><pre><code>first output&#10;&#10;recent output</code></pre></details>
+<blockquote><details><summary><code>recent output…</code> (truncated)</summary><pre><code>first output&#10;&#10;recent output</code></pre></details></blockquote>
 ```
 
 ## Event Rendering
@@ -327,14 +329,14 @@ For reads, use `Read(path)` as the title.
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
+   <blockquote><pre><code>alpha&#10;beta&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   <pre><code>Permission denied</code></pre>
+   <blockquote><pre><code>Permission denied</code></pre></blockquote>
    ```
 
 #### Writes
@@ -357,14 +359,14 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">alpha</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">beta</span>&#10;</code></pre>
+   <blockquote><pre><code><span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">alpha</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">beta</span>&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code>Permission denied</code></pre>
+   <blockquote><pre><code>Permission denied</code></pre></blockquote>
    ```
 
 #### Edits
@@ -387,14 +389,14 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#C00000">-</span><span data-mx-color="#000000">1 </span><span data-mx-color="#C00000">2</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">2 </span><span data-mx-color="#C00000">3</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">3 </span><span data-mx-color="#C00000">5</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">4 </span><span data-mx-color="#C00000">7</span>&#10;&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">2</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">3</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">3 </span><span data-mx-color="#008000">5</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">4 </span><span data-mx-color="#008000">11</span>&#10;</code></pre>
+   <blockquote><pre><code><span data-mx-color="#C00000">-</span><span data-mx-color="#000000">1 </span><span data-mx-color="#C00000">2</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">2 </span><span data-mx-color="#C00000">3</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">3 </span><span data-mx-color="#C00000">5</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">4 </span><span data-mx-color="#C00000">7</span>&#10;&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">2</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">3</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">3 </span><span data-mx-color="#008000">5</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">4 </span><span data-mx-color="#008000">11</span>&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
-   <pre><code>Could not apply edit</code></pre>
+   <blockquote><pre><code>Could not apply edit</code></pre></blockquote>
    ```
 
 #### MCP and other tools
@@ -417,21 +419,21 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 
    ```html
    <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
+   <blockquote><pre><code>alpha&#10;beta&#10;</code></pre></blockquote>
    ```
 
 3. **Completed successfully — green (`#008000`), retaining the output:**
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
+   <blockquote><pre><code>alpha&#10;beta&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with illustrative output if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
-   <pre><code>Command exited with code 1</code></pre>
+   <blockquote><pre><code>Command exited with code 1</code></pre></blockquote>
    ```
 
 ## Verification
@@ -442,10 +444,10 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
-- One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
+- One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate indented code block without a rail, and the plain-text fallback includes the status.
 - Write and edit use the same status progression. A new-file write displays only its returned `newText` with green `+` prefixes; an edit colors the returned `oldText` red with `-` prefixes and `newText` green with `+` prefixes, without labels or synthesized hunk headers. When the result contains full-file text, count its lines into a gutter after the sign and before the text; leave the title unchanged and do not treat optional `locations[].line` as a hunk offset. The plain-text fallback retains the text and line numbers in order.
 - A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
-- Short tool results and commands stay visible. For long results, the abbreviated output is the clickable `<summary>` revealing a detailed view capped at 8 KiB. For long terminal titles, the abbreviated status-tinted `Execute(…)` is a separate clickable `<summary>` revealing command text capped at 2 KiB. A ` (truncated)` suffix appears on either summary only if the source exceeded its expanded-content cap; the plain-text fallback also notes truncation.
+- Short tool results and commands stay visible. The entire short result code block, or both the long result's clickable preview and its expanded detail, sit inside `<blockquote>` beneath the tool title. The quote bar stays outside the code, with no result-status label or connector line. For long results, the abbreviated output is the clickable `<summary>` revealing a detailed view capped at 8 KiB. For long terminal titles, the abbreviated status-tinted `Execute(…)` is a separate clickable `<summary>` revealing command text capped at 2 KiB. A ` (truncated)` suffix appears on either summary only if the source exceeded its expanded-content cap; the plain-text fallback also notes truncation.
 - Streaming terminal output preserves a recent visible tail and a bounded head-and-tail detail; older output does not grow bridge memory or Matrix event size without limit. An oversized encoded event shrinks details before its preview while keeping truncation explicit.
 - With the default batch size, events 1–10 appear expanded until event 11 collapses that message and starts a new expanded one; event 21 does the same to events 11–20. The first nonempty agent-message chunk collapses every remaining live batch. No batch is first sent collapsed. Tool updates do not count as additional events; a late update edits its archived batch rather than losing the result. Oversized batches roll over early.
 

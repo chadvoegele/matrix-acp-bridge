@@ -1463,6 +1463,20 @@ void test("sends escaped HTML and edits the returned event with stable transacti
   });
 });
 
+void test("Matrix HTML wire content preserves an indented result disclosure on send and edit", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const formattedBody = matrixHtml`<p>🔧 Read(file)</p><blockquote><details><summary><code>first</code></summary><pre><code>first&#10;second</code></pre></details></blockquote>`;
+  const message = { roomId: ROOM_ID, transactionId: "result-send", body: "[completed] 🔧 Read(file)\nfirst", formattedBody };
+  const eventId = await adapter.sendHtmlMessage(message);
+  await adapter.sendHtmlMessage({ ...message, transactionId: "result-edit", targetEventId: eventId });
+  assert.equal(fake.sent[0]?.content.formatted_body, formattedBody);
+  assert.equal(fake.sent[1]?.content.formatted_body, formattedBody);
+  assert.deepEqual(fake.sent[1]?.content["m.new_content"], {
+    msgtype: "m.text", body: message.body, format: "org.matrix.custom.html", formatted_body: formattedBody,
+  });
+});
+
 void test("HTML sends enforce configured rooms and required encryption", async () => {
   const fake = readyClient();
   const adapter = adapterFor(fake);

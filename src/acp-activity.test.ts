@@ -64,7 +64,7 @@ void test("mcpScript shows bounded source like an Execute command alongside its 
   model.accept(update({ status: "completed", content: [{ type: "content", text: "{\"answer\":5}" }] }));
   const completed = renderAcpActivity(firstTool(model));
   assert.match(completed.formattedBody, /<pre><code>const tag = &#39;&lt;sample&gt;&#39;;&#10;return/);
-  assert.match(completed.formattedBody, /<pre><code>\{&quot;answer&quot;:5\}<\/code><\/pre>/);
+  assert.match(completed.formattedBody, /<\/details>\n<blockquote><pre><code>\{&quot;answer&quot;:5\}<\/code><\/pre><\/blockquote>$/);
   assert.match(completed.body, /Script:\nconst tag = '<sample>';\nreturn \{ answer: 5 \};\n\{"answer":5\}/);
 
   const long = new AcpActivityModel();
@@ -72,6 +72,35 @@ void test("mcpScript shows bounded source like an Execute command alongside its 
   const bounded = renderAcpActivity(firstTool(long), 4096);
   assert.match(bounded.body, /MCP Script\(.*\(truncated\)/);
   assert.ok(Buffer.byteLength(bounded.formattedBody, "utf8") <= 4096);
+});
+
+void test("short and long tool results indent the entire result outside escaped code", () => {
+  const model = new AcpActivityModel();
+  model.accept(tool({ rawInput: { path: "/tmp/example" } }));
+  model.accept(update({ status: "completed", content: [{ type: "content", text: "<&\nsecond" }] }));
+  const short = renderAcpActivity(firstTool(model));
+  assert.match(short.formattedBody, /Read\(\/tmp\/example\).*<\/p>\n<blockquote><pre><code>&lt;&amp;&#10;second<\/code><\/pre><\/blockquote>$/s);
+  assert.equal(short.body, "[completed] 🔧 Read(/tmp/example)\n<&\nsecond");
+  assert.doesNotMatch(short.formattedBody, /Result · completed|→/);
+
+  model.accept(update({ content: [{ type: "content", text: "<&\nsecond\nthird\nfourth" }] }));
+  const long = renderAcpActivity(firstTool(model));
+  assert.match(long.formattedBody, /<\/p>\n<blockquote><details><summary><code>&lt;&amp;&#10;second&#10;third<\/code><\/summary><pre><code>&lt;&amp;&#10;second&#10;third&#10;fourth<\/code><\/pre><\/details><\/blockquote>$/);
+  assert.equal(long.body, "[completed] 🔧 Read(/tmp/example)\n<&\nsecond\nthird");
+  assert.doesNotMatch(long.formattedBody, /Result · completed|→/);
+});
+
+void test("mcpScript keeps source disclosure separate from an indented long result", () => {
+  const model = new AcpActivityModel();
+  model.accept(tool({ title: "mcpScript", toolKind: "other", rawInput: { code: "return '<source>';" } }));
+  model.accept(update({ status: "completed", content: [{ type: "content", text: "<result>\n2\n3\n4" }] }));
+  const rendered = renderAcpActivity(firstTool(model));
+  assert.match(rendered.formattedBody, /<details><summary>.*MCP Script\(return &#39;&lt;source&gt;&#39;;\).*<\/summary><pre><code>return &#39;&lt;source&gt;&#39;;<\/code><\/pre><\/details>\n<blockquote><details><summary><code>&lt;result&gt;&#10;2&#10;3<\/code><\/summary><pre><code>&lt;result&gt;&#10;2&#10;3&#10;4<\/code><\/pre><\/details><\/blockquote>$/s);
+  assert.equal(rendered.body, "[completed] 🔧 MCP Script(return '<source>';)\nScript:\nreturn '<source>';\n<result>\n2\n3");
+  const budgeted = renderAcpActivity(firstTool(model), 512);
+  assert.ok(Buffer.byteLength(budgeted.formattedBody, "utf8") <= 512);
+  assert.match(budgeted.formattedBody, /<blockquote><details>/);
+  assert.match(budgeted.body, /Script:\nreturn '<source>';\n<result>/);
 });
 
 void test("read status progresses with one rail, content takes priority over rawOutput", () => {
