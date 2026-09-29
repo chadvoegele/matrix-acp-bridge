@@ -1,7 +1,7 @@
 +++
 name = "Address PR 11 review and validate all activity tests"
 creation_date = 2026-09-29T13:35:57Z
-status = "pending"
+status = "in-progress"
 +++
 
 Implement fixes on PR #11 (feat/verbose-acp-output) for the review at https://github.com/chadvoegele/matrix-acp-bridge/pull/11#issuecomment-5891372367.
