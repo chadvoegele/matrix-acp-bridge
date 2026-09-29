@@ -6,6 +6,7 @@ import {
   type AcpClient,
   type AcpToolCallUpdate,
 } from "./acp-client.js";
+import { AcpActivityModel, renderAcpActivity } from "./acp-activity.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 
 const CWD = "/srv/agent-workspace";
@@ -473,6 +474,53 @@ void test("preserves bounded thought and tool activity with optional fields and 
     terminalOutput: { terminalId: "terminal-1", data: "ok" },
     terminalExit: { terminalId: "terminal-1", exitCode: 0, signal: null },
   });
+  await client.close();
+});
+
+void test("client activity remains Unicode-safe and visibly truncated through rendering", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const client = newClient(input, output);
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const model = new AcpActivityModel();
+  client.onUpdate((update) => model.accept(update));
+  const prompt = client.prompt(sessionId, "hello", {
+    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+  });
+  const frame = await output.nextFrame();
+  const push = (update: unknown) => input.push(rpcNotification("session/update", { sessionId, update }));
+  push({ sessionUpdate: "agent_thought_chunk", messageId: "thought",
+    content: { type: "text", text: `${"a".repeat(8190)}😀tail` } });
+  push({ sessionUpdate: "agent_thought_chunk", messageId: "thought",
+    content: { type: "text", text: "later thought" } });
+  push({ sessionUpdate: "tool_call", toolCallId: "tool", title: "read", kind: "read" });
+  push({ sessionUpdate: "tool_call_update", toolCallId: "tool", status: "completed",
+    content: [{ type: "content", content: { type: "text", text: `${"b".repeat(8190)}😀tail` } }] });
+  push({ sessionUpdate: "tool_call", toolCallId: "many", title: "read", kind: "read" });
+  push({ sessionUpdate: "tool_call_update", toolCallId: "many", status: "completed",
+    content: Array.from({ length: 33 }, (_, index) => ({ type: "content",
+      content: { type: "text", text: String(index) } })) });
+  input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+  await prompt;
+  assert.equal(model.events.length, 3);
+  const [thought, tool, many] = model.events;
+  assert.ok(thought && tool && many);
+  for (const event of [thought, tool, many]) {
+    const rendered = renderAcpActivity(event);
+    assert.match(rendered.body, /\(truncated\)/u);
+    assert.match(rendered.formattedBody, /\(truncated\)/u);
+    assert.doesNotMatch(rendered.body, /�/u);
+  }
+  assert.equal(thought.type, "thought");
+  assert.equal(tool.type, "tool");
+  assert.equal(many.type, "tool");
+  if (thought.type === "thought") {
+    assert.equal(Buffer.byteLength(thought.text, "utf8"), 8192);
+    assert.ok(thought.text.startsWith("a".repeat(8190)));
+  }
+  if (tool.type === "tool") assert.equal(tool.content?.[0]?.type === "content" && tool.content[0].text, "b".repeat(8190));
+  if (many.type === "tool") assert.equal(many.contentCut, true);
   await client.close();
 });
 

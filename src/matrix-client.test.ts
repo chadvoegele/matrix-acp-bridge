@@ -1456,7 +1456,7 @@ void test("sends escaped HTML and edits the returned event with stable transacti
   assert.deepEqual(fake.sent.slice(1).map((send) => send.transactionId), ["html-edit", "html-edit"]);
   assert.deepEqual(fake.sent[2]?.content, {
     msgtype: "m.text", body: "* updated", format: "org.matrix.custom.html",
-    formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
+    formatted_body: "* <p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
     "m.new_content": { msgtype: "m.text", body: "updated", format: "org.matrix.custom.html",
       formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>" },
     "m.relates_to": { rel_type: "m.replace", event_id: eventId },
@@ -1471,7 +1471,7 @@ void test("Matrix HTML wire content preserves an indented result disclosure on s
   const eventId = await adapter.sendHtmlMessage(message);
   await adapter.sendHtmlMessage({ ...message, transactionId: "result-edit", targetEventId: eventId });
   assert.equal(fake.sent[0]?.content.formatted_body, formattedBody);
-  assert.equal(fake.sent[1]?.content.formatted_body, formattedBody);
+  assert.equal(fake.sent[1]?.content.formatted_body, `* ${formattedBody}`);
   assert.deepEqual(fake.sent[1]?.content["m.new_content"], {
     msgtype: "m.text", body: message.body, format: "org.matrix.custom.html", formatted_body: formattedBody,
   });

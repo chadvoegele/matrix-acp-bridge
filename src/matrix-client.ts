@@ -1593,6 +1593,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     const content = message.targetEventId === undefined ? newContent : {
       ...newContent,
       body: `* ${message.body}`,
+      formatted_body: `* ${message.formattedBody}`,
       "m.new_content": newContent,
       "m.relates_to": { rel_type: "m.replace", event_id: message.targetEventId },
     };

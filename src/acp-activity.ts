@@ -1,5 +1,6 @@
 import type { AcpToolCallUpdate, AcpToolContent, AcpUpdate } from "./acp-client.js";
 import { isRecord, stringProperty } from "./object-validation.js";
+import { takeBytes } from "./bounded-text.js";
 
 export const ACTIVITY_RESULT_PREVIEW_BYTES = 256;
 export const ACTIVITY_RESULT_PREVIEW_LINES = 3;
@@ -21,6 +22,7 @@ export interface AcpThoughtActivity {
   readonly type: "thought";
   readonly messageId?: string;
   text: string;
+  cut: boolean;
 }
 export interface AcpToolActivity {
   readonly type: "tool";
@@ -45,21 +47,6 @@ export interface RenderedAcpActivity { readonly body: string; readonly formatted
 
 function clean(value: string): string {
   return value.replaceAll(ANSI_SEQUENCE, "").replaceAll(CONTROL_CHARACTER, "");
-}
-
-function takeBytes(value: string, limit: number, fromEnd = false): BoundedText {
-  if (Buffer.byteLength(value, "utf8") <= limit) return { text: value, cut: false };
-  let bytes = 0;
-  const characters: string[] = [];
-  const source = fromEnd ? [...value].reverse() : value;
-  for (const character of source) {
-    const size = Buffer.byteLength(character, "utf8");
-    if (bytes + size > limit) break;
-    characters.push(character);
-    bytes += size;
-  }
-  if (fromEnd) characters.reverse();
-  return { text: characters.join(""), cut: true };
 }
 
 function html(value: string): string {
@@ -276,12 +263,14 @@ export class AcpActivityModel {
       let event = update.messageId ? this.#thoughts.get(update.messageId) : this.#lastThought;
       if (!update.text.trim() && !event) return undefined;
       if (!event) {
-        event = { type: "thought", text: "", ...(update.messageId ? { messageId: update.messageId } : {}) };
+        event = { type: "thought", text: "", cut: false, ...(update.messageId ? { messageId: update.messageId } : {}) };
         this.events.push(event);
         if (update.messageId) this.#thoughts.set(update.messageId, event);
       }
       const capacity = ACTIVITY_RESULT_DETAIL_BYTES - Buffer.byteLength(event.text, "utf8");
-      event.text += takeBytes(clean(update.text), Math.max(0, capacity)).text;
+      const bounded = takeBytes(clean(update.text), Math.max(0, capacity));
+      event.text += bounded.text;
+      event.cut ||= bounded.cut || update.textCut === true;
       this.#lastThought = event;
       return event;
     }
@@ -316,7 +305,7 @@ export class AcpActivityModel {
       const bounded = boundedContent(update.content);
       if (bounded.content.length > 0) {
         event.content = bounded.content;
-        event.contentCut = bounded.cut;
+        event.contentCut = bounded.cut || update.contentCut === true;
       }
     }
     if (update.rawOutput !== undefined) event.rawFallback = rawFallback(update.rawOutput);
@@ -342,7 +331,7 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     for (;;) {
       const bounded = takeBytes(source, budget);
       const paragraphs = thoughtParagraphs(bounded.text);
-      const suffix = bounded.cut ? " (truncated)" : "";
+      const suffix = bounded.cut || event.cut ? " (truncated)" : "";
       const body = paragraphs.length > 0
         ? `${paragraphs.map((paragraph) => `💭 ${paragraph}`).join("\n\n")}${suffix}` : `💭${suffix}`;
       const formattedBody = paragraphs.length > 0

@@ -71,12 +71,17 @@ try {
     "encrypted agent text was edited");
   for (const event of edits) {
     assert.equal(event.content.body, `* ${event.content["m.new_content"].body}`);
-    assert.equal(event.content.formatted_body, event.content["m.new_content"].formatted_body);
+    assert.equal(event.content.formatted_body, `* ${event.content["m.new_content"].formatted_body}`);
   }
   const html = events.map((event) => event.content?.["m.new_content"]?.formatted_body ??
     event.content?.formatted_body ?? "").join("\n");
   assert(html.includes("Past agent events (10)"), "encrypted activity ten-event rollover missing");
   assert(html.includes("READ_RESULT_ONCE"), "encrypted archived tool update missing");
+  assert(edits.some((event) => events.some((original) => original.eventId ===
+    event.content?.["m.relates_to"]?.event_id && !original.content?.body?.includes("READ_RESULT_ONCE")) &&
+    event.content?.["m.new_content"]?.body?.includes("READ_RESULT_ONCE") &&
+    event.content?.["m.new_content"]?.formatted_body?.includes("Past agent events (10)")),
+  "encrypted archived read result was not delivered as an edit");
   const newestOriginal = events.find((event) => event.content?.body?.includes("batch thought 11") &&
     event.content?.["m.relates_to"]?.rel_type !== "m.replace" &&
     !event.content?.formatted_body?.includes("Past agent events"));

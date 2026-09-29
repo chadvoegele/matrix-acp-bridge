@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Optional pi-acp smoke test. Agent choices vary, so missing coverage is INCOMPLETE.
+// Optional pi-acp smoke test. A completed run requires every observation.
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
@@ -103,9 +103,8 @@ try {
   const missing = Object.entries(has).filter(([, present]) => !present).map(([key]) => key);
   await stopBridgePair(pair);
   pair = undefined;
-  process.stdout.write(missing.length === 0
-    ? "Real ACP activity metadata coverage passed.\n"
-    : `INCOMPLETE real ACP activity metadata: ${missing.join(", ")}\n`);
+  if (missing.length > 0) throw new Error(`INCOMPLETE real ACP activity metadata: ${missing.join(", ")}`);
+  process.stdout.write("Real ACP activity metadata coverage passed.\n");
 } finally {
   if (pair) {
     await stopBridgePair(pair).catch(() => {});

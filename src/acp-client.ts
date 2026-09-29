@@ -15,6 +15,7 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import { createCancellationController } from "./cancellation.js";
+import { takeBytes } from "./bounded-text.js";
 import { createStderrDiagnosticSink } from "./diagnostics.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
 import type { DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
@@ -50,6 +51,7 @@ export interface AcpAgentThoughtChunk {
   readonly sessionId: AcpSessionId;
   readonly kind: "agent_thought_chunk";
   readonly text: string;
+  readonly textCut?: boolean;
   readonly messageId?: AcpMessageId;
 }
 
@@ -69,6 +71,7 @@ export interface AcpToolCallUpdate {
   readonly toolKind?: string;
   readonly status?: string;
   readonly content?: readonly AcpToolContent[];
+  readonly contentCut?: boolean;
   readonly locations?: readonly { readonly path: string; readonly line?: number }[];
   readonly rawInput?: AcpToolInput;
   readonly rawOutput?: AcpToolInput;
@@ -563,7 +566,7 @@ function boundedTerminalData(value: string): { data: string; originalBytes?: num
 }
 
 function boundedString(value: unknown): string | undefined {
-  return typeof value === "string" ? value.slice(0, ACP_FIELD_LIMIT) : undefined;
+  return typeof value === "string" ? takeBytes(value, ACP_FIELD_LIMIT).text : undefined;
 }
 
 /** Copy JSON input within a shared budget; never retain the agent's raw object. */
@@ -572,8 +575,8 @@ function boundedInput(value: unknown): AcpToolInput | undefined {
   const copy = (item: unknown, depth: number): AcpToolInput | undefined => {
     if (remaining <= 0 || depth > 4) return undefined;
     if (typeof item === "string") {
-      const result = item.slice(0, remaining);
-      remaining -= result.length;
+      const result = takeBytes(item, remaining).text;
+      remaining -= Buffer.byteLength(result, "utf8");
       return result;
     }
     if (item === null || typeof item === "boolean") {
@@ -597,7 +600,7 @@ function boundedInput(value: unknown): AcpToolInput | undefined {
       for (const [key, entry] of Object.entries(item).slice(0, 32)) {
         if (remaining <= 0) break;
         const parsed = copy(entry, depth + 1);
-        if (parsed !== undefined) entries.push([key.slice(0, 128), parsed]);
+        if (parsed !== undefined) entries.push([takeBytes(key, 128).text, parsed]);
       }
       return Object.fromEntries(entries);
     }
@@ -606,35 +609,40 @@ function boundedInput(value: unknown): AcpToolInput | undefined {
   return copy(value, 0);
 }
 
-function toolContent(value: unknown): readonly AcpToolContent[] | undefined {
+function toolContent(value: unknown): { content: readonly AcpToolContent[]; cut: boolean } | undefined {
   if (!Array.isArray(value)) return undefined;
-  return value.slice(0, 32).flatMap((entry: unknown): AcpToolContent[] => {
+  let cut = value.length > 32;
+  const content = value.slice(0, 32).flatMap((entry: unknown): AcpToolContent[] => {
     if (!isRecord(entry)) return [];
     if (entry.type === "content" && isRecord(entry.content) && entry.content.type === "text") {
       const text = boundedString(entry.content.text);
+      if (typeof entry.content.text === "string") cut ||= takeBytes(entry.content.text, ACP_FIELD_LIMIT).cut;
       return text === undefined ? [] : [{ type: "content", text }];
     }
     if (entry.type === "diff" && typeof entry.path === "string") {
       const oldText = boundedString(entry.oldText);
       const newText = boundedString(entry.newText);
+      cut ||= [entry.path, entry.oldText, entry.newText].some((value) =>
+        typeof value === "string" && takeBytes(value, ACP_FIELD_LIMIT).cut);
       const oldField = entry.oldText === null ? { oldText: null } : (oldText === undefined ? {} : { oldText });
-      return [{ type: "diff", path: entry.path.slice(0, ACP_FIELD_LIMIT),
+      return [{ type: "diff", path: boundedString(entry.path)!,
         ...oldField,
         ...(newText === undefined ? {} : { newText }),
       }];
     }
     if (entry.type === "terminal" && typeof entry.terminalId === "string") {
-      return [{ type: "terminal", terminalId: entry.terminalId.slice(0, ACP_FIELD_LIMIT) }];
+      return [{ type: "terminal", terminalId: boundedString(entry.terminalId)! }];
     }
     return [];
   });
+  return { content, cut };
 }
 
 function toolLocations(value: unknown): AcpToolCallUpdate["locations"] {
   if (!Array.isArray(value)) return undefined;
   return value.slice(0, 32).flatMap((entry: unknown) =>
     isRecord(entry) && typeof entry.path === "string"
-      ? [{ path: entry.path.slice(0, ACP_FIELD_LIMIT),
+      ? [{ path: boundedString(entry.path)!,
         ...(typeof entry.line === "number" && Number.isSafeInteger(entry.line) && entry.line > 0 ? { line: entry.line } : {}) }]
       : []);
 }
@@ -1294,7 +1302,9 @@ export class InheritedStdioAcpClient implements AcpClient {
     if (kind === "agent_thought_chunk") {
       const content = update.content;
       if (isRecord(content) && content.type === "text" && typeof content.text === "string") {
-        this.#notifyUpdate({ sessionId, kind, text: content.text.slice(0, ACP_FIELD_LIMIT),
+        const bounded = takeBytes(content.text, ACP_FIELD_LIMIT);
+        this.#notifyUpdate({ sessionId, kind, text: bounded.text,
+          ...(bounded.cut ? { textCut: true } : {}),
           ...(id === undefined ? {} : { messageId: id }) });
       }
       return;
@@ -1317,7 +1327,7 @@ export class InheritedStdioAcpClient implements AcpClient {
         ...(title === undefined ? {} : { title }),
         ...(toolKind === undefined ? {} : { toolKind }),
         ...(status === undefined ? {} : { status }),
-        ...(content === undefined ? {} : { content }),
+        ...(content === undefined ? {} : { content: content.content, ...(content.cut ? { contentCut: true } : {}) }),
         ...(locations === undefined ? {} : { locations }),
         ...(rawInput === undefined ? {} : { rawInput }),
         ...(rawOutput === undefined ? {} : { rawOutput }),

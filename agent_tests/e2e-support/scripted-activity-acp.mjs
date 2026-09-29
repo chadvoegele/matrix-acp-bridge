@@ -41,7 +41,7 @@ async function scenario(marker) {
     terminal_id: "terminal-1", exit_code: 0, signal: null } } });
   for (let index = 5; index <= 10; index += 1) await thought(`batch thought ${index}`, `batch-${index}`);
   await thought("batch thought 11", "batch-11");
-  await pause(250); // Allow the ten-event batch to be sent before its archived edit.
+  // The wire runners assert this update targets an original archived batch.
   await change("read", { status: "completed", content: [{ type: "content",
     content: { type: "text", text: "READ_RESULT_ONCE\n" } }],
   rawOutput: { content: [{ type: "text", text: "READ_RESULT_ONCE\n" }] } });

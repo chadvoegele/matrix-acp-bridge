@@ -87,7 +87,7 @@ for (const event of edits) {
   const content = event.content;
   assert(originalIds.has(content["m.relates_to"].event_id), "edit targets an unknown original");
   assert.equal(content.body, `* ${content["m.new_content"].body}`);
-  assert.equal(content.formatted_body, content["m.new_content"].formatted_body);
+  assert.equal(content.formatted_body, `* ${content["m.new_content"].formatted_body}`);
   assert.equal(content["m.new_content"].format, "org.matrix.custom.html");
   assert.equal(content["m.new_content"].msgtype, "m.text");
 }
@@ -128,6 +128,12 @@ assert(html.includes('<span data-mx-color="#C00000">-</span>'), "edit diff lacks
 assert(html.includes("alpha") && html.includes("gamma"), "diff result text missing");
 const archived = [...latest.values()].find((content) => content.formatted_body.includes("Past agent events (10)"));
 assert(archived?.body.includes("READ_RESULT_ONCE"), "late update did not edit archived batch");
+assert(edits.some((event) => originals.some((original) =>
+  original.event_id === event.content["m.relates_to"].event_id &&
+  !original.content.body.includes("READ_RESULT_ONCE")) &&
+  event.content["m.new_content"].body.includes("READ_RESULT_ONCE") &&
+  event.content["m.new_content"].formatted_body.includes("Past agent events (10)")),
+"archived read result was not delivered as an edit to a previously sent batch");
 assert(raw.some((event) => event.content?.body === "I will show activity before the tools."),
   "first agent message was not sent eagerly");
 process.stdout.write("Scripted plaintext ACP activity wire test passed.\n");
