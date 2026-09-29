@@ -1,7 +1,7 @@
 +++
 name = "Indent tool result disclosure in Matrix"
 creation_date = 2026-09-29T00:24:52Z
-status = "pending"
+status = "in-progress"
 +++
 
 # Indent live tool results beneath their tool call
