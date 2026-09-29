@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-29T00:25:12Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # Role
