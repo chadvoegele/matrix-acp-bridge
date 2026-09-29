@@ -1,0 +1,8 @@
+# Work log
+
+- Verified the isolated `aa-d9504887` worktree was clean and already at `origin/feat/verbose-acp-output` (`f363ae97440208bdc8cc791f320f45e8bf52fee3`). Read the ticket, developer role, renderer, bridge batching, tests, and specification. Marked the ticket in progress.
+- The renderer already creates separate title and result markup, and the bridge budgets the serialized Matrix edit. The result wrapper can be added around the existing short code block or long disclosure without changing tool correlation or output selection.
+- Wrapped the complete short or long tool result in `<blockquote>`, leaving tool and `mcpScript` source disclosures outside it. Updated the specification examples and focused renderer, live bridge, archived edit, and Matrix wire tests. Verified escaped output, plain-text previews, source/result separation, and a 512-byte renderer budget. No private traces or live Matrix provisioning were used.
+- `npm run check` passed (lint, typecheck, 260 tests); `waap check` passed; `git diff --check HEAD^ HEAD` passed. The first test run caught an incorrect expected semicolon in a new assertion, which was fixed before the passing run.
+- Signed commit `98c300ba758059ff3ba30caf270690608569f427` (`G` signature status, key `D43554DC3BFC672A`) was pushed fast-forward to `origin/feat/verbose-acp-output`. Verified the remote branch and GitHub PR #11 both point to that commit; PR remains open and the isolated worktree is clean.
+- PR description could not be updated: GitHub CLI reported no authenticated session. Existing PR body and disclosures were left intact. This optional metadata update does not block the ticket implementation.
