@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-30T20:47:33Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer agent: tt-thread-sessions-plaintext-encrypted-and-live-matrix-validation
