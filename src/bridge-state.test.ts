@@ -654,7 +654,10 @@ void test("an existing unsafe, corrupt or incompatible backup blocks migration w
                   ? validState()
                   : legacyState(mode === "wrong-identity" ? { identity: { ...identity, deviceId: "OTHER" } } : {}),
               );
-        await writeFile(backupPath, content, { mode: mode === "public" ? 0o644 : 0o600 });
+        await writeFile(backupPath, content, { mode: 0o600 });
+        // File creation is filtered by the caller's umask. Explicitly make
+        // this unsafe fixture public even when tests run under umask 077.
+        if (mode === "public") await chmod(backupPath, 0o644);
       }
       const before = await lstat(backupPath);
       await expectStateError(() => openStore(stateDir), "backup");
