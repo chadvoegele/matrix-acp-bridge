@@ -1500,6 +1500,7 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
       () => seed!.matrixSdk.sent.filter((attempt) => attempt.content.body?.toString().startsWith("seed ")).length === 2,
       "seed Matrix responses",
     );
+    await seed.bridge.waitForIdle();
     await stopRig(seed, seedRun);
     seedRun = undefined;
 
@@ -1566,6 +1567,10 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
         ).length === 2,
       "restored Matrix responses",
     );
+    // Live delivery can precede the durable terminal write. Let both turns
+    // finish before cleanup advances the fake shutdown deadline and removes
+    // the directory, so real filesystem work cannot race that removal.
+    await restart.bridge.waitForIdle();
   } finally {
     if (seedRun !== undefined && seed !== undefined) {
       await stopRig(seed, seedRun);

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
 import { startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
+import { assertThreadResponse } from "../e2e-support/thread-sessions.mjs";
 import { installLiveDecryptionFailureHandler } from "./decryption-failure-gate.mjs";
 import { createAdapter, readEnvironment, readToken } from "./lib.mjs";
 
@@ -12,7 +13,9 @@ const token = await readToken(environment.sender.tokenFile);
 const marker = randomBytes(6).toString("hex").toUpperCase();
 const prompt = `ACTIVITY_WIRE_${marker}`;
 const finalText = `SCRIPTED_ACP_DONE_${marker}`;
-const events = [];
+let events = [];
+let promptEventId;
+let promptTimestamp;
 let resolveFinal;
 let rejectFinal;
 const final = new Promise((resolvePromise, reject) => {
@@ -26,6 +29,10 @@ adapter.onSyncBatch((batch) => {
   if (batch.phase === "initial") return;
   for (const room of batch.rooms) {
     for (const event of room.timeline) {
+      if (event.sender === environment.sender.userId && event.content?.body === prompt) {
+        promptEventId = event.eventId;
+        promptTimestamp = event.originServerTs;
+      }
       if (event.sender !== environment.bridge.userId) continue;
       events.push(event);
       if (event.content?.body === finalText || event.content?.["m.new_content"]?.body === finalText) resolveFinal();
@@ -63,6 +70,15 @@ try {
   });
   await final;
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
+  if (process.env.E2E_RESPONSE_MODE === "thread") {
+    assert.equal(typeof promptTimestamp, "number", "encrypted thread root timestamp was not observed");
+    // Reused crypto stores can finish decrypting old history in a live batch.
+    // Scope by the test prompt's server timestamp, never by the expected root:
+    // incorrectly routed new output must still fail the relation assertions.
+    events = events.filter(
+      (event) => typeof event.originServerTs === "number" && event.originServerTs >= promptTimestamp,
+    );
+  }
   assert(events.length >= 5, "encrypted activity did not send expected messages");
   for (const event of events) {
     assert(
@@ -76,6 +92,14 @@ try {
     "activity leaked as plaintext wire event",
   );
   const edits = events.filter((event) => event.content?.["m.relates_to"]?.rel_type === "m.replace");
+  if (process.env.E2E_RESPONSE_MODE === "thread") {
+    assert.equal(typeof promptEventId, "string", "encrypted thread root was not observed");
+    for (const event of events) {
+      const content =
+        event.content?.["m.relates_to"]?.rel_type === "m.replace" ? event.content["m.new_content"] : event.content;
+      assertThreadResponse(content, promptEventId, promptEventId);
+    }
+  }
   assert(edits.length > 0, "encrypted activity had no decrypted edit events");
   const textOriginals = events.filter(
     (event) =>

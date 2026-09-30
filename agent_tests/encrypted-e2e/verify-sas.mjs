@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { readEnvironment, repoRoot, testDir } from "./lib.mjs";
 import { SasBridgeDiagnostics } from "./sas-diagnostics.mjs";
 
-const environmentPath = process.argv[2] ?? join(testDir, "environment.json");
+const environmentPath = process.argv[2] ?? process.env.E2E_ENVIRONMENT_FILE ?? join(testDir, "environment.json");
 const environment = await readEnvironment(environmentPath);
 const timeoutMs = 180_000;
 let helper;

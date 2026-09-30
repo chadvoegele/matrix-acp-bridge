@@ -38,7 +38,11 @@ shared `agent_tests/e2e-support/thread-sessions.mjs` monitor now reads the actua
 ACP v1 `agentCapabilities.loadSession` field. Both senders verify the response
 root separately from its fallback target, which is the latest inbound event.
 Support tests exercise these assertions against actual bridge-rendered content
-and representative initialize/create/load/prompt wire frames.
+and representative initialize/create/load/prompt wire frames. The existing activity
+wire runners also check every original and replacement thread relation when
+`E2E_RESPONSE_MODE=thread`. Encrypted SAS setup now honors the configured private
+environment-file override. The unsafe-backup test explicitly sets public fixture
+permissions, so a private process umask cannot invalidate its failure injection.
 
 The plaintext restart scenario now verifies that only the requested session loads
 and that its prompt reuses the original session ID. Unknown-thread checks also
@@ -53,12 +57,35 @@ Both live entry points were attempted on 2026-09-30:
 - `agent_tests/unencrypted-e2e/thread-sessions-test.sh`
 - `agent_tests/encrypted-e2e/thread-sessions-test.sh`
 
-Both exited with status 2 and `E2E_HOMESERVER is required` before provisioning.
-Live plaintext/encrypted behavior and thread display/follow-ups in the deployment
-client remain unverified. Running these scenarios requires the documented test
-homeserver/account/room credentials and ACP endpoint; deployment-client access is
-also required for display verification. No live pass is claimed and no production
-service was operated.
+Initial invocations without the private test configuration exited with status 2
+and `E2E_HOMESERVER is required`. Further inspection found the repository's private
+configuration, allowing real tests to proceed with temporary devices and all
+artifacts outside Git.
+
+The real plaintext scenario created distinct persisted sessions for two roots and
+received correctly threaded responses. One agent response prepended an MCP
+connection banner to the requested exact token, so the sender timed out and the
+full scenario failed. Its live restart/reset/unknown stages were not reached.
+Their deterministic automated coverage remains enabled. The real encrypted root
+and follow-up scenario passed, checking authenticated decryption, encrypted raw
+wire types, correct root/fallback relations and reuse of one ACP session.
+
+The activity runners support live tests with the existing scripted ACP peer:
+
+```sh
+E2E_RESPONSE_MODE=thread agent_tests/unencrypted-e2e/test-activity.sh
+E2E_RESPONSE_MODE=thread agent_tests/encrypted-e2e/test-activity.sh
+```
+
+They inspect thoughts, tools, eager text, archived edits, replacement content and
+thread relations; encrypted output must remain encrypted on the wire. The
+observer scopes reused encrypted histories by the current test prompt's server
+timestamp rather than by expected routing, so misrouted new output still fails.
+The PR records the final live results. Temporary sessions/devices are cleaned up
+by the approved harnesses. No production daemon was stopped or restarted.
+
+Thread display and follow-ups in the deployment client remain unverified because
+that client is not available in this environment.
 
 Sessions/history and total queued work can grow with the number of threads.
 Session unloading, automatic retention, separate agent processes/workspaces and

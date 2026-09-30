@@ -134,3 +134,7 @@ try {
   await adapter.stop().catch(() => {});
   await adapter.closeCrypto().catch(() => {});
 }
+
+// As in activity-wire.mjs, the SDK can retain idle handles after cleanup.
+// Reach success only after exchange assertions and adapter cleanup complete.
+process.exit(0);

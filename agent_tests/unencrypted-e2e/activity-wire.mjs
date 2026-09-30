@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 
 import { startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
+import { assertThreadResponse } from "../e2e-support/thread-sessions.mjs";
 import { readEnvironment, readToken } from "./lib.mjs";
 
 const environment = await readEnvironment(process.argv[2]);
@@ -74,6 +75,10 @@ try {
   const originals = raw.filter((event) => event.content?.["m.relates_to"]?.rel_type !== "m.replace");
   const edits = raw.filter((event) => event.content?.["m.relates_to"]?.rel_type === "m.replace");
   const originalIds = new Set(originals.map((event) => event.event_id));
+  if (process.env.E2E_RESPONSE_MODE === "thread") {
+    for (const event of originals) assertThreadResponse(event.content, sent.event_id, sent.event_id);
+    for (const event of edits) assertThreadResponse(event.content["m.new_content"], sent.event_id, sent.event_id);
+  }
   assert.equal(originals.length, 5, "expected opening, two activity batches, and two eager agent messages");
   assert(edits.length > 0, "activity produced no m.replace wire edits");
   const textOriginals = originals.filter(

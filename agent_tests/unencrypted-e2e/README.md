@@ -166,3 +166,14 @@ session response. When loading is supported, it also verifies thread-local
 reset and fresh-session creation. An unknown-root follow-up must not reach ACP.
 Every observed ACP session ID, including sessions detached by reset, is saved
 under the ignored private state so normal cleanup can delete them.
+
+To inspect thread relations on scripted thought/tool activity, eager text and
+replacement content using the same live Matrix room, run:
+
+```sh
+E2E_RESPONSE_MODE=thread agent_tests/unencrypted-e2e/test-activity.sh
+```
+
+This uses the existing deterministic ACP peer and checks the thread root and
+fallback on every original and on each edit's `m.new_content`. The edit envelope
+keeps its `m.replace` relation. Raw plaintext events and full payload sizes are inspected.
