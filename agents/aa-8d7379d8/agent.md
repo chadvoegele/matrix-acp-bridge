@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-30T19:38:12Z
-status = "ready"
+status = "failed"
+system = "codex"
 +++
 
 # WAAP developer agent: tt-thread-sessions-matrix-output-and-edit-routing
