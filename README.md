@@ -71,6 +71,7 @@ device_id = "MABRIDGE01"
 access_token_file = "/var/lib/matrix-acp-bridge/matrix-access-token"
 allowed_rooms = ["!private-room:matrix.example.org"]
 allowed_senders = ["@operator:matrix.example.org"]
+response_mode = "room"    # or "thread"; defaults to room
 encryption = "disabled"   # or "required"
 
 [acp]
@@ -82,6 +83,7 @@ max_output_bytes = 262144
 max_matrix_message_bytes = 32768
 max_activity_events_per_message = 10
 max_queued_turns_per_room = 16
+max_queued_turns_per_thread = 16   # independent default; used in thread mode
 max_concurrent_prompts = 4
 max_turn_seconds = 1800
 shutdown_grace_seconds = 30

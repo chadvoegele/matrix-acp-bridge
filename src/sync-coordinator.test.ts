@@ -23,6 +23,7 @@ const config: BridgeConfig = {
     allowedRooms: [ROOM],
     allowedSenders: [SENDER],
     encryption: "disabled",
+    responseMode: "room",
   },
   acp: { cwd: "/tmp" },
   limits: {
@@ -31,6 +32,7 @@ const config: BridgeConfig = {
     maxMatrixMessageBytes: 10_000,
     maxActivityEventsPerMessage: 10,
     maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerThread: 16,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 60,
     shutdownGraceSeconds: 1,

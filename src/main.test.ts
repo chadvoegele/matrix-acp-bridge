@@ -49,6 +49,7 @@ const CONFIG: BridgeConfig = {
     allowedRooms: [ROOM_ID],
     allowedSenders: ["@alice:example.org"],
     encryption: "disabled",
+    responseMode: "room",
   },
   acp: { cwd: "/private/workspace" },
   limits: {
@@ -57,6 +58,7 @@ const CONFIG: BridgeConfig = {
     maxMatrixMessageBytes: 128,
     maxActivityEventsPerMessage: 10,
     maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerThread: 16,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 10,
     shutdownGraceSeconds: 1,

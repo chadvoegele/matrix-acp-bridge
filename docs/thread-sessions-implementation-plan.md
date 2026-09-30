@@ -40,15 +40,15 @@ Durable identities    Matrix output and edits
          Final review and one PR
 ```
 
-| Stage | WAAP ticket | Main responsibility |
-| --- | --- | --- |
-| Foundations | `tt-thread-sessions-configuration-and-routing-foundations` | Config, conversation identity, authorized inbound thread metadata and fallback handling |
-| Persistence | `tt-thread-sessions-durable-identities-and-migration` | Room/thread records, sessionless identity, atomic reset, migration/backup and rollback |
-| Output | `tt-thread-sessions-matrix-output-and-edit-routing` | Text/HTML relations, edit envelopes, byte budgets, synthetic responses and encryption |
-| Coordinator | `tt-thread-sessions-coordinator-queues-reset-and-lifecycle` | Independent queues/sessions, prompt semaphore, reset/recovery, activity routing and room typing |
-| Regression | `tt-thread-sessions-integrated-regression-and-operator-documen-8d5b` | Spec coverage audit, failure-path tests, compatibility and operator documentation |
-| Live validation | `tt-thread-sessions-plaintext-encrypted-and-live-matrix-validation` | Existing E2E harness extensions, live Matrix verification and cleanup |
-| Delivery | `tt-thread-sessions-final-review-and-one-github-implementation-pr` | Review/remediation, final checks and exactly one implementation PR |
+| Stage           | WAAP ticket                                                          | Main responsibility                                                                             |
+| --------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Foundations     | `tt-thread-sessions-configuration-and-routing-foundations`           | Config, conversation identity, authorized inbound thread metadata and fallback handling         |
+| Persistence     | `tt-thread-sessions-durable-identities-and-migration`                | Room/thread records, sessionless identity, atomic reset, migration/backup and rollback          |
+| Output          | `tt-thread-sessions-matrix-output-and-edit-routing`                  | Text/HTML relations, edit envelopes, byte budgets, synthetic responses and encryption           |
+| Coordinator     | `tt-thread-sessions-coordinator-queues-reset-and-lifecycle`          | Independent queues/sessions, prompt semaphore, reset/recovery, activity routing and room typing |
+| Regression      | `tt-thread-sessions-integrated-regression-and-operator-documen-8d5b` | Spec coverage audit, failure-path tests, compatibility and operator documentation               |
+| Live validation | `tt-thread-sessions-plaintext-encrypted-and-live-matrix-validation`  | Existing E2E harness extensions, live Matrix verification and cleanup                           |
+| Delivery        | `tt-thread-sessions-final-review-and-one-github-implementation-pr`   | Review/remediation, final checks and exactly one implementation PR                              |
 
 Persistence and output can run in parallel after foundations establish their shared contracts. Coordinator changes wait for both. Later stages are serial to ensure validation reflects integrated code.
 

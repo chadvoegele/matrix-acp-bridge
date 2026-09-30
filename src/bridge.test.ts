@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { createInboundAuthorizer } from "./authorization.js";
+import { InMemorySessionStore } from "./session-store.js";
 import { BridgeCoordinator } from "./bridge.js";
 import { matrixHtmlContentBytes } from "./matrix-message-content.js";
 import { openBridgeStateStore } from "./bridge-state.js";
@@ -44,6 +46,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       allowedRooms: [ROOM_ONE, ROOM_TWO],
       allowedSenders: [SENDER],
       encryption: "disabled",
+      responseMode: "room",
     },
     acp: { cwd: "/tmp" },
     limits: {
@@ -52,6 +55,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       maxMatrixMessageBytes: 10_000,
       maxActivityEventsPerMessage: 10,
       maxQueuedTurnsPerRoom: 1,
+      maxQueuedTurnsPerThread: 16,
       maxConcurrentPrompts: 2,
       maxTurnSeconds: 60,
       shutdownGraceSeconds: 1,
@@ -2491,4 +2495,57 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
     false,
   );
   await bridge.stop();
+});
+
+void test("thread authorization gates session lookup, creation and loading for rejected events", async () => {
+  const bridgeConfig = config();
+  const acp = new FakeAcp();
+  const matrix = new FakeMatrix();
+  const sessionStore = new InMemorySessionStore();
+  sessionStore.set({ roomId: ROOM_ONE, sessionId: "known-session" });
+  let sessionLookups = 0;
+  const get = sessionStore.get.bind(sessionStore);
+  sessionStore.get = (roomId) => {
+    sessionLookups += 1;
+    return get(roomId);
+  };
+  const bridge = new BridgeCoordinator({
+    config: bridgeConfig,
+    acp,
+    matrix,
+    sessionStore,
+    loadSession: true,
+    authorizer: createInboundAuthorizer({
+      ...bridgeConfig,
+      matrix: { ...bridgeConfig.matrix, responseMode: "thread" },
+    }),
+  });
+  const content = {
+    msgtype: "m.text",
+    body: "follow-up",
+    "m.relates_to": { rel_type: "m.thread", event_id: "$known-root" },
+  };
+  const cases: Partial<InboundMatrixEvent>[] = [
+    { sender: "@mallory:example.org" },
+    { sender: bridgeConfig.matrix.userId },
+    { roomId: "!not-allowed:example.org" },
+    { isRedacted: true },
+    { type: "m.room.redaction" },
+    { content: { ...content, "m.relates_to": { rel_type: "m.thread", event_id: "invalid" } } },
+    { content: { ...content, "m.relates_to": { rel_type: "m.replace", event_id: "$old" } } },
+  ];
+  try {
+    for (const [index, overrides] of cases.entries()) {
+      await bridge.handleTimelineEvent({ ...event(`$rejected-${index}`), content, ...overrides });
+    }
+    await flush();
+    assert.equal(sessionLookups, 0);
+    assert.equal(acp.sessionCount, 0);
+    assert.deepEqual(acp.loadCalls, []);
+    assert.deepEqual(acp.promptCalls, []);
+    assert.deepEqual(matrix.sent, []);
+    assert.equal(get(ROOM_ONE)?.sessionId, "known-session");
+  } finally {
+    await bridge.stop();
+  }
 });

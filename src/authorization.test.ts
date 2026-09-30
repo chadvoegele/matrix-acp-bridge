@@ -8,6 +8,7 @@ import {
   stripReplyFallback,
   type InboundAuthorizationDecision,
 } from "./authorization.js";
+import { parseConfigText } from "./config.js";
 import { StderrDiagnosticSink } from "./diagnostics.js";
 import type { InboundMatrixEvent } from "./matrix-client.js";
 import { FakeClock } from "./test-support/fake-clock.js";
@@ -307,4 +308,156 @@ void test("diagnostics contain only metadata and report suppressed counts", () =
   assert.doesNotMatch(serialized, /do-not-log-this-secret/u);
   assert.doesNotMatch(serialized, /m\.text/u);
   assert.doesNotMatch(serialized, /content|token|body/u);
+});
+
+function threadEvent(relation: Record<string, unknown> = {}, body = "follow-up"): InboundMatrixEvent {
+  return makeEvent({
+    content: {
+      msgtype: "m.text",
+      body,
+      "m.relates_to": { rel_type: "m.thread", event_id: "$root:example.org", ...relation },
+    },
+  });
+}
+
+void test("thread relations are opt-in and resolve the root independently of reply targets", () => {
+  assert.equal(reasonOf(authorizeInboundEvent(threadEvent(), options())), INBOUND_REJECTION_REASONS.invalidRelation);
+  assert.equal(
+    reasonOf(authorizeInboundEvent(threadEvent(), options({ responseMode: "room" }))),
+    INBOUND_REJECTION_REASONS.invalidRelation,
+  );
+  for (const sender of [ALICE, BOB]) {
+    for (const flag of [undefined, false, true]) {
+      for (const reply of [undefined, { event_id: "$later:example.org" }]) {
+        const relation = {
+          ...(flag === undefined ? {} : { is_falling_back: flag }),
+          ...(reply === undefined ? {} : { "m.in_reply_to": reply }),
+        };
+        const decision = authorizeInboundEvent(
+          { ...threadEvent(relation), sender },
+          options({ responseMode: "thread" }),
+        );
+        assert.equal(decision.accepted, true);
+        assert.equal(decision.event.threadRootEventId, "$root:example.org");
+        assert.deepEqual(decision.event.inReplyTo, reply === undefined ? undefined : { eventId: "$later:example.org" });
+      }
+    }
+  }
+});
+
+void test("thread validation rejects malformed IDs, field types, edits and unsupported shapes", () => {
+  const invalid: unknown[] = [
+    { rel_type: "m.thread" },
+    { event_id: "$root" },
+    { rel_type: "m.replace", event_id: "$root" },
+    { rel_type: "m.annotation", event_id: "$root", key: "a" },
+    { "m.thread": { event_id: "$root" } },
+    { rel_type: "m.thread", event_id: "$root", extra: true },
+    null,
+    [],
+    undefined,
+  ];
+  for (const eventId of [undefined, null, 123, "root", "$", "$bad id", "$bad\n", `$${"é".repeat(128)}`]) {
+    invalid.push({ rel_type: "m.thread", event_id: eventId });
+  }
+  for (const flag of [undefined, null, "true", 1, [], {}]) {
+    invalid.push({ rel_type: "m.thread", event_id: "$root", is_falling_back: flag });
+  }
+  for (const reply of [undefined, null, [], {}, { event_id: "$" }, { event_id: 1 }, { event_id: "$ok", extra: true }]) {
+    invalid.push({ rel_type: "m.thread", event_id: "$root", "m.in_reply_to": reply });
+  }
+  for (const relation of invalid) {
+    assert.equal(
+      reasonOf(
+        authorizeInboundEvent(
+          makeEvent({
+            content: { msgtype: "m.text", body: "hello", "m.relates_to": relation },
+          }),
+          options({ responseMode: "thread" }),
+        ),
+      ),
+      INBOUND_REJECTION_REASONS.invalidRelation,
+    );
+  }
+  for (const eventId of ["$historical:example.org", "$modern/_-opaque"]) {
+    const decision = authorizeInboundEvent(threadEvent({ event_id: eventId }), options({ responseMode: "thread" }));
+    assert.equal(decision.accepted, true);
+    assert.equal(decision.event.threadRootEventId, eventId);
+  }
+});
+
+void test("thread bodies strip reply fallbacks only when a validated reply is present", () => {
+  const quoted = "> <@bob:example.org> quoted\r\n> second line\r\n\r\n  reply  \r\n";
+  for (const flag of [undefined, false, true]) {
+    const flags = flag === undefined ? {} : { is_falling_back: flag };
+    const ordinaryQuote = authorizeInboundEvent(threadEvent(flags, quoted), options({ responseMode: "thread" }));
+    assert.equal(ordinaryQuote.accepted, true);
+    assert.equal(ordinaryQuote.event.body, quoted);
+    const reply = authorizeInboundEvent(
+      threadEvent({ ...flags, "m.in_reply_to": { event_id: "$later" } }, quoted),
+      options({ responseMode: "thread" }),
+    );
+    assert.equal(reply.accepted, true);
+    assert.equal(reply.event.body, "  reply  \r\n");
+  }
+  const ordinaryReply = authorizeInboundEvent(
+    makeEvent({
+      content: { msgtype: "m.text", body: quoted, "m.relates_to": { "m.in_reply_to": { event_id: "$later" } } },
+    }),
+    options({ responseMode: "thread" }),
+  );
+  assert.equal(ordinaryReply.accepted, true);
+  assert.equal(ordinaryReply.event.threadRootEventId, undefined);
+  assert.equal(ordinaryReply.event.body, "  reply  \r\n");
+});
+
+void test("oversized decisions expose only authorized validated routing", () => {
+  const authorizer = createInboundAuthorizer(options({ responseMode: "thread", maxInputBytes: 2 }));
+  for (const event of [threadEvent({}, "large"), makeEvent({ content: { msgtype: "m.text", body: "large" } })]) {
+    const decision = authorizer.authorize(event);
+    assert.equal(decision.kind, "oversized");
+    assert.equal(decision.routing.roomId, ROOM_ID);
+    assert.equal(decision.routing.eventId, "$event:example.org");
+    assert.equal(
+      decision.routing.threadRootEventId,
+      event.content?.["m.relates_to"] === undefined ? undefined : "$root:example.org",
+    );
+    assert.equal("body" in decision.routing, false);
+  }
+  const normalized = authorizer.authorize(
+    threadEvent({ "m.in_reply_to": { event_id: "$later" }, is_falling_back: true }, "> long fallback\n\né"),
+  );
+  assert.equal(normalized.accepted, true);
+  for (const overrides of [
+    { sender: "@mallory:example.org" },
+    { sender: BRIDGE },
+    { roomId: OTHER_ROOM_ID },
+    { isRedacted: true },
+    { isLive: false },
+    { type: "m.room.redaction" },
+  ]) {
+    const decision = authorizer.authorize({ ...threadEvent({}, "large"), ...overrides });
+    assert.equal(decision.kind, "rejected");
+    assert.equal("routing" in decision, false);
+    assert.equal("response" in decision, false);
+  }
+});
+
+void test("authorizer reads response mode from bridge configuration and rejects invalid modes", () => {
+  const config = parseConfigText(`
+state_dir = "/tmp/state"
+[matrix]
+homeserver = "https://matrix.example.org"
+user_id = "${BRIDGE}"
+device_id = "BRIDGE"
+access_token_file = "/tmp/token"
+allowed_rooms = ["${ROOM_ID}"]
+allowed_senders = ["${ALICE}"]
+encryption = "disabled"
+response_mode = "thread"
+[acp]
+cwd = "/tmp"
+`);
+  assert.equal(createInboundAuthorizer(config).authorize(threadEvent()).accepted, true);
+  assert.throws(() => createInboundAuthorizer(options({ responseMode: "invalid" as "room" })), /responseMode/u);
 });

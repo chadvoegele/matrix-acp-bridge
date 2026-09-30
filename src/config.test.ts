@@ -80,6 +80,7 @@ void test("parses the documented shape and applies every default limit", () => {
   const config = parseConfigText(validConfigText("/tmp/matrix-acp-config-state"));
 
   assert.deepEqual(config.limits, DEFAULT_LIMITS);
+  assert.equal(config.matrix.responseMode, "room");
   assert.equal(config.stateDir, "/tmp/matrix-acp-config-state/state");
   assert.deepEqual(config.matrix.allowedRooms, ["!room:example.test"]);
   assert.deepEqual(config.matrix.allowedSenders, ["@alice:example.test", "@bob:example.test"]);
@@ -95,6 +96,7 @@ void test("parses operator-supplied limits and TOML comments", () => {
     maxMatrixMessageBytes: 64,
     maxActivityEventsPerMessage: 7,
     maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerThread: 16,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 2_147_483,
     shutdownGraceSeconds: 1,
@@ -400,4 +402,55 @@ void test("reuses an unlocked stale lock file and redacts lock failures", async 
     const stale = await readFile(join(stateDir, ".lock"));
     assert.equal(stale.length, 0);
   });
+});
+
+void test("response mode defaults to room and accepts only explicit room or thread", async () => {
+  const valid = validConfigText("/tmp/matrix-acp-config-state");
+  for (const mode of ["room", "thread"] as const) {
+    const source = valid.replace("[matrix]", `[matrix]\nresponse_mode = "${mode}"`);
+    assert.equal(parseConfigText(source).matrix.responseMode, mode);
+  }
+  for (const value of ['"unknown"', '"THREAD"', '""', "1", "true", "[]", "2026-09-30"]) {
+    await expectConfigurationError(() =>
+      parseConfigText(valid.replace("[matrix]", `[matrix]\nresponse_mode = ${value}`)),
+    );
+  }
+  const parsed = parseConfigText(valid);
+  await expectConfigurationError(() =>
+    validateConfiguration({
+      ...parsed,
+      matrix: { ...parsed.matrix, responseMode: "invalid" as "room" },
+    }),
+  );
+});
+
+void test("thread queue defaults independently and follows the room queue integer bounds", async () => {
+  const valid = `${validConfigText("/tmp/matrix-acp-config-state")}\n[limits]\n`;
+  const roomCustom = parseConfigText(`${valid}max_queued_turns_per_room = 3\n`);
+  assert.equal(roomCustom.limits.maxQueuedTurnsPerRoom, 3);
+  assert.equal(roomCustom.limits.maxQueuedTurnsPerThread, 16);
+  const threadCustom = parseConfigText(`${valid}max_queued_turns_per_thread = 7\n`);
+  assert.equal(threadCustom.limits.maxQueuedTurnsPerRoom, 16);
+  assert.equal(threadCustom.limits.maxQueuedTurnsPerThread, 7);
+  assert.equal(threadCustom.limits.maxConcurrentPrompts, DEFAULT_LIMITS.maxConcurrentPrompts);
+  for (const key of ["max_queued_turns_per_room", "max_queued_turns_per_thread"]) {
+    for (const value of ["0", "-1", "1.5", '"16"', "true", "2147483648", "9007199254740992"]) {
+      await expectConfigurationError(() => parseConfigText(`${valid}${key} = ${value}\n`));
+    }
+    for (const value of [1, 2_147_483_647]) {
+      const parsed = parseConfigText(`${valid}${key} = ${value}\n`);
+      assert.equal(
+        key === "max_queued_turns_per_room"
+          ? parsed.limits.maxQueuedTurnsPerRoom
+          : parsed.limits.maxQueuedTurnsPerThread,
+        value,
+      );
+    }
+  }
+  await expectConfigurationError(() =>
+    validateConfiguration({
+      ...threadCustom,
+      limits: { ...threadCustom.limits, maxQueuedTurnsPerThread: 0 },
+    }),
+  );
 });

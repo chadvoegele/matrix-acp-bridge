@@ -42,11 +42,13 @@ const CONFIG: MatrixConfig = {
   allowedRooms: [ROOM_ID],
   allowedSenders: [ALICE],
   encryption: "disabled",
+  responseMode: "room",
 };
 
 const REQUIRED_CONFIG: MatrixConfig = {
   ...CONFIG,
   encryption: "required",
+  responseMode: "room",
 };
 
 const CONFIG_WITH_INITIAL_LIMIT: BridgeConfig = {

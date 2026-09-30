@@ -14,6 +14,8 @@ import { isNodeError } from "./object-validation.js";
 
 export type EncryptionMode = "disabled" | "required";
 
+export type ResponseMode = "room" | "thread";
+
 export interface MatrixConfig {
   readonly homeserver: string;
   readonly userId: MatrixUserId;
@@ -22,6 +24,7 @@ export interface MatrixConfig {
   readonly allowedRooms: readonly MatrixRoomId[];
   readonly allowedSenders: readonly MatrixUserId[];
   readonly encryption: EncryptionMode;
+  readonly responseMode: ResponseMode;
 }
 
 export interface AcpConfig {
@@ -34,6 +37,7 @@ export interface BridgeLimits {
   readonly maxMatrixMessageBytes: number;
   readonly maxActivityEventsPerMessage: number;
   readonly maxQueuedTurnsPerRoom: number;
+  readonly maxQueuedTurnsPerThread: number;
   readonly maxConcurrentPrompts: number;
   readonly maxTurnSeconds: number;
   readonly shutdownGraceSeconds: number;
@@ -61,6 +65,7 @@ export const DEFAULT_LIMITS: BridgeLimits = {
   maxMatrixMessageBytes: 32_768,
   maxActivityEventsPerMessage: 10,
   maxQueuedTurnsPerRoom: 16,
+  maxQueuedTurnsPerThread: 16,
   maxConcurrentPrompts: 4,
   maxTurnSeconds: 1800,
   shutdownGraceSeconds: 30,
@@ -76,6 +81,7 @@ const LIMIT_KEYS = [
   "max_matrix_message_bytes",
   "max_activity_events_per_message",
   "max_queued_turns_per_room",
+  "max_queued_turns_per_thread",
   "max_concurrent_prompts",
   "max_turn_seconds",
   "shutdown_grace_seconds",
@@ -99,6 +105,7 @@ const TABLE_KEYS: Readonly<Record<TomlTable, ReadonlySet<string>>> = {
     "allowed_rooms",
     "allowed_senders",
     "encryption",
+    "response_mode",
   ]),
   acp: new Set(["cwd"]),
   limits: new Set(LIMIT_KEYS),
@@ -204,6 +211,7 @@ export function parseConfigText(source: string): BridgeConfig {
     allowedRooms: requiredStringArray(entries, "matrix", "allowed_rooms"),
     allowedSenders: requiredStringArray(entries, "matrix", "allowed_senders"),
     encryption: requiredEncryption(entries),
+    responseMode: optionalResponseMode(entries),
   };
   const acp: AcpConfig = {
     cwd: requiredString(entries, "acp", "cwd"),
@@ -421,6 +429,9 @@ function validateShape(stateDir: string, matrix: MatrixConfig, acp: AcpConfig, l
   if (matrix.encryption !== "disabled" && matrix.encryption !== "required") {
     throw new ConfigurationError('matrix.encryption must be either "disabled" or "required"');
   }
+  if (matrix.responseMode !== "room" && matrix.responseMode !== "thread") {
+    throw new ConfigurationError('matrix.response_mode must be either "room" or "thread"');
+  }
   validateLimits(limits);
 }
 
@@ -431,6 +442,7 @@ function validateLimits(limits: BridgeLimits): void {
     max_matrix_message_bytes: limits.maxMatrixMessageBytes,
     max_activity_events_per_message: limits.maxActivityEventsPerMessage,
     max_queued_turns_per_room: limits.maxQueuedTurnsPerRoom,
+    max_queued_turns_per_thread: limits.maxQueuedTurnsPerThread,
     max_concurrent_prompts: limits.maxConcurrentPrompts,
     max_turn_seconds: limits.maxTurnSeconds,
     shutdown_grace_seconds: limits.shutdownGraceSeconds,
@@ -560,6 +572,7 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
     maxMatrixMessageBytes,
     maxActivityEventsPerMessage,
     maxQueuedTurnsPerRoom: values.get("max_queued_turns_per_room")!,
+    maxQueuedTurnsPerThread: values.get("max_queued_turns_per_thread")!,
     maxConcurrentPrompts: values.get("max_concurrent_prompts")!,
     maxTurnSeconds: values.get("max_turn_seconds")!,
     shutdownGraceSeconds: values.get("shutdown_grace_seconds")!,
@@ -607,6 +620,14 @@ function requiredEncryption(entries: ReadonlyMap<string, TomlValue>): Encryption
   return value;
 }
 
+function optionalResponseMode(entries: ReadonlyMap<string, TomlValue>): ResponseMode {
+  const value = entries.get(entryName("matrix", "response_mode")) ?? "room";
+  if (value !== "room" && value !== "thread") {
+    throw new ConfigurationError('matrix.response_mode must be either "room" or "thread"');
+  }
+  return value;
+}
+
 function limitProperty(key: LimitKey): keyof BridgeLimits {
   const properties: Readonly<Record<LimitKey, keyof BridgeLimits>> = {
     max_input_bytes: "maxInputBytes",
@@ -614,6 +635,7 @@ function limitProperty(key: LimitKey): keyof BridgeLimits {
     max_matrix_message_bytes: "maxMatrixMessageBytes",
     max_activity_events_per_message: "maxActivityEventsPerMessage",
     max_queued_turns_per_room: "maxQueuedTurnsPerRoom",
+    max_queued_turns_per_thread: "maxQueuedTurnsPerThread",
     max_concurrent_prompts: "maxConcurrentPrompts",
     max_turn_seconds: "maxTurnSeconds",
     shutdown_grace_seconds: "shutdownGraceSeconds",

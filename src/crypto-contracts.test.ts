@@ -22,6 +22,7 @@ const MATRIX: MatrixConfig = {
   allowedRooms: ["!room:example.org"],
   allowedSenders: ["@operator:example.org"],
   encryption: "required",
+  responseMode: "room",
 };
 
 const FINGERPRINTS = {

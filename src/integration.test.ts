@@ -67,6 +67,7 @@ const MATRIX_CONFIG: MatrixConfig = {
   allowedRooms: [ROOM_ONE, ROOM_TWO],
   allowedSenders: [ALICE],
   encryption: "disabled",
+  responseMode: "room",
 };
 
 const CONFIG: BridgeConfig = {
@@ -79,6 +80,7 @@ const CONFIG: BridgeConfig = {
     maxMatrixMessageBytes: 32_768,
     maxActivityEventsPerMessage: 10,
     maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerThread: 16,
     maxConcurrentPrompts: 2,
     maxTurnSeconds: 60,
     shutdownGraceSeconds: 1,
