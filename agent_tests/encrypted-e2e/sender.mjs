@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
 
+import { assertThreadResponse } from "../e2e-support/thread-sessions.mjs";
+
 import { installLiveDecryptionFailureHandler } from "./decryption-failure-gate.mjs";
 import { createAdapter, readEnvironment, readToken } from "./lib.mjs";
 
@@ -108,14 +110,7 @@ try {
   }
   if (expectThread) {
     const expectedRoot = threadRootEventId ?? promptEvent.eventId;
-    const relation = responseEvent.content?.["m.relates_to"];
-    if (
-      relation?.rel_type !== "m.thread" ||
-      relation.event_id !== expectedRoot ||
-      relation["m.in_reply_to"]?.event_id !== expectedRoot
-    ) {
-      throw new Error("decrypted encrypted response was not placed in the expected Matrix thread");
-    }
+    assertThreadResponse(responseEvent.content, expectedRoot, promptEvent.eventId);
   }
   const [promptWireType, responseWireType] = await Promise.all([
     rawEventType(promptEvent.eventId),

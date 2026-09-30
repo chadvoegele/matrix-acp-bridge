@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
 
+import { assertThreadResponse } from "../e2e-support/thread-sessions.mjs";
+
 import { readEnvironment, readToken } from "./lib.mjs";
 
 function argument(name) {
@@ -160,14 +162,7 @@ if (threadRootEventId !== undefined) {
 }
 if (expectThread) {
   const expectedRoot = threadRootEventId ?? promptEventId;
-  const relation = responseEvent.content?.["m.relates_to"];
-  if (
-    relation?.rel_type !== "m.thread" ||
-    relation.event_id !== expectedRoot ||
-    relation["m.in_reply_to"]?.event_id !== expectedRoot
-  ) {
-    throw new Error("response was not placed in the expected Matrix thread");
-  }
+  assertThreadResponse(responseEvent.content, expectedRoot, promptEventId);
 }
 if (
   expectedFormattedBody !== undefined &&

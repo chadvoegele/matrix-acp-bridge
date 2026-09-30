@@ -4,12 +4,13 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
 import { runSender, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
+import { ThreadSessionMonitor } from "../e2e-support/thread-sessions.mjs";
 import { defaultEnvironmentPath, readEnvironment, testDir } from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const marker = randomBytes(6).toString("hex").toUpperCase();
-let promptCount = 0;
+const monitor = new ThreadSessionMonitor();
 let pair;
 
 async function exchange(prompt, expected, threadRootEventId) {
@@ -21,7 +22,10 @@ async function exchange(prompt, expected, threadRootEventId) {
 try {
   pair = await startBridgePair(environment, {
     onOutbound(message) {
-      if (message?.method === "session/prompt") promptCount += 1;
+      monitor.inspect(message, "outbound");
+    },
+    onInbound(message) {
+      monitor.inspect(message, "inbound");
     },
   });
   process.stdout.write("Sending an encrypted top-level thread root...\n");
@@ -35,7 +39,14 @@ try {
   const followup = await exchange(followupPrompt, `ENCRYPTED_THREAD_FOLLOWUP_${marker}`, first.promptEventId);
   assert.equal(followup.promptWireType, "m.room.encrypted");
   assert.equal(followup.responseWireType, "m.room.encrypted");
-  assert.equal(promptCount, 2, `expected two ACP prompts, observed ${promptCount}`);
+  assert.equal(monitor.promptCount, 2, "expected two ACP prompts");
+  assert.equal(monitor.promptSessions.size, 2, "expected both encrypted prompts to reach ACP");
+  assert.equal(
+    monitor.promptSessions.get(followupPrompt),
+    monitor.promptSessions.get(firstPrompt),
+    "encrypted follow-up changed its ACP session",
+  );
+  assert.equal(monitor.sessionIds.size, 1, "encrypted follow-up created another ACP session");
   await stopBridgePair(pair);
   pair = undefined;
   process.stdout.write("Encrypted thread-session E2E passed with authenticated decrypted thread relations.\n");
