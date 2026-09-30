@@ -24,7 +24,8 @@ encryption milestones and must also cover verbose ACP output when available.
 - Keep follow-ups and all turn output in that conversation's Matrix thread.
 - Run separate threads concurrently within existing global limits.
 - Preserve thread/session mappings without automatic expiry.
-- Preserve existing room-scoped behavior unless explicitly enabled.
+- Keep room-scoped behavior as the default; use thread-scoped behavior only when
+  explicitly configured.
 
 ## Non-goals
 
