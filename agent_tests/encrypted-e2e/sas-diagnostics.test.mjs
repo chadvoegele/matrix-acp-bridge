@@ -25,10 +25,14 @@ test("parses split and unterminated structured verification failures", () => {
 
 test("classifies startup errors and rejects untrusted diagnostic values", () => {
   const diagnostics = new SasBridgeDiagnostics();
-  diagnostics.accept(Buffer.from('\u001B[31m{"event":"startup-failed","fields":{"reason":"private token"}}\u001B[0m\r\n'));
+  diagnostics.accept(
+    Buffer.from('\u001B[31m{"event":"startup-failed","fields":{"reason":"private token"}}\u001B[0m\r\n'),
+  );
   assert.equal(diagnostics.reason, "startup");
   diagnostics.accept(Buffer.from('{"event":"crypto-verification-failed","fields":{"reason":"private token"}}\n'));
   assert.equal(diagnostics.reason, "unknown");
-  assert.equal(diagnostics.summary(9999, "private signal"),
-    "exit=unknown, signal=none, diagnostic=crypto-verification-failed, stdout=seen, stderr=absent");
+  assert.equal(
+    diagnostics.summary(9999, "private signal"),
+    "exit=unknown, signal=none, diagnostic=crypto-verification-failed, stdout=seen, stderr=absent",
+  );
 });

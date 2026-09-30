@@ -10,7 +10,9 @@ interface FakeTimer {
 /** A deterministic timer implementation for unit tests. */
 export class FakeClock implements Clock {
   #now: number;
+
   #nextId = 0;
+
   #timers = new Set<FakeTimer>();
 
   constructor(startAt = 0) {
@@ -86,11 +88,7 @@ export class FakeClock implements Clock {
   #nextTimer(): FakeTimer | undefined {
     let next: FakeTimer | undefined;
     for (const timer of this.#timers) {
-      if (
-        next === undefined ||
-        timer.dueAt < next.dueAt ||
-        (timer.dueAt === next.dueAt && timer.id < next.id)
-      ) {
+      if (next === undefined || timer.dueAt < next.dueAt || (timer.dueAt === next.dueAt && timer.id < next.id)) {
         next = timer;
       }
     }

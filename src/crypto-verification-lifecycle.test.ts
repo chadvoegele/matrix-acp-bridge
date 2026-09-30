@@ -38,11 +38,21 @@ const KEYS: CryptoDeviceKeyFingerprints = {
 };
 
 const SILENT_DIAGNOSTICS = {
-  emit() { /* hermetic test sink */ },
-  debug() { /* hermetic test sink */ },
-  info() { /* hermetic test sink */ },
-  warn() { /* hermetic test sink */ },
-  error() { /* hermetic test sink */ },
+  emit() {
+    /* hermetic test sink */
+  },
+  debug() {
+    /* hermetic test sink */
+  },
+  info() {
+    /* hermetic test sink */
+  },
+  warn() {
+    /* hermetic test sink */
+  },
+  error() {
+    /* hermetic test sink */
+  },
 } as const;
 
 const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
@@ -72,6 +82,7 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
 
 class Lock implements StateLockLike {
   readonly lockPath: string;
+
   released = false;
 
   constructor(stateDir: string) {
@@ -85,6 +96,7 @@ class Lock implements StateLockLike {
 
 class Tty implements OperatorTty {
   readonly paths: string[];
+
   readonly pending: boolean;
 
   constructor(paths: string[], pending = false) {
@@ -110,8 +122,11 @@ class Tty implements OperatorTty {
 
 class Verifier implements CryptoSasVerifier {
   readonly show = new Set<(sas: CryptoSasCallbacks) => void>();
+
   readonly cancelled = new Set<() => void>();
+
   resolve: (() => void) | undefined;
+
   reject: ((error: Error) => void) | undefined;
 
   onShowSas(listener: (sas: CryptoSasCallbacks) => void): Unsubscribe {
@@ -152,12 +167,19 @@ class Verifier implements CryptoSasVerifier {
 
 class Request implements CryptoVerificationRequestHandle {
   readonly userId = IDENTITY.userId;
+
   readonly deviceId = "TRUSTED01";
+
   readonly initiatedByMe = true;
+
   readonly phase: CryptoVerificationRequestPhase = "ready";
+
   readonly accepting = false;
+
   readonly chosenMethod = undefined;
+
   readonly verifier: CryptoSasVerifier | undefined;
+
   readonly startVerifier: Verifier;
 
   constructor(verifier: Verifier) {
@@ -187,6 +209,7 @@ class Request implements CryptoVerificationRequestHandle {
 
 class Crypto implements MatrixCryptoVerificationAdapter {
   readonly request: Request;
+
   readonly refreshAction: () => Promise<boolean>;
 
   constructor(request: Request, refreshAction: () => Promise<boolean> = async () => true) {
@@ -221,10 +244,15 @@ class Crypto implements MatrixCryptoVerificationAdapter {
 
 class Matrix implements MatrixClientAdapter {
   readonly crypto: Crypto;
+
   readonly fatal = new Set<(error: FatalError) => void>();
+
   startOptions: MatrixSyncStartOptions | undefined;
+
   started = false;
+
   stopped = false;
+
   initialized = false;
 
   constructor(crypto: Crypto) {
@@ -280,6 +308,7 @@ class Matrix implements MatrixClientAdapter {
 
 class Process implements DaemonProcessLike {
   readonly listeners = new Map<string, () => void>();
+
   readonly exits: number[] = [];
 
   on(event: "SIGINT" | "SIGTERM", listener: () => void): void {
@@ -298,17 +327,29 @@ class Process implements DaemonProcessLike {
   }
 }
 
-async function state(): Promise<{ readonly stateDir: string; readonly lock: Lock; readonly cleanup: () => Promise<void> }> {
+async function state(): Promise<{
+  readonly stateDir: string;
+  readonly lock: Lock;
+  readonly cleanup: () => Promise<void>;
+}> {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-verification-lifecycle-"));
   await ensureCryptoDatabaseDirectory(stateDir);
   const store = await openCryptoStateStore({ stateDir, identity: IDENTITY });
   await store.recordBootstrap(KEYS);
   const lock = new Lock(stateDir);
-  return { stateDir, lock, cleanup: () => rm(stateDir, { recursive: true, force: true }) };
+  return {
+    stateDir,
+    lock,
+    cleanup: () => rm(stateDir, { recursive: true, force: true }),
+  };
 }
 
 function loaded(stateDir: string, lock: Lock): LoadedConfiguration {
-  return { config: { stateDir, ...CONFIG_BASE }, accessToken: "token", stateLock: lock };
+  return {
+    config: { stateDir, ...CONFIG_BASE },
+    accessToken: "token",
+    stateLock: lock,
+  };
 }
 
 void test("verification lifecycle starts Matrix intake closed, never constructs ACP, and completes cleanly", async () => {
@@ -396,12 +437,11 @@ void test("verification failure diagnostics emit only the safe reason enum", asy
     error() {},
   };
   try {
-    const matrix = new Matrix(new Crypto(
-      new Request(new Verifier()),
-      async () => {
+    const matrix = new Matrix(
+      new Crypto(new Request(new Verifier()), async () => {
         throw new Error("raw SDK failure with private identity text");
-      },
-    ));
+      }),
+    );
     const result = await new CryptoVerificationLifecycle({
       loadedConfiguration: loaded(fixture.stateDir, fixture.lock),
       targetDeviceId: "TRUSTED01",

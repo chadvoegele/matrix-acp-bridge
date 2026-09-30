@@ -109,7 +109,9 @@ void test("absent private state is fresh and the strict schema round-trips sessi
     ]);
     assert.equal(raw.initialized, true);
     assert.deepEqual(raw.sessions, { [ROOM_ONE]: "acp-session" });
-    assert.deepEqual(raw.completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    assert.deepEqual(raw.completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO],
+    });
     for (const forbidden of [
       "cursor",
       "committedAtMs",
@@ -217,23 +219,43 @@ void test("a compaction failure leaves the previous ledger intact and therefore 
       () => store.compactCompletedEventIds([{ roomId: ROOM_ONE, eventIds: [EVENT_TWO] }]),
       "write",
     );
-    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    assert.deepEqual(store.getSnapshot().completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO],
+    });
     const reopened = await openStore(stateDir);
-    assert.deepEqual(reopened.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    assert.deepEqual(reopened.getSnapshot().completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO],
+    });
   });
 });
 
 void test("strict validation rejects cursor-era state, unknown fields, malformed IDs, and duplicates", async () => {
-  const cases: Array<{ readonly value: unknown; readonly category: BridgeStateError["category"] }> = [
+  const cases: Array<{
+    readonly value: unknown;
+    readonly category: BridgeStateError["category"];
+  }> = [
     { value: { ...validState(), extra: true }, category: "corrupt" },
     { value: validState({ initialized: "yes" }), category: "corrupt" },
-    { value: validState({ completedEventIds: { [ROOM_ONE]: [EVENT_ONE, EVENT_ONE] } }), category: "corrupt" },
-    { value: validState({ completedEventIds: { [ROOM_ONE]: ["not-an-event-id"] } }), category: "corrupt" },
+    {
+      value: validState({
+        completedEventIds: { [ROOM_ONE]: [EVENT_ONE, EVENT_ONE] },
+      }),
+      category: "corrupt",
+    },
+    {
+      value: validState({
+        completedEventIds: { [ROOM_ONE]: ["not-an-event-id"] },
+      }),
+      category: "corrupt",
+    },
     { value: validState({ cursor: "old-cursor" }), category: "corrupt" },
-    { value: "{\"schemaVersion\":12,\"identity\":", category: "corrupt" },
+    { value: '{"schemaVersion":12,"identity":', category: "corrupt" },
   ];
   for (const schemaVersion of [1, 2, 3, 10, 11, 13]) {
-    cases.push({ value: validState({ schemaVersion }), category: "unsupported-version" });
+    cases.push({
+      value: validState({ schemaVersion }),
+      category: "unsupported-version",
+    });
   }
 
   for (const { value, category } of cases) {
@@ -264,11 +286,15 @@ void test("session mutations are independent of ledger mutations and are seriali
     assert.equal(await store.removeSessionMapping(rooms[0]!), true);
     assert.deepEqual(
       await store.pruneSessionMappings([ROOM_TWO, rooms[1]!]),
-      rooms.filter((room) => room !== rooms[0] && room !== rooms[1] && room !== ROOM_TWO).sort((left, right) => left.localeCompare(right)),
+      rooms
+        .filter((room) => room !== rooms[0] && room !== rooms[1] && room !== ROOM_TWO)
+        .sort((left, right) => left.localeCompare(right)),
     );
     assert.equal(await store.discardSessionMappings(), true);
     assert.equal(store.getSnapshot().initialized, true);
-    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE] });
+    assert.deepEqual(store.getSnapshot().completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE],
+    });
   });
 });
 
@@ -311,7 +337,11 @@ void test("private path protections, temporary cleanup, and every atomic write f
 
 void test("state diagnostics expose only sanitized metadata", async () => {
   await withStateDir(async (stateDir) => {
-    const records: Array<{ readonly level: DiagnosticLevel; readonly event: string; readonly fields: DiagnosticFields }> = [];
+    const records: Array<{
+      readonly level: DiagnosticLevel;
+      readonly event: string;
+      readonly fields: DiagnosticFields;
+    }> = [];
     const diagnostics: DiagnosticSink = {
       emit(level, event, fields = {}) {
         records.push({ level, event, fields });

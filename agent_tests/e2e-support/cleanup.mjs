@@ -17,7 +17,9 @@ export async function savedAcpSessionIds(environment, additionalFiles = []) {
       sessionIds.push(...ids);
     } catch (error) {
       if (error?.code === "ENOENT") continue;
-      throw new Error(`could not read saved ACP session IDs: ${path}`, { cause: error });
+      throw new Error(`could not read saved ACP session IDs: ${path}`, {
+        cause: error,
+      });
     }
   }
   return [...new Set(sessionIds)];
@@ -36,10 +38,12 @@ export async function deleteAcpSessions(environment, sessionIds, clientName = "m
     fatal = new Error("ACP cleanup transport failed");
     for (const respond of responses.values()) respond({ error: {} });
   };
-  const exitPromise = new Promise((resolve) => child.once("close", () => {
-    if (responses.size > 0) failTransport();
-    resolve();
-  }));
+  const exitPromise = new Promise((resolve) =>
+    child.once("close", () => {
+      if (responses.size > 0) failTransport();
+      resolve();
+    }),
+  );
   child.once("error", failTransport);
   child.stdin.once("error", failTransport);
   child.stdout.on("data", (chunk) => {
@@ -56,21 +60,25 @@ export async function deleteAcpSessions(environment, sessionIds, clientName = "m
       }
     }
   });
-  const request = (method, parameters) => new Promise((resolve, reject) => {
-    if (fatal !== undefined) {
-      reject(fatal);
-      return;
-    }
-    const id = nextId++;
-    const timer = setTimeout(() => reject(new Error(`ACP cleanup ${method} timed out`)), 30_000);
-    responses.set(id, (message) => {
-      clearTimeout(timer);
-      responses.delete(id);
-      if (message.error === undefined) {resolve(message.result);}
-      else {reject(new Error(`ACP cleanup ${method} failed`));}
+  const request = (method, parameters) =>
+    new Promise((resolve, reject) => {
+      if (fatal !== undefined) {
+        reject(fatal);
+        return;
+      }
+      const id = nextId++;
+      const timer = setTimeout(() => reject(new Error(`ACP cleanup ${method} timed out`)), 30_000);
+      responses.set(id, (message) => {
+        clearTimeout(timer);
+        responses.delete(id);
+        if (message.error === undefined) {
+          resolve(message.result);
+        } else {
+          reject(new Error(`ACP cleanup ${method} failed`));
+        }
+      });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params: parameters })}\n`);
     });
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params: parameters })}\n`);
-  });
   try {
     const initialized = await request("initialize", {
       protocolVersion: 1,
@@ -92,12 +100,11 @@ export async function deleteAcpSessions(environment, sessionIds, clientName = "m
   }
 }
 
-export async function cleanupEnvironment(environmentPath, environment, {
-  roles,
-  additionalSessionFiles = [],
-  removeSharedRoot = false,
-  clientName,
-}) {
+export async function cleanupEnvironment(
+  environmentPath,
+  environment,
+  { roles, additionalSessionFiles = [], removeSharedRoot = false, clientName },
+) {
   await deleteAcpSessions(environment, await savedAcpSessionIds(environment, additionalSessionFiles), clientName);
 
   let failed = false;

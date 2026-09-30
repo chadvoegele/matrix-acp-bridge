@@ -107,9 +107,7 @@ void test("parses operator-supplied limits and TOML comments", () => {
 
 void test("sanitizes malformed TOML parser failures", async () => {
   const secret = "super-secret-config-value";
-  const error = await expectConfigurationError(() =>
-    parseConfigText(`state_dir = "${secret}\n`),
-  );
+  const error = await expectConfigurationError(() => parseConfigText(`state_dir = "${secret}\n`));
 
   assert.equal(error.message, "Invalid TOML configuration");
   assert.doesNotMatch(error.message, new RegExp(secret));
@@ -127,7 +125,7 @@ void test("rejects duplicate and unknown TOML structure", async () => {
     `${valid}\n[matrix]\n`,
     `${valid}\n[unknown]\nkey = "value"\n`,
     `${valid}\nunknown_key = true\n`,
-    `${valid.replace('encryption = "disabled"', 'encryption = 1')}`,
+    `${valid.replace('encryption = "disabled"', "encryption = 1")}`,
     `${valid.replace('allowed_rooms = ["!room:example.test"]', 'allowed_rooms = ["!room:example.test", 1]')}`,
     `${valid}\n[limits]\nmax_input_bytes = "16384"\n`,
   ]) {
@@ -144,7 +142,7 @@ void test("accepts both encryption modes and rejects invalid identifiers or mode
   const invalidSources = [
     valid.replace('user_id = "@bridge:example.test"', 'user_id = "Bridge"'),
     valid.replace('allowed_rooms = ["!room:example.test"]', 'allowed_rooms = ["#room:example.test"]'),
-    valid.replace('allowed_senders = ["@alice:example.test", "@bob:example.test"]', 'allowed_senders = []'),
+    valid.replace('allowed_senders = ["@alice:example.test", "@bob:example.test"]', "allowed_senders = []"),
     valid.replace(
       'allowed_senders = ["@alice:example.test", "@bob:example.test"]',
       'allowed_senders = ["@alice:example.test", "@alice:example.test"]',
@@ -161,10 +159,7 @@ void test("accepts both encryption modes and rejects invalid identifiers or mode
 void test("rejects TOML dates where the configuration schema requires scalar values", async () => {
   const valid = validConfigText("/tmp/matrix-acp-config-state");
   const invalidSources = [
-    valid.replace(
-      `state_dir = ${tomlString("/tmp/matrix-acp-config-state/state")}`,
-      "state_dir = 2024-01-01",
-    ),
+    valid.replace(`state_dir = ${tomlString("/tmp/matrix-acp-config-state/state")}`, "state_dir = 2024-01-01"),
     valid.replace('homeserver = "https://matrix.example.test"', "homeserver = 2024-01-01"),
     valid.replace('allowed_rooms = ["!room:example.test"]', "allowed_rooms = [2024-01-01]"),
     valid.replace('encryption = "disabled"', "encryption = 2024-01-01"),
@@ -189,7 +184,9 @@ void test("accepts safe homeserver URLs and rejects unsafe URL forms", async () 
 
   for (const homeserver of invalidUrls) {
     await expectConfigurationError(() =>
-      parseConfigText(valid.replace('homeserver = "https://matrix.example.test"', `homeserver = ${tomlString(homeserver)}`)),
+      parseConfigText(
+        valid.replace('homeserver = "https://matrix.example.test"', `homeserver = ${tomlString(homeserver)}`),
+      ),
     );
   }
 });
@@ -262,11 +259,15 @@ void test("rejects insecure state, token, and path-component configurations", as
     await writeToken(tokenFile, "matrix-token\n");
 
     await chmod(stateDir, 0o750);
-    await expectConfigurationError(() => validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile }))));
+    await expectConfigurationError(() =>
+      validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile }))),
+    );
     await chmod(stateDir, 0o700);
 
     await chmod(tokenFile, 0o640);
-    await expectConfigurationError(() => validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile }))));
+    await expectConfigurationError(() =>
+      validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile }))),
+    );
     await chmod(tokenFile, 0o400);
 
     const symlinkParent = join(root, "token-link-parent");
@@ -275,7 +276,14 @@ void test("rejects insecure state, token, and path-component configurations", as
     await writeToken(join(realParent, "token"), "matrix-token\n");
     await symlink(realParent, symlinkParent);
     await expectConfigurationError(() =>
-      validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile: join(symlinkParent, "token") }))),
+      validateConfiguration(
+        parseConfigText(
+          validConfigText(root, {
+            stateDir,
+            tokenFile: join(symlinkParent, "token"),
+          }),
+        ),
+      ),
     );
 
     const realState = join(root, "real-state");
@@ -315,7 +323,7 @@ void test("accepts only one nonempty token with an optional final LF and redacts
       "token with spaces",
       "token\t",
       "token\r\n",
-      new Uint8Array([0xFF, 0xFE]),
+      new Uint8Array([0xff, 0xfe]),
     ];
 
     for (const [index, content] of invalidContents.entries()) {

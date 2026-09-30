@@ -21,7 +21,9 @@ export interface ActivityBatchLimits {
 /** Groups activity for presentation; delivery state belongs to the caller. */
 export class AcpActivityBatches {
   readonly #batches: MutableActivityBatch[] = [];
+
   readonly #eventBatches = new WeakMap<AcpActivity, MutableActivityBatch>();
+
   #current: MutableActivityBatch | undefined;
 
   constructor(readonly limits: ActivityBatchLimits) {}
@@ -56,7 +58,9 @@ export class AcpActivityBatches {
   }
 
   render(batch: ActivityBatch): RenderedAcpActivity {
-    const wrapperStart = batch.collapsed ? `<details><summary>Past agent events (${batch.events.length})</summary>` : "";
+    const wrapperStart = batch.collapsed
+      ? `<details><summary>Past agent events (${batch.events.length})</summary>`
+      : "";
     const wrapperEnd = batch.collapsed ? "</details>" : "";
     let budget = Math.max(64, Math.floor(this.limits.maxMessageBytes / batch.events.length));
     for (;;) {
@@ -78,7 +82,11 @@ export class AcpActivityBatches {
   #start(changed: ActivityBatch[]): MutableActivityBatch {
     const previous = this.#batches.at(-1);
     if (previous !== undefined) this.#collapse(previous, changed);
-    const batch: MutableActivityBatch = { index: this.#batches.length, events: [], collapsed: false };
+    const batch: MutableActivityBatch = {
+      index: this.#batches.length,
+      events: [],
+      collapsed: false,
+    };
     this.#batches.push(batch);
     this.#current = batch;
     return batch;

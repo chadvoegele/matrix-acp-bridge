@@ -2,6 +2,7 @@ import { takeBytes } from "./bounded-text.js";
 import { isRecord } from "./object-validation.js";
 
 export type AcpSessionId = string;
+
 export type AcpMessageId = string;
 
 export type AcpIgnoredUpdateKind =
@@ -36,10 +37,16 @@ export interface AcpAgentThoughtChunk {
 
 export type AcpToolContent =
   | { readonly type: "content"; readonly text: string }
-  | { readonly type: "diff"; readonly path: string; readonly oldText?: string | null; readonly newText?: string }
+  | {
+      readonly type: "diff";
+      readonly path: string;
+      readonly oldText?: string | null;
+      readonly newText?: string;
+    }
   | { readonly type: "terminal"; readonly terminalId: string };
 
-export type AcpToolInput = string | number | boolean | null | readonly AcpToolInput[] | { readonly [key: string]: AcpToolInput };
+export type AcpToolInput =
+  string | number | boolean | null | readonly AcpToolInput[] | { readonly [key: string]: AcpToolInput };
 
 export interface AcpToolCallUpdate {
   readonly sessionId: AcpSessionId;
@@ -52,14 +59,26 @@ export interface AcpToolCallUpdate {
   readonly content?: readonly AcpToolContent[];
   readonly contentCut?: boolean;
   readonly activityCut?: boolean;
-  readonly locations?: readonly { readonly path: string; readonly line?: number }[];
+  readonly locations?: readonly {
+    readonly path: string;
+    readonly line?: number;
+  }[];
   readonly rawInput?: AcpToolInput;
   readonly rawOutput?: AcpToolInput;
-  readonly terminalOutput?: { readonly terminalId?: string; readonly data: string; readonly originalBytes?: number };
-  readonly terminalExit?: { readonly terminalId?: string; readonly exitCode?: number; readonly signal?: string | null };
+  readonly terminalOutput?: {
+    readonly terminalId?: string;
+    readonly data: string;
+    readonly originalBytes?: number;
+  };
+  readonly terminalExit?: {
+    readonly terminalId?: string;
+    readonly exitCode?: number;
+    readonly signal?: string | null;
+  };
 }
 
 export type AcpUpdate = AcpAgentMessageChunk | AcpAgentThoughtChunk | AcpToolCallUpdate | AcpIgnoredUpdate;
+
 export type AcpUpdateListener = (update: AcpUpdate) => void;
 
 /** Minimum notification envelope required before SDK dispatch. */
@@ -67,8 +86,12 @@ export function isAcpUpdateNotification(value: unknown): value is {
   sessionId: string;
   update: Record<string, unknown> & { sessionUpdate: string };
 } {
-  return isRecord(value) && typeof value.sessionId === "string" &&
-    isRecord(value.update) && typeof value.update.sessionUpdate === "string";
+  return (
+    isRecord(value) &&
+    typeof value.sessionId === "string" &&
+    isRecord(value.update) &&
+    typeof value.update.sessionUpdate === "string"
+  );
 }
 
 export const ACP_ACTIVITY_UPDATE_MAX_BYTES = 256 * 1024;
@@ -76,6 +99,7 @@ export const ACP_ACTIVITY_UPDATE_MAX_BYTES = 256 * 1024;
 /** Shared retained-payload budget, not a wire-frame or rendering limit. */
 class ActivityBudget {
   remaining = ACP_ACTIVITY_UPDATE_MAX_BYTES;
+
   cut = false;
 
   take(value: string): string {
@@ -104,11 +128,17 @@ function boundedString(value: unknown, budget: ActivityBudget): string | undefin
 /** Copy JSON input within a shared budget; never retain the agent's raw object. */
 function boundedInput(value: unknown, budget: ActivityBudget): AcpToolInput | undefined {
   const copy = (item: unknown, depth: number): AcpToolInput | undefined => {
-    if (budget.remaining <= 0 || depth > 4) { budget.cut = true; return undefined; }
+    if (budget.remaining <= 0 || depth > 4) {
+      budget.cut = true;
+      return undefined;
+    }
     if (typeof item === "string") return budget.take(item);
     if (item === null || typeof item === "boolean" || (typeof item === "number" && Number.isFinite(item))) {
       const bytes = Buffer.byteLength(JSON.stringify(item), "utf8");
-      if (bytes > budget.remaining) { budget.cut = true; return undefined; }
+      if (bytes > budget.remaining) {
+        budget.cut = true;
+        return undefined;
+      }
       budget.remaining -= bytes;
       return item;
     }
@@ -125,7 +155,10 @@ function boundedInput(value: unknown, budget: ActivityBudget): AcpToolInput | un
       budget.cut ||= Object.keys(item).length > 32;
       const entries: Array<[string, AcpToolInput]> = [];
       for (const [key, entry] of Object.entries(item).slice(0, 32)) {
-        if (budget.remaining <= 0) { budget.cut = true; break; }
+        if (budget.remaining <= 0) {
+          budget.cut = true;
+          break;
+        }
         const boundedKey = takeBytes(key, 128);
         budget.cut ||= boundedKey.cut;
         const name = budget.take(boundedKey.text);
@@ -139,7 +172,10 @@ function boundedInput(value: unknown, budget: ActivityBudget): AcpToolInput | un
   return value === undefined ? undefined : copy(value, 0);
 }
 
-function toolContent(value: unknown, budget: ActivityBudget): { content: readonly AcpToolContent[]; cut: boolean } | undefined {
+function toolContent(
+  value: unknown,
+  budget: ActivityBudget,
+): { content: readonly AcpToolContent[]; cut: boolean } | undefined {
   if (!Array.isArray(value)) return undefined;
   let cut = value.length > 32;
   const content = value.slice(0, 32).flatMap((entry: unknown): AcpToolContent[] => {
@@ -154,14 +190,23 @@ function toolContent(value: unknown, budget: ActivityBudget): { content: readonl
       const oldText = boundedString(entry.oldText, budget);
       const newText = boundedString(entry.newText, budget);
       cut ||= budget.cut;
-      const oldField = entry.oldText === null ? { oldText: null } : (oldText === undefined ? {} : { oldText });
-      return [{ type: "diff", path,
-        ...oldField,
-        ...(newText === undefined ? {} : { newText }),
-      }];
+      const oldField = entry.oldText === null ? { oldText: null } : oldText === undefined ? {} : { oldText };
+      return [
+        {
+          type: "diff",
+          path,
+          ...oldField,
+          ...(newText === undefined ? {} : { newText }),
+        },
+      ];
     }
     if (entry.type === "terminal" && typeof entry.terminalId === "string") {
-      return [{ type: "terminal", terminalId: boundedString(entry.terminalId, budget)! }];
+      return [
+        {
+          type: "terminal",
+          terminalId: boundedString(entry.terminalId, budget)!,
+        },
+      ];
     }
     return [];
   });
@@ -172,12 +217,22 @@ function toolLocations(value: unknown, budget: ActivityBudget): AcpToolCallUpdat
   if (!Array.isArray(value)) return undefined;
   return value.slice(0, 32).flatMap((entry: unknown) =>
     isRecord(entry) && typeof entry.path === "string"
-      ? [{ path: boundedString(entry.path, budget)!,
-        ...(typeof entry.line === "number" && Number.isSafeInteger(entry.line) && entry.line > 0 ? { line: entry.line } : {}) }]
-      : []);
+      ? [
+          {
+            path: boundedString(entry.path, budget)!,
+            ...(typeof entry.line === "number" && Number.isSafeInteger(entry.line) && entry.line > 0
+              ? { line: entry.line }
+              : {}),
+          },
+        ]
+      : [],
+  );
 }
 
-function terminalMetadata(value: unknown, budget: ActivityBudget): Pick<AcpToolCallUpdate, "terminalOutput" | "terminalExit"> {
+function terminalMetadata(
+  value: unknown,
+  budget: ActivityBudget,
+): Pick<AcpToolCallUpdate, "terminalOutput" | "terminalExit"> {
   if (!isRecord(value)) return {};
   const result: Record<string, unknown> = {};
   if (isRecord(value.terminal_output) && typeof value.terminal_output.data === "string") {
@@ -191,10 +246,12 @@ function terminalMetadata(value: unknown, budget: ActivityBudget): Pick<AcpToolC
     const exit = value.terminal_exit;
     const terminalId = boundedString(exit.terminal_id, budget);
     const signal = boundedString(exit.signal, budget);
-    const signalField = exit.signal === null ? { signal: null } : (signal === undefined ? {} : { signal });
+    const signalField = exit.signal === null ? { signal: null } : signal === undefined ? {} : { signal };
     result.terminalExit = {
       ...(terminalId === undefined ? {} : { terminalId }),
-      ...(typeof exit.exit_code === "number" && Number.isSafeInteger(exit.exit_code) ? { exitCode: exit.exit_code } : {}),
+      ...(typeof exit.exit_code === "number" && Number.isSafeInteger(exit.exit_code)
+        ? { exitCode: exit.exit_code }
+        : {}),
       ...signalField,
     };
   }
@@ -203,15 +260,29 @@ function terminalMetadata(value: unknown, budget: ActivityBudget): Pick<AcpToolC
 
 function ignoredUpdateKind(value: string): AcpIgnoredUpdateKind {
   switch (value) {
-    case "user_message_chunk": { return "user_message_chunk"; }
+    case "user_message_chunk": {
+      return "user_message_chunk";
+    }
     case "plan":
     case "plan_update":
-    case "plan_removed": { return "plan"; }
-    case "available_commands_update": { return "available_commands"; }
-    case "current_mode_update": { return "current_mode_update"; }
-    case "config_option_update": { return "config_option_update"; }
-    case "usage_update": { return "usage_update"; }
-    default: { return "unknown"; }
+    case "plan_removed": {
+      return "plan";
+    }
+    case "available_commands_update": {
+      return "available_commands";
+    }
+    case "current_mode_update": {
+      return "current_mode_update";
+    }
+    case "config_option_update": {
+      return "config_option_update";
+    }
+    case "usage_update": {
+      return "usage_update";
+    }
+    default: {
+      return "unknown";
+    }
   }
 }
 
@@ -231,14 +302,23 @@ export function normalizeAcpUpdateNotification(parameters: unknown): AcpUpdate |
     const content = update.content;
     if (!isRecord(content) || content.type !== "text" || typeof content.text !== "string") return undefined;
     if (kind === "agent_message_chunk") {
-      return { sessionId, kind, text: content.text, ...(id === undefined ? {} : { messageId: id }) };
+      return {
+        sessionId,
+        kind,
+        text: content.text,
+        ...(id === undefined ? {} : { messageId: id }),
+      };
     }
     const budget = new ActivityBudget();
     const activityMessageId = boundedString(id, budget);
     const text = budget.take(content.text);
-    return { sessionId, kind, text,
+    return {
+      sessionId,
+      kind,
+      text,
       ...(budget.cut ? { textCut: true } : {}),
-      ...(activityMessageId === undefined ? {} : { messageId: activityMessageId }) };
+      ...(activityMessageId === undefined ? {} : { messageId: activityMessageId }),
+    };
   }
 
   if (kind === "tool_call" || kind === "tool_call_update") {
@@ -261,7 +341,12 @@ export function normalizeAcpUpdateNotification(parameters: unknown): AcpUpdate |
       ...(title === undefined ? {} : { title }),
       ...(toolKind === undefined ? {} : { toolKind }),
       ...(status === undefined ? {} : { status }),
-      ...(content === undefined ? {} : { content: content.content, ...(content.cut ? { contentCut: true } : {}) }),
+      ...(content === undefined
+        ? {}
+        : {
+            content: content.content,
+            ...(content.cut ? { contentCut: true } : {}),
+          }),
       ...(locations === undefined ? {} : { locations }),
       ...(rawInput === undefined ? {} : { rawInput }),
       ...(rawOutput === undefined ? {} : { rawOutput }),
@@ -270,5 +355,9 @@ export function normalizeAcpUpdateNotification(parameters: unknown): AcpUpdate |
     };
   }
 
-  return { sessionId, kind: ignoredUpdateKind(kind), ...(id === undefined ? {} : { messageId: id }) };
+  return {
+    sessionId,
+    kind: ignoredUpdateKind(kind),
+    ...(id === undefined ? {} : { messageId: id }),
+  };
 }

@@ -1,13 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 
-import {
-  deviceId,
-  provisionEnvironment,
-  repoRoot,
-  required,
-  runCommand,
-} from "../e2e-support/common.mjs";
+import { deviceId, provisionEnvironment, repoRoot, required, runCommand } from "../e2e-support/common.mjs";
 import { defaultEnvironmentPath, makeConfig, testDir } from "./lib.mjs";
 
 const homeserver = required("E2E_HOMESERVER").replace(/\/$/u, "");

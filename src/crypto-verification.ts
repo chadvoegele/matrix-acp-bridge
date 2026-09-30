@@ -36,6 +36,7 @@ export interface CryptoVerificationOperation {
 
 export class CryptoVerificationError extends Error {
   readonly code = "crypto_verification" as const;
+
   readonly reason:
     | "target_rejected"
     | "method_rejected"
@@ -46,10 +47,7 @@ export class CryptoVerificationError extends Error {
     | "tty"
     | "manifest";
 
-  constructor(
-    reason: CryptoVerificationError["reason"],
-    message = "Matrix SAS verification failed",
-  ) {
+  constructor(reason: CryptoVerificationError["reason"], message = "Matrix SAS verification failed") {
     super(message);
     this.name = "CryptoVerificationError";
     this.reason = reason;
@@ -73,27 +71,47 @@ export interface CryptoVerificationOperationOptions {
  */
 export class MatrixCryptoVerificationOperation implements CryptoVerificationOperation {
   readonly #crypto: MatrixCryptoVerificationAdapter;
+
   readonly #ttyFactory: OperatorTtyFactory;
+
   readonly #timeoutMs: number;
+
   readonly #clock: Clock;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #stateFaultInjector: CryptoStateFaultInjector | undefined;
 
   #tty: OperatorTty | undefined;
+
   #request: CryptoVerificationRequestHandle | undefined;
+
   #verifier: CryptoSasVerifier | undefined;
+
   #localDeviceId: string | undefined;
+
   #targetDeviceId: string | undefined;
+
   #showPromise: Promise<void> | undefined;
+
   #cancelled = false;
+
   #cancelRequested = false;
+
   #completed = false;
+
   #unsubscribeIncoming: Unsubscribe | undefined;
+
   #targetChangeUnsubscribe: Unsubscribe | undefined;
+
   readonly #requestChangeUnsubscribes = new Set<Unsubscribe>();
+
   readonly #knownRequests = new Set<CryptoVerificationRequestHandle>();
+
   readonly #cancelledRequests = new WeakSet<CryptoVerificationRequestHandle>();
+
   #startedVerification = false;
+
   #cancelPromise: Promise<void> | undefined;
 
   constructor(options: CryptoVerificationOperationOptions) {
@@ -194,10 +212,7 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     this.#tty = await this.#ttyFactory.open(CRYPTO_TTY_PATH);
     let targetAvailable: boolean;
     try {
-      targetAvailable = await this.#crypto.refreshDeviceKeys(
-        request.identity.userId,
-        request.targetDeviceId,
-      );
+      targetAvailable = await this.#crypto.refreshDeviceKeys(request.identity.userId, request.targetDeviceId);
     } catch {
       throw new CryptoVerificationError("protocol");
     }
@@ -221,17 +236,10 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
       if (sameTarget) {
         return;
       }
-      if (
-        incoming.initiatedByMe &&
-        sameUser &&
-        incoming.deviceId === ""
-      ) {
+      if (incoming.initiatedByMe && sameUser && incoming.deviceId === "") {
         return;
       }
-      if (
-        !sameUser ||
-        incoming.deviceId !== request.targetDeviceId
-      ) {
+      if (!sameUser || incoming.deviceId !== request.targetDeviceId) {
         this.#rememberRequest(incoming);
         void this.#cancelRequest(incoming);
       }
@@ -239,10 +247,7 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
 
     let selected: CryptoVerificationRequestHandle;
     try {
-      selected = await this.#crypto.requestDeviceVerification(
-        request.identity.userId,
-        request.targetDeviceId,
-      );
+      selected = await this.#crypto.requestDeviceVerification(request.identity.userId, request.targetDeviceId);
     } catch (error: unknown) {
       if (error instanceof CryptoVerificationError) {
         throw error;
@@ -255,10 +260,7 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
       // active request. Its result must still identify this client as the
       // initiator: the SDK may return an already-active incoming request.
       if (!selected.initiatedByMe) {
-        throw new CryptoVerificationError(
-          "protocol",
-          "Matrix verification request was not initiated by the bridge",
-        );
+        throw new CryptoVerificationError("protocol", "Matrix verification request was not initiated by the bridge");
       }
       this.#assertTarget(selected, request);
     } catch (error) {
@@ -346,10 +348,7 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     }
   }
 
-  async #waitForReady(
-    request: CryptoVerificationRequestHandle,
-    expected: CryptoVerificationRequest,
-  ): Promise<void> {
+  async #waitForReady(request: CryptoVerificationRequestHandle, expected: CryptoVerificationRequest): Promise<void> {
     const initialPhase = this.#requestPhase(request);
     if (initialPhase === "ready" || initialPhase === "started") {
       return;
@@ -389,11 +388,7 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
             finish(new CryptoVerificationError("cancelled"));
           }
         } catch (error) {
-          finish(
-            error instanceof CryptoVerificationError
-              ? error
-              : new CryptoVerificationError("protocol"),
-          );
+          finish(error instanceof CryptoVerificationError ? error : new CryptoVerificationError("protocol"));
         }
       };
       this.#requestChangeUnsubscribes.add(cleanup);
@@ -420,18 +415,12 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     }
   }
 
-  #assertTarget(
-    candidate: CryptoVerificationRequestHandle | undefined,
-    expected: CryptoVerificationRequest,
-  ): void {
+  #assertTarget(candidate: CryptoVerificationRequestHandle | undefined, expected: CryptoVerificationRequest): void {
     if (candidate === undefined) {
       throw new CryptoVerificationError("target_rejected");
     }
     try {
-      if (
-        candidate.userId !== expected.identity.userId ||
-        candidate.deviceId !== expected.targetDeviceId
-      ) {
+      if (candidate.userId !== expected.identity.userId || candidate.deviceId !== expected.targetDeviceId) {
         throw new CryptoVerificationError("target_rejected");
       }
     } catch (error) {
@@ -442,10 +431,7 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     }
   }
 
-  #watchTarget(
-    request: CryptoVerificationRequestHandle,
-    expected: CryptoVerificationRequest,
-  ): void {
+  #watchTarget(request: CryptoVerificationRequestHandle, expected: CryptoVerificationRequest): void {
     try {
       this.#targetChangeUnsubscribe = request.onChange(() => {
         try {

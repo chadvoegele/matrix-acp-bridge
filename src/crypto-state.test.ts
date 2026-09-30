@@ -1,28 +1,12 @@
 import assert from "node:assert/strict";
-import {
-  chmod,
-  lstat,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  CRYPTO_MANIFEST_FILE,
-  CRYPTO_MANIFEST_SCHEMA_VERSION,
-} from "./crypto-runtime.js";
+import { CRYPTO_MANIFEST_FILE, CRYPTO_MANIFEST_SCHEMA_VERSION } from "./crypto-runtime.js";
 import { acquireStateLock } from "./config.js";
-import {
-  CryptoStateError,
-  ensureCryptoDatabaseDirectory,
-  openCryptoStateStore,
-} from "./crypto-state.js";
+import { CryptoStateError, ensureCryptoDatabaseDirectory, openCryptoStateStore } from "./crypto-state.js";
 
 const identity = {
   homeserver: "https://matrix.example",
@@ -128,20 +112,39 @@ void test("first use and interrupted bootstrap expose private, distinct storage 
       assert.equal(Object.hasOwn(raw, forbidden), false);
     }
 
-    const reopened = await openCryptoStateStore({ stateDir, identity, fingerprints });
+    const reopened = await openCryptoStateStore({
+      stateDir,
+      identity,
+      fingerprints,
+    });
     assert.equal(reopened.status, "verified");
-    assert.deepEqual(reopened.getManifest(), { ...manifest(), sasVerified: true });
+    assert.deepEqual(reopened.getManifest(), {
+      ...manifest(),
+      sasVerified: true,
+    });
   });
 });
 
 void test("manifest parsing is strict, versioned, and fail-closed", async () => {
-  const cases: Array<{ readonly value: unknown; readonly category: CryptoStateError["category"] }> = [
+  const cases: Array<{
+    readonly value: unknown;
+    readonly category: CryptoStateError["category"];
+  }> = [
     { value: manifest({ extra: true }), category: "manifest-corrupt" },
     { value: manifest({ schemaVersion: 2 }), category: "unsupported-version" },
-    { value: manifest({ userId: "not-an-mxid" }), category: "manifest-corrupt" },
-    { value: manifest({ ed25519Fingerprint: "" }), category: "manifest-corrupt" },
-    { value: manifest({ sasVerified: true, bootstrapCompleted: false }), category: "manifest-corrupt" },
-    { value: "{\"schemaVersion\":1,", category: "manifest-corrupt" },
+    {
+      value: manifest({ userId: "not-an-mxid" }),
+      category: "manifest-corrupt",
+    },
+    {
+      value: manifest({ ed25519Fingerprint: "" }),
+      category: "manifest-corrupt",
+    },
+    {
+      value: manifest({ sasVerified: true, bootstrapCompleted: false }),
+      category: "manifest-corrupt",
+    },
+    { value: '{"schemaVersion":1,', category: "manifest-corrupt" },
   ];
 
   for (const { value, category } of cases) {
@@ -167,7 +170,12 @@ void test("identity and public-key fingerprints are bound without leaking metada
 
     await writeRawManifest(stateDir, manifest());
     const fingerprintError = await expectCryptoError(
-      () => openCryptoStateStore({ stateDir, identity, fingerprints: { ...fingerprints, ed25519Fingerprint: "changed" } }),
+      () =>
+        openCryptoStateStore({
+          stateDir,
+          identity,
+          fingerprints: { ...fingerprints, ed25519Fingerprint: "changed" },
+        }),
       "fingerprint-mismatch",
     );
     assert.equal(fingerprintError.message.includes("changed"), false);
@@ -240,10 +248,7 @@ void test("manifest writes are serialized, atomic, private, and clean up interru
   await withStateDir(async (stateDir) => {
     await ensureCryptoDatabaseDirectory(stateDir);
     const store = await openCryptoStateStore({ stateDir, identity });
-    await Promise.all([
-      store.recordBootstrap(fingerprints),
-      store.recordBootstrap(fingerprints),
-    ]);
+    await Promise.all([store.recordBootstrap(fingerprints), store.recordBootstrap(fingerprints)]);
     assert.equal(store.status, "bootstrapped");
     assert.equal((await readdir(stateDir)).filter((name) => name.endsWith(".tmp")).length, 0);
 
@@ -277,7 +282,10 @@ void test("write, file-fsync, rename, and directory-fsync failures are sanitized
       assert.equal(error.message.includes("raw access token"), false);
       assert.equal(store.getManifest()?.sasVerified, false);
       assert.equal((await lstat(store.manifestPath)).mode & 0o7777, 0o600);
-      assert.equal((await readdir(stateDir)).some((name) => name.endsWith(".tmp")), false);
+      assert.equal(
+        (await readdir(stateDir)).some((name) => name.endsWith(".tmp")),
+        false,
+      );
     });
   }
 });
@@ -288,7 +296,10 @@ void test("interrupted bootstrap temporary files are ignored and never parsed", 
     await chmod(join(stateDir, `.${CRYPTO_MANIFEST_FILE}.crash.tmp`), 0o600);
     const store = await openCryptoStateStore({ stateDir, identity });
     assert.equal(store.status, "first-use");
-    assert.equal((await readdir(stateDir)).some((name) => name.endsWith(".tmp")), false);
+    assert.equal(
+      (await readdir(stateDir)).some((name) => name.endsWith(".tmp")),
+      false,
+    );
   });
 });
 

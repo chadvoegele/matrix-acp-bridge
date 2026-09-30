@@ -2,11 +2,7 @@ import { createInboundAuthorizer } from "./authorization.js";
 import type { BridgeConfig } from "./config.js";
 import type { Clock } from "./clock.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
-import type {
-  InboundMatrixEvent,
-  MatrixSyncBatch,
-  MatrixSyncRoomBatch,
-} from "./matrix-client.js";
+import type { InboundMatrixEvent, MatrixSyncBatch, MatrixSyncRoomBatch } from "./matrix-client.js";
 import { BridgeStateError } from "./bridge-state.js";
 import type { BridgeStateStore, CompletedEventRoomInput } from "./bridge-state.js";
 import type { BridgeTerminalCompletion } from "./bridge.js";
@@ -69,21 +65,23 @@ function eligibleEvents(
       const authorizationEvent = event.isLive ? event : { ...event, isLive: true };
       const decision = authorizer.authorize(authorizationEvent);
       if (decision.accepted || decision.kind === "oversized") {
-        values.push(catchUp
-          ? {
-              ...event,
-              // Initial-sync events are history at the adapter boundary, but
-              // selected restart events are intentionally admitted through
-              // the ordinary live authorization path.
-              isLive: true,
-              isCatchUp: true,
-              timeline: {
-                phase: "incremental",
+        values.push(
+          catchUp
+            ? {
+                ...event,
+                // Initial-sync events are history at the adapter boundary, but
+                // selected restart events are intentionally admitted through
+                // the ordinary live authorization path.
+                isLive: true,
                 isCatchUp: true,
-                limited: room.limited,
-              },
-            }
-          : event);
+                timeline: {
+                  phase: "incremental",
+                  isCatchUp: true,
+                  limited: room.limited,
+                },
+              }
+            : event,
+        );
       }
     }
     selected.set(room.roomId, values);
@@ -93,14 +91,23 @@ function eligibleEvents(
 
 export class MatrixSyncCoordinator {
   readonly #config: BridgeConfig;
+
   readonly #bridge: SyncCoordinatorBridge;
+
   readonly #stateStore: BridgeStateStore;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #clock: Clock;
+
   readonly #onFatal: (error: FatalError) => void;
+
   readonly #dispatchedEventIds = new Set<string>();
+
   #startupBatch = true;
+
   #handling = false;
+
   #inFlight: Promise<void> | undefined;
 
   constructor(options: MatrixSyncCoordinatorOptions) {
@@ -214,18 +221,22 @@ export class MatrixSyncCoordinator {
               omittedCount: omitted.length,
               ageOmittedCount: tooOld.length,
               countOmittedCount: omitted.length - tooOld.length,
-              reason: tooOld.length === omitted.length
-                ? "age"
-                : (tooOld.length === 0 ? "count" : "age-and-count"),
+              reason: tooOld.length === omitted.length ? "age" : tooOld.length === 0 ? "count" : "age-and-count",
             });
           }
           selectedCount += keep.length;
         }
         await this.#compact(
           currentTimeline,
-          [...newlyTerminalByRoom.entries()].map(([roomId, eventIds]) => ({ roomId, eventIds })),
+          [...newlyTerminalByRoom.entries()].map(([roomId, eventIds]) => ({
+            roomId,
+            eventIds,
+          })),
         );
-        emit(this.#diagnostics, "info", "initial-sync-recovery-finished", { selectedCount, omittedCount });
+        emit(this.#diagnostics, "info", "initial-sync-recovery-finished", {
+          selectedCount,
+          omittedCount,
+        });
         this.#bridge.openIntake();
         this.#dispatchSelected(batch, selected);
         this.#bridge.enableDispatch();
@@ -265,10 +276,7 @@ export class MatrixSyncCoordinator {
     }
   }
 
-  #dispatchSelected(
-    batch: MatrixSyncBatch,
-    selected: ReadonlyMap<string, readonly InboundMatrixEvent[]>,
-  ): void {
+  #dispatchSelected(batch: MatrixSyncBatch, selected: ReadonlyMap<string, readonly InboundMatrixEvent[]>): void {
     for (const room of batch.rooms) {
       const selectedById = new Map(
         (selected.get(room.roomId) ?? [])
@@ -343,13 +351,18 @@ export class MatrixSyncCoordinator {
         byRoom.set(room.roomId, eventIds);
       }
     }
-    return [...byRoom.entries()].map(([roomId, eventIds]) => ({ roomId, eventIds }));
+    return [...byRoom.entries()].map(([roomId, eventIds]) => ({
+      roomId,
+      eventIds,
+    }));
   }
 
   #terminalRooms(rooms: readonly MatrixSyncRoomBatch[]): CompletedEventRoomInput[] {
-    return rooms.flatMap((room) => room.terminalEventIds === undefined || room.terminalEventIds.length === 0
-      ? []
-      : [{ roomId: room.roomId, eventIds: room.terminalEventIds }]);
+    return rooms.flatMap((room) =>
+      room.terminalEventIds === undefined || room.terminalEventIds.length === 0
+        ? []
+        : [{ roomId: room.roomId, eventIds: room.terminalEventIds }],
+    );
   }
 
   #isTooOld(event: InboundMatrixEvent, now: number, maxAgeMs: number): boolean {

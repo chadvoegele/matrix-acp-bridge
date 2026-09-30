@@ -25,6 +25,7 @@ function waitFor(request, predicate, timeoutMs = 120_000) {
         finish(error);
       }
     });
+
     function finish(error) {
       clearTimeout(timer);
       unsubscribe();
@@ -35,7 +36,9 @@ function waitFor(request, predicate, timeoutMs = 120_000) {
 }
 
 let resolveDecision;
-const decision = new Promise((resolve) => { resolveDecision = resolve; });
+const decision = new Promise((resolve) => {
+  resolveDecision = resolve;
+});
 process.once("SIGUSR1", () => resolveDecision("confirm"));
 process.once("SIGHUP", () => resolveDecision("mismatch"));
 
@@ -43,8 +46,8 @@ async function handle(request) {
   if (["cancelled", "done"].includes(request.phase)) return;
   phase = "request-received";
   if (activeRequest !== undefined) {
-    const sameTarget = request.userId === expectedUserId &&
-      (request.deviceId === "" || request.deviceId === expectedDeviceId);
+    const sameTarget =
+      request.userId === expectedUserId && (request.deviceId === "" || request.deviceId === expectedDeviceId);
     if (sameTarget) return;
     await request.cancel().catch(() => {});
     return;
@@ -56,8 +59,10 @@ async function handle(request) {
   activeRequest = request;
   if (request.userId === "" || request.deviceId === "") {
     phase = "request-identification";
-    await waitFor(request, () =>
-      (request.userId !== "" && request.deviceId !== "") || ["cancelled", "done"].includes(request.phase));
+    await waitFor(
+      request,
+      () => (request.userId !== "" && request.deviceId !== "") || ["cancelled", "done"].includes(request.phase),
+    );
   }
   if (request.userId !== expectedUserId || request.deviceId !== expectedDeviceId) {
     await request.cancel().catch(() => {});
@@ -106,11 +111,18 @@ async function handle(request) {
 }
 
 const done = new Promise((resolve, reject) => {
-  crypto.onVerificationRequest((request) => void handle(request).then(resolve, () => {
-    activeRequest = undefined;
-    emit({ event: "verification-attempt-failed", phase, reason: "attempt-failed" });
-    reject(new Error("verification attempt failed"));
-  }));
+  crypto.onVerificationRequest(
+    (request) =>
+      void handle(request).then(resolve, () => {
+        activeRequest = undefined;
+        emit({
+          event: "verification-attempt-failed",
+          phase,
+          reason: "attempt-failed",
+        });
+        reject(new Error("verification attempt failed"));
+      }),
+  );
 });
 
 async function close() {

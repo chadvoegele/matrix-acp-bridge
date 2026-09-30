@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type {
-  MatrixEventId,
-  MatrixRoomId,
-} from "./matrix-client.js";
+import type { MatrixEventId, MatrixRoomId } from "./matrix-client.js";
 import type { AcpOutcome, AcpStopReason } from "./acp-client.js";
 import { utf8ByteLength } from "./text-utils.js";
 
@@ -162,9 +159,7 @@ export function truncateAgentText(value: string, maxOutputBytes: number): string
   assertPositiveInteger(maxOutputBytes, "maxOutputBytes");
   const markerBytes = utf8ByteLength(OUTPUT_TRUNCATION_MARKER);
   if (maxOutputBytes < markerBytes) {
-    throw new RangeError(
-      `maxOutputBytes must be at least ${markerBytes} bytes for the truncation marker`,
-    );
+    throw new RangeError(`maxOutputBytes must be at least ${markerBytes} bytes for the truncation marker`);
   }
   if (utf8ByteLength(value) <= maxOutputBytes) {
     return value;
@@ -172,11 +167,7 @@ export function truncateAgentText(value: string, maxOutputBytes: number): string
   return `${codePointPrefix(value, maxOutputBytes - markerBytes)}${OUTPUT_TRUNCATION_MARKER}`;
 }
 
-function lastParagraphBoundary(
-  value: string,
-  start: number,
-  maxEnd: number,
-): number | undefined {
+function lastParagraphBoundary(value: string, start: number, maxEnd: number): number | undefined {
   let last: number | undefined;
   let index = value.indexOf("\n\n", start);
   while (index >= 0) {
@@ -192,11 +183,7 @@ function lastParagraphBoundary(
   return last;
 }
 
-function lastLineBoundary(
-  value: string,
-  start: number,
-  maxEnd: number,
-): number | undefined {
+function lastLineBoundary(value: string, start: number, maxEnd: number): number | undefined {
   let last: number | undefined;
   let index = value.indexOf("\n", start);
   while (index >= 0) {
@@ -212,11 +199,7 @@ function lastLineBoundary(
   return last;
 }
 
-function lastGraphemeBoundary(
-  value: string,
-  start: number,
-  maxEnd: number,
-): number | undefined {
+function lastGraphemeBoundary(value: string, start: number, maxEnd: number): number | undefined {
   const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   const remainder = value.slice(start);
   let last: number | undefined;
@@ -262,11 +245,7 @@ function fittingChunkEnd(value: string, start: number, maxBytes: number): number
   );
 }
 
-function splitWithAssumedPartCount(
-  value: string,
-  maxMatrixMessageBytes: number,
-  assumedPartCount: number,
-): string[] {
+function splitWithAssumedPartCount(value: string, maxMatrixMessageBytes: number, assumedPartCount: number): string[] {
   const parts: string[] = [];
   let offset = 0;
   while (offset < value.length) {
@@ -291,19 +270,13 @@ function splitWithAssumedPartCount(
  * Split a rendered response into bounded Matrix bodies.  Multipart prefixes
  * are solved iteratively because their denominator contributes to capacity.
  */
-export function splitMatrixResponseText(
-  value: string,
-  maxMatrixMessageBytes: number,
-): string[] {
+export function splitMatrixResponseText(value: string, maxMatrixMessageBytes: number): string[] {
   assertPositiveInteger(maxMatrixMessageBytes, "maxMatrixMessageBytes");
   if (utf8ByteLength(value) <= maxMatrixMessageBytes) {
     return [value];
   }
 
-  let assumedPartCount = Math.max(
-    2,
-    Math.ceil(utf8ByteLength(value) / maxMatrixMessageBytes),
-  );
+  let assumedPartCount = Math.max(2, Math.ceil(utf8ByteLength(value) / maxMatrixMessageBytes));
   const seen = new Set<number>();
 
   // Prefix lengths change only when a part-count or part-number digit count
@@ -313,11 +286,7 @@ export function splitMatrixResponseText(
       break;
     }
     seen.add(assumedPartCount);
-    const parts = splitWithAssumedPartCount(
-      value,
-      maxMatrixMessageBytes,
-      assumedPartCount,
-    );
+    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, assumedPartCount);
     if (parts.length === assumedPartCount) {
       return parts;
     }
@@ -350,26 +319,29 @@ function validateTransactionPartNumber(value: number): void {
 
 /** Compute the stable Matrix transaction ID for one rendered response part. */
 export function computeMatrixTransactionId(input: TransactionIdInput): string;
+
 export function computeMatrixTransactionId(
   roomId: MatrixRoomId,
   inboundEventId: MatrixEventId,
   responseKind: MatrixResponseKind,
   oneBasedPartNumber: number,
 ): string;
+
 export function computeMatrixTransactionId(
   inputOrRoomId: TransactionIdInput | MatrixRoomId,
   inboundEventId?: MatrixEventId,
   responseKind?: MatrixResponseKind,
   oneBasedPartNumber?: number,
 ): string {
-  const input: TransactionIdInput = typeof inputOrRoomId === "string"
-    ? {
-        roomId: inputOrRoomId,
-        inboundEventId: inboundEventId as MatrixEventId,
-        responseKind: responseKind as MatrixResponseKind,
-        oneBasedPartNumber: oneBasedPartNumber as number,
-      }
-    : inputOrRoomId;
+  const input: TransactionIdInput =
+    typeof inputOrRoomId === "string"
+      ? {
+          roomId: inputOrRoomId,
+          inboundEventId: inboundEventId as MatrixEventId,
+          responseKind: responseKind as MatrixResponseKind,
+          oneBasedPartNumber: oneBasedPartNumber as number,
+        }
+      : inputOrRoomId;
   if (typeof input.roomId !== "string" || typeof input.inboundEventId !== "string") {
     throw new TypeError("transaction IDs require string room and event IDs");
   }
@@ -427,20 +399,18 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
     };
   }
 
-  if (
-    outcome.kind === "method_error" ||
-    outcome.kind === "transport_error" ||
-    outcome.kind === "protocol_error"
-  ) {
+  if (outcome.kind === "method_error" || outcome.kind === "transport_error" || outcome.kind === "protocol_error") {
     return { responseKind: "error", agentText: "" };
   }
 
-  if (!STATUS_KINDS.has(outcome.kind) &&
-      outcome.kind !== "agent" &&
-      outcome.kind !== "empty" &&
-      outcome.kind !== "busy" &&
-      outcome.kind !== "oversized" &&
-      outcome.kind !== "reset") {
+  if (
+    !STATUS_KINDS.has(outcome.kind) &&
+    outcome.kind !== "agent" &&
+    outcome.kind !== "empty" &&
+    outcome.kind !== "busy" &&
+    outcome.kind !== "oversized" &&
+    outcome.kind !== "reset"
+  ) {
     throw new TypeError(`unsupported response kind: ${String(outcome.kind)}`);
   }
 
@@ -450,10 +420,7 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
   };
 }
 
-function normalizeResponseText(
-  outcome: RenderableResponse,
-  maxOutputBytes: number,
-): NormalizedResponseText {
+function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: number): NormalizedResponseText {
   const descriptor = descriptorFromOutcome(outcome);
   const { responseKind, agentText } = descriptor;
 
@@ -492,16 +459,10 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
     throw new TypeError("responses require string room and inbound event IDs");
   }
   assertPositiveInteger(request.maxOutputBytes, "maxOutputBytes");
-  assertPositiveInteger(
-    request.maxMatrixMessageBytes,
-    "maxMatrixMessageBytes",
-  );
+  assertPositiveInteger(request.maxMatrixMessageBytes, "maxMatrixMessageBytes");
 
   const normalized = normalizeResponseText(request.outcome, request.maxOutputBytes);
-  const bodies = splitMatrixResponseText(
-    normalized.text,
-    request.maxMatrixMessageBytes,
-  );
+  const bodies = splitMatrixResponseText(normalized.text, request.maxMatrixMessageBytes);
   const partCount = bodies.length;
 
   return bodies.map((body, index) => {
@@ -523,9 +484,8 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
   });
 }
 
-export function renderMatrixResponse(
-  request: RenderMatrixResponseRequest,
-): RenderedMatrixPart[];
+export function renderMatrixResponse(request: RenderMatrixResponseRequest): RenderedMatrixPart[];
+
 export function renderMatrixResponse(
   roomId: MatrixRoomId,
   inboundEventId: MatrixEventId,
@@ -533,10 +493,9 @@ export function renderMatrixResponse(
   maxOutputBytes: number,
   maxMatrixMessageBytes: number,
 ): RenderedMatrixPart[];
-export function renderMatrixResponse(
-  outcome: RenderableResponse,
-  context: ResponseRenderContext,
-): RenderedMatrixPart[];
+
+export function renderMatrixResponse(outcome: RenderableResponse, context: ResponseRenderContext): RenderedMatrixPart[];
+
 export function renderMatrixResponse(
   requestOrRoomId: RenderMatrixResponseRequest | RenderableResponse | MatrixRoomId,
   inboundEventIdOrContext?: MatrixEventId | ResponseRenderContext,

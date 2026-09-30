@@ -1,16 +1,23 @@
 export function isSafeHomeserver(value: string): boolean {
-  // eslint-disable-next-line no-control-regex -- homeserver values reject ASCII controls
-  if (value.length === 0 || /\s/u.test(value) || value.includes("\\") || /[\u0000-\u001F\u007F]/u.test(value)) {
+  if (
+    value.length === 0 ||
+    /\s/u.test(value) ||
+    value.includes("\\") ||
+    // eslint-disable-next-line no-control-regex -- homeserver values reject ASCII controls
+    /[\u0000-\u001F\u007F]/u.test(value)
+  ) {
     return false;
   }
   try {
     const url = new URL(value);
-    return url.protocol === "https:" &&
+    return (
+      url.protocol === "https:" &&
       url.username.length === 0 &&
       url.password.length === 0 &&
       !value.includes("?") &&
       !value.includes("#") &&
-      url.hostname.length > 0;
+      url.hostname.length > 0
+    );
   } catch {
     return false;
   }
@@ -23,8 +30,10 @@ export function isMatrixId(value: string, prefix: "@" | "!"): boolean {
   }
   const localpart = value.slice(1, separator);
   const serverName = value.slice(separator + 1);
-  // eslint-disable-next-line no-control-regex -- Matrix localparts reject ASCII controls
-  return /^[^\s\u0000-\u001F\u007F:[\],]+$/u.test(localpart) && isMatrixServerName(serverName);
+  return (
+    // eslint-disable-next-line no-control-regex -- Matrix localparts reject ASCII controls
+    /^[^\s\u0000-\u001F\u007F:[\],]+$/u.test(localpart) && isMatrixServerName(serverName)
+  );
 }
 
 export function isMatrixServerName(value: string): boolean {
@@ -50,10 +59,10 @@ export function isValidMatrixEventId(value: unknown): value is string {
     const codePoint = character.codePointAt(0);
     if (
       codePoint === undefined ||
-      codePoint <= 0x1F ||
-      codePoint === 0x7F ||
-      (codePoint >= 0x80 && codePoint <= 0x9F) ||
-      (codePoint >= 0xD8_00 && codePoint <= 0xDF_FF) ||
+      codePoint <= 0x1f ||
+      codePoint === 0x7f ||
+      (codePoint >= 0x80 && codePoint <= 0x9f) ||
+      (codePoint >= 0xd8_00 && codePoint <= 0xdf_ff) ||
       /\s/u.test(character)
     ) {
       return false;

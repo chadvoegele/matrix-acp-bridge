@@ -55,7 +55,7 @@ The first post-restart `/sync` request was an initial sync without `since`, so S
 The bridge called its wrapper with `startClient({ since: cursor })`, but the default client factory discarded that option before calling the real SDK:
 
 ```ts
-client.startClient()
+client.startClient();
 ```
 
 The bridge also called `store.setSyncToken(cursor)`. In matrix-js-sdk 42, that sets the current loop token but does not populate `getSavedSyncToken()`, which the SDK uses to choose the first request. The default in-memory store returned `null`, so the SDK chose initial sync.

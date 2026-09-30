@@ -52,6 +52,7 @@ export interface BridgeConfig {
 
 /** The largest delay accepted by Node's timer APIs. */
 export const MAX_NODE_TIMER_MILLISECONDS = 2 ** 31 - 1;
+
 export const MAX_CONFIGURATION_INTEGER = 2 ** 31 - 1;
 
 export const DEFAULT_LIMITS: BridgeLimits = {
@@ -148,16 +149,14 @@ export class StateLock implements StateLockLike {
   readonly lockPath: string;
 
   private readonly child: ChildProcess;
+
   private readonly liveness: Writable;
+
   private readonly exited: Promise<void>;
+
   private isReleased = false;
 
-  constructor(
-    lockPath: string,
-    child: ChildProcess,
-    liveness: Writable,
-    exited: Promise<void>,
-  ) {
+  constructor(lockPath: string, child: ChildProcess, liveness: Writable, exited: Promise<void>) {
     this.lockPath = lockPath;
     this.child = child;
     this.liveness = liveness;
@@ -301,11 +300,7 @@ export async function acquireStateLock(stateDir: string): Promise<StateLock> {
 
     const child = spawn(
       "sh",
-      [
-        "-c",
-        "flock -n 3 || exit 1; printf ready >&4; exec cat <&5 >/dev/null",
-        "matrix-acp-state-lock",
-      ],
+      ["-c", "flock -n 3 || exit 1; printf ready >&4; exec cat <&5 >/dev/null", "matrix-acp-state-lock"],
       {
         stdio: ["ignore", "ignore", "ignore", lockFile.fd, "pipe", "pipe"],
       },
@@ -325,10 +320,7 @@ export async function acquireStateLock(stateDir: string): Promise<StateLock> {
 }
 
 /** Create a new private state file with owner-only read/write permissions. */
-export async function openPrivateStateFile(
-  stateDir: string,
-  fileName: string,
-): Promise<FileHandle> {
+export async function openPrivateStateFile(stateDir: string, fileName: string): Promise<FileHandle> {
   const normalizedStateDir = await ensurePrivateStateDirectory(stateDir);
   if (
     typeof fileName !== "string" ||
@@ -345,11 +337,7 @@ export async function openPrivateStateFile(
   const filePath = join(normalizedStateDir, fileName);
   let handle: FileHandle;
   try {
-    handle = await fs.open(
-      filePath,
-      constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | NOFOLLOW,
-      0o600,
-    );
+    handle = await fs.open(filePath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | NOFOLLOW, 0o600);
   } catch {
     throw new ConfigurationError("Unable to create the private state file");
   }
@@ -421,12 +409,7 @@ async function readConfigurationFile(configPath: string): Promise<string> {
   }
 }
 
-function validateShape(
-  stateDir: string,
-  matrix: MatrixConfig,
-  acp: AcpConfig,
-  limits: BridgeLimits,
-): void {
+function validateShape(stateDir: string, matrix: MatrixConfig, acp: AcpConfig, limits: BridgeLimits): void {
   requireAbsolutePath(stateDir, "state_dir");
   requireAbsolutePath(matrix.accessTokenFile, "matrix.access_token_file");
   requireAbsolutePath(acp.cwd, "acp.cwd");
@@ -436,9 +419,7 @@ function validateShape(
   requireMatrixIdList(matrix.allowedRooms, "matrix.allowed_rooms", "!");
   requireMatrixIdList(matrix.allowedSenders, "matrix.allowed_senders", "@");
   if (matrix.encryption !== "disabled" && matrix.encryption !== "required") {
-    throw new ConfigurationError(
-      'matrix.encryption must be either "disabled" or "required"',
-    );
+    throw new ConfigurationError('matrix.encryption must be either "disabled" or "required"');
   }
   validateLimits(limits);
 }
@@ -480,12 +461,7 @@ function validateLimits(limits: BridgeLimits): void {
 }
 
 function requireAbsolutePath(value: string, field: string): void {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.includes("\u0000") ||
-    !isAbsolute(value)
-  ) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\u0000") || !isAbsolute(value)) {
     throw new ConfigurationError(`${field} must be an absolute path`);
   }
 }
@@ -533,11 +509,7 @@ function requireMatrixId(value: string, field: string, prefix: "@" | "!"): void 
   }
 }
 
-function requireMatrixIdList(
-  values: readonly string[],
-  field: string,
-  prefix: "@" | "!",
-): void {
+function requireMatrixIdList(values: readonly string[], field: string, prefix: "@" | "!"): void {
   if (!Array.isArray(values) || values.length === 0) {
     throw new ConfigurationError(`${field} must contain at least one entry`);
   }
@@ -616,11 +588,7 @@ function requiredString(entries: ReadonlyMap<string, TomlValue>, table: TomlTabl
   return value;
 }
 
-function requiredStringArray(
-  entries: ReadonlyMap<string, TomlValue>,
-  table: TomlTable,
-  key: string,
-): string[] {
+function requiredStringArray(entries: ReadonlyMap<string, TomlValue>, table: TomlTable, key: string): string[] {
   const value = entries.get(entryName(table, key));
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw new ConfigurationError(`${entryName(table, key)} must be an array of strings`);
@@ -634,9 +602,7 @@ function requiredEncryption(entries: ReadonlyMap<string, TomlValue>): Encryption
     throw new ConfigurationError("matrix.encryption must be a string");
   }
   if (value !== "disabled" && value !== "required") {
-    throw new ConfigurationError(
-      'matrix.encryption must be either "disabled" or "required"',
-    );
+    throw new ConfigurationError('matrix.encryption must be either "disabled" or "required"');
   }
   return value;
 }
@@ -690,11 +656,7 @@ async function validateCwdPath(cwd: string): Promise<string> {
   }
 }
 
-async function validateExistingPath(
-  rawPath: string,
-  field: string,
-  expected: "file" | "directory",
-): Promise<string> {
+async function validateExistingPath(rawPath: string, field: string, expected: "file" | "directory"): Promise<string> {
   const normalized = resolve(rawPath);
   await walkPathComponents(rawPath, field, false);
   let stat: Stats;
@@ -741,11 +703,7 @@ export async function validatePrivateStateDirectory(rawPath: string): Promise<st
   return ensurePrivateStateDirectory(rawPath);
 }
 
-async function walkPathComponents(
-  rawPath: string,
-  field: string,
-  createMissing: boolean,
-): Promise<void> {
+async function walkPathComponents(rawPath: string, field: string, createMissing: boolean): Promise<void> {
   const root = parsePath(rawPath).root;
   let current = root;
   const remainder = rawPath

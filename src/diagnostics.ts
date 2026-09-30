@@ -5,7 +5,9 @@ import type { Clock } from "./clock.js";
 import type { Unsubscribe } from "./cancellation.js";
 
 export type DiagnosticLevel = "debug" | "info" | "warn" | "error";
+
 export type DiagnosticValue = string | number | boolean | null;
+
 export type DiagnosticFields = Readonly<Record<string, DiagnosticValue>>;
 
 export interface DiagnosticRecord {
@@ -24,13 +26,7 @@ export interface DiagnosticSink {
 }
 
 export type FatalErrorCode =
-  | "startup"
-  | "acp_transport"
-  | "acp_protocol"
-  | "matrix_transport"
-  | "matrix_invariant"
-  | "state"
-  | "shutdown";
+  "startup" | "acp_transport" | "acp_protocol" | "matrix_transport" | "matrix_invariant" | "state" | "shutdown";
 
 export interface FatalError {
   readonly code: FatalErrorCode;
@@ -67,9 +63,7 @@ function defaultWriter(line: string): void {
 }
 
 function orderedFields(fields: DiagnosticFields): DiagnosticFields {
-  return Object.fromEntries(
-    Object.entries(fields).sort(([left], [right]) => left.localeCompare(right)),
-  );
+  return Object.fromEntries(Object.entries(fields).sort(([left], [right]) => left.localeCompare(right)));
 }
 
 /**
@@ -80,6 +74,7 @@ function orderedFields(fields: DiagnosticFields): DiagnosticFields {
  */
 export class StderrDiagnosticSink implements DiagnosticSink {
   readonly #clock: Clock;
+
   readonly #writeLine: DiagnosticWriter;
 
   constructor(options: StderrDiagnosticSinkOptions = {}) {
@@ -130,9 +125,7 @@ export class StderrDiagnosticSink implements DiagnosticSink {
   }
 }
 
-export function createStderrDiagnosticSink(
-  options: StderrDiagnosticSinkOptions = {},
-): DiagnosticSink {
+export function createStderrDiagnosticSink(options: StderrDiagnosticSinkOptions = {}): DiagnosticSink {
   return new StderrDiagnosticSink(options);
 }
 
@@ -170,21 +163,19 @@ function rateLimitKey(fields: DiagnosticFields): string | undefined {
  */
 export class RateLimitedDiagnosticSink implements DiagnosticSink {
   readonly #delegate: DiagnosticSink;
+
   readonly #clock: Clock;
+
   readonly #burst: number;
+
   readonly #refillIntervalMs: number;
+
   readonly #buckets = new Map<string, DiagnosticBucket>();
 
-  constructor(
-    delegate: DiagnosticSink,
-    options: RateLimitedDiagnosticSinkOptions = {},
-  ) {
+  constructor(delegate: DiagnosticSink, options: RateLimitedDiagnosticSinkOptions = {}) {
     this.#delegate = delegate;
     this.#clock = options.clock ?? systemClock;
-    this.#burst = requirePositiveFiniteNumber(
-      options.burst ?? DEFAULT_DIAGNOSTIC_BURST,
-      "diagnostic burst",
-    );
+    this.#burst = requirePositiveFiniteNumber(options.burst ?? DEFAULT_DIAGNOSTIC_BURST, "diagnostic burst");
     this.#refillIntervalMs = requirePositiveFiniteNumber(
       options.refillIntervalMs ?? DEFAULT_DIAGNOSTIC_REFILL_INTERVAL_MS,
       "diagnostic refill interval",
@@ -254,10 +245,7 @@ export class RateLimitedDiagnosticSink implements DiagnosticSink {
       return;
     }
 
-    bucket.tokens = Math.min(
-      this.#burst,
-      bucket.tokens + elapsed / this.#refillIntervalMs,
-    );
+    bucket.tokens = Math.min(this.#burst, bucket.tokens + elapsed / this.#refillIntervalMs);
     bucket.lastRefillAt = now;
   }
 }

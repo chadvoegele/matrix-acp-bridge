@@ -1,14 +1,27 @@
 // Summarize bridge verification failures without exposing Matrix or ACP data.
 const REASONS = new Set([
-  "target_rejected", "method_rejected", "operator_rejected", "cancelled", "timeout",
-  "protocol", "tty", "manifest", "attempt-failed", "verification-failed", "unknown",
+  "target_rejected",
+  "method_rejected",
+  "operator_rejected",
+  "cancelled",
+  "timeout",
+  "protocol",
+  "tty",
+  "manifest",
+  "attempt-failed",
+  "verification-failed",
+  "unknown",
 ]);
 
 export class SasBridgeDiagnostics {
   #pending = "";
+
   reason;
+
   lastEvent = "none";
+
   stdoutSeen = false;
+
   stderrSeen = false;
 
   accept(chunk) {
@@ -30,10 +43,17 @@ export class SasBridgeDiagnostics {
 
   #acceptLine(line) {
     // `script` runs the bridge in a PTY; strip its terminal escapes before parsing.
-    // eslint-disable-next-line no-control-regex -- strip terminal escape sequences
-    const clean = line.replaceAll("\r", "").replaceAll(/\u001B\[[0-?]*[ -/]*[@-~]/gu, "").trim();
+    const clean = line
+      .replaceAll("\r", "")
+      // eslint-disable-next-line no-control-regex -- strip terminal escape sequences
+      .replaceAll(/\u001B\[[0-?]*[ -/]*[@-~]/gu, "")
+      .trim();
     let record;
-    try { record = JSON.parse(clean); } catch { return; }
+    try {
+      record = JSON.parse(clean);
+    } catch {
+      return;
+    }
     if (record?.event === "crypto-verification-failed") {
       this.lastEvent = "crypto-verification-failed";
       this.reason = REASONS.has(record.fields?.reason) ? record.fields.reason : "unknown";

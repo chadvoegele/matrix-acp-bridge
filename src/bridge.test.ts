@@ -64,12 +64,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
   };
 }
 
-function event(
-  eventId: string | undefined,
-  roomId = ROOM_ONE,
-  body = "hello",
-  sender = SENDER,
-): InboundMatrixEvent {
+function event(eventId: string | undefined, roomId = ROOM_ONE, body = "hello", sender = SENDER): InboundMatrixEvent {
   return {
     roomId,
     sender,
@@ -101,20 +96,36 @@ async function waitFor(condition: () => boolean): Promise<void> {
 
 class FakeMatrix implements MatrixClientAdapter {
   readonly sent: RenderedMatrixPart[] = [];
+
   readonly fatal = new Set<FatalErrorListener>();
+
   readonly syncState = new Set<(change: MatrixSyncStateChange) => void>();
+
   readonly syncBatch = new Set<(batch: MatrixSyncBatch) => void | Promise<void>>();
-  readonly typing: Array<{ roomId: string; isTyping: boolean; timeoutMs: number }> = [];
+
+  readonly typing: Array<{
+    roomId: string;
+    isTyping: boolean;
+    timeoutMs: number;
+  }> = [];
+
   readonly receipts: Array<{ roomId: string; eventId: string }> = [];
+
   readonly operationOrder: string[] = [];
+
   intakeStopped = false;
+
   stopped = false;
+
   send: (part: RenderedMatrixPart) => Promise<void> = async (part) => {
     this.sent.push(part);
   };
 
   whoAmI(): Promise<MatrixIdentity> {
-    return Promise.resolve({ userId: "@bridge:example.org", deviceId: "BRIDGE" });
+    return Promise.resolve({
+      userId: "@bridge:example.org",
+      deviceId: "BRIDGE",
+    });
   }
 
   onFatalError(listener: FatalErrorListener): Unsubscribe {
@@ -163,7 +174,9 @@ class FakeMatrix implements MatrixClientAdapter {
 
 class FakeLiveMatrix extends FakeMatrix {
   readonly html: MatrixHtmlMessage[] = [];
+
   readonly attempts: MatrixHtmlMessage[] = [];
+
   htmlSend: (message: MatrixHtmlMessage) => Promise<string> = async (message) => {
     this.html.push(message);
     return message.targetEventId ?? `$live-${this.html.length}:example.org`;
@@ -177,20 +190,29 @@ class FakeLiveMatrix extends FakeMatrix {
 
 class FakeAcp implements AcpClient {
   readonly promptCalls: Array<{ sessionId: string; text: string }> = [];
+
   readonly cancelCalls: string[] = [];
+
   readonly updates = new Set<(update: AcpUpdate) => void>();
+
   readonly fatal = new Set<FatalErrorListener>();
+
   sessionCount = 0;
+
   readonly loadCalls: string[] = [];
+
   readonly loadOptions: AcpSessionLoadOptions[] = [];
+
   loadSessionImpl: (options: AcpSessionLoadOptions) => Promise<AcpSession> = async (options) => ({
     sessionId: options.sessionId,
   });
-  promptImpl: (
-    sessionId: string,
-    text: string,
-    cancellation: CancellationSignal,
-  ) => Promise<AcpOutcome> = async () => ({ kind: "turn", stopReason: "end_turn" });
+
+  promptImpl: (sessionId: string, text: string, cancellation: CancellationSignal) => Promise<AcpOutcome> =
+    async () => ({
+      kind: "turn",
+      stopReason: "end_turn",
+    });
+
   closed = false;
 
   initialize(): Promise<{ protocolVersion: 1 }> {
@@ -250,7 +272,11 @@ void test("records valid IDs before policy, silently ignores missing IDs, and ev
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
-  acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "reinserted" });
+  acp.promptImpl = async () => ({
+    kind: "turn",
+    stopReason: "end_turn",
+    text: "reinserted",
+  });
   const bridge = new BridgeCoordinator({
     config: config({ maxConcurrentPrompts: 1 }),
     acp,
@@ -305,15 +331,25 @@ void test("buffers startup events within active-plus-waiting capacity and recove
   bridge.enableDispatch();
   await flush();
   assert.equal(acp.promptCalls.length, 1);
-  promptResults.shift()!({ kind: "method_error", operation: "session_prompt", fatal: false });
+  promptResults.shift()!({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await flush();
   assert.equal(acp.promptCalls.length, 2);
   promptResults.shift()!({ kind: "turn", stopReason: "end_turn", text: "two" });
   await flush();
   clock.advanceBy(300);
   await Promise.all([first, second]);
-  assert.equal(matrix.sent.some((part) => part.content.body === "[agent error]"), true);
-  assert.equal(matrix.sent.some((part) => part.content.body === "two"), true);
+  assert.equal(
+    matrix.sent.some((part) => part.content.body === "[agent error]"),
+    true,
+  );
+  assert.equal(
+    matrix.sent.some((part) => part.content.body === "two"),
+    true,
+  );
   await bridge.stop();
 });
 
@@ -336,19 +372,24 @@ void test("keeps room sessions isolated and releases the prompt permit before dr
   assert.equal(acp.promptCalls.length, 1);
   assert.equal(acp.promptCalls[0]?.text, "room one");
 
-  resolvers.shift()!({ kind: "turn", stopReason: "end_turn", text: "answer one" });
+  resolvers.shift()!({
+    kind: "turn",
+    stopReason: "end_turn",
+    text: "answer one",
+  });
   await flush();
   assert.equal(acp.promptCalls.length, 2);
   assert.equal(acp.promptCalls[1]?.text, "room two");
   assert.notEqual(acp.promptCalls[0]?.sessionId, acp.promptCalls[1]?.sessionId);
-  resolvers.shift()!({ kind: "turn", stopReason: "end_turn", text: "answer two" });
+  resolvers.shift()!({
+    kind: "turn",
+    stopReason: "end_turn",
+    text: "answer two",
+  });
   await flush();
   clock.advanceBy(300);
   await Promise.all([first, second]);
-  assert.deepEqual(
-    matrix.sent.map((part) => part.content.body).sort(),
-    ["answer one", "answer two"],
-  );
+  assert.deepEqual(matrix.sent.map((part) => part.content.body).sort(), ["answer one", "answer two"]);
   await bridge.stop();
 });
 
@@ -357,30 +398,52 @@ void test("correlates message IDs, drains trailing output, and ignores stale chu
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise<AcpOutcome>((resolve) => {
-    resolvePrompt = resolve;
+  acp.promptImpl = () =>
+    new Promise<AcpOutcome>((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
   });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
 
   const completion = bridge.handleTimelineEvent(event("$turn:example.org"));
   await flush();
   const sessionId = acp.promptCalls[0]?.sessionId;
   assert.ok(sessionId);
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "message-a", text: "one" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "message-a",
+    text: "one",
+  });
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "message-b", text: "two" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "message-b",
+    text: "two",
+  });
   clock.advanceBy(300);
   await completion;
   assert.equal(matrix.sent[0]?.content.body, "one\n\ntwo");
 
   let secondResolve!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise<AcpOutcome>((resolve) => {
-    secondResolve = resolve;
-  });
+  acp.promptImpl = () =>
+    new Promise<AcpOutcome>((resolve) => {
+      secondResolve = resolve;
+    });
   const second = bridge.handleTimelineEvent(event("$turn-two:example.org"));
   await flush();
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "message-a", text: "stale" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "message-a",
+    text: "stale",
+  });
   secondResolve({ kind: "turn", stopReason: "end_turn", text: "fresh" });
   await flush();
   clock.advanceBy(300);
@@ -394,9 +457,10 @@ void test("turn deadlines cancel once and render a timeout without waiting for t
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise<AcpOutcome>((resolve) => {
-    resolvePrompt = resolve;
-  });
+  acp.promptImpl = () =>
+    new Promise<AcpOutcome>((resolve) => {
+      resolvePrompt = resolve;
+    });
   const bridge = new BridgeCoordinator({
     config: config({ maxTurnSeconds: 1 }),
     acp,
@@ -439,10 +503,16 @@ void test("fatal drain-cap output never gets attributed to a Matrix response", a
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise<AcpOutcome>((resolve) => {
-    resolvePrompt = resolve;
+  acp.promptImpl = () =>
+    new Promise<AcpOutcome>((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
   });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
   const fatal: FatalError[] = [];
   bridge.onFatalError((error) => fatal.push(error));
 
@@ -453,7 +523,12 @@ void test("fatal drain-cap output never gets attributed to a Matrix response", a
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(29_900);
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "changing", text: "first" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "changing",
+    text: "first",
+  });
   clock.advanceBy(100);
   await completion;
   assert.equal(fatal[0]?.code, "acp_protocol");
@@ -471,11 +546,17 @@ void test("retries transient Matrix failures with stable transaction IDs and nev
     attempts += 1;
     attemptedTransactionIds.push(part.transactionId);
     if (attempts === 1) {
-      throw { failure: { kind: "transient", retryable: true, sdkRetryable: false } };
+      throw {
+        failure: { kind: "transient", retryable: true, sdkRetryable: false },
+      };
     }
     matrix.sent.push(part);
   };
-  acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "answer" });
+  acp.promptImpl = async () => ({
+    kind: "turn",
+    stopReason: "end_turn",
+    text: "answer",
+  });
   const bridge = new BridgeCoordinator({
     config: config(),
     acp,
@@ -503,12 +584,25 @@ void test("typing spans only an active turn and receipts acknowledge authorized 
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
-  acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "answer" });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = async () => ({
+    kind: "turn",
+    stopReason: "end_turn",
+    text: "answer",
+  });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
 
   const completion = bridge.handleTimelineEvent(event("$typing:example.org"));
   await flush();
-  assert.deepEqual(matrix.typing[0], { roomId: ROOM_ONE, isTyping: true, timeoutMs: 30_000 });
+  assert.deepEqual(matrix.typing[0], {
+    roomId: ROOM_ONE,
+    isTyping: true,
+    timeoutMs: 30_000,
+  });
   clock.advanceBy(300);
   await completion;
   assert.equal(matrix.typing.at(-1)?.isTyping, false);
@@ -521,13 +615,24 @@ void test("typing refreshes every 10 seconds through output drain and stops befo
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
   let finishPrompt!: () => void;
-  acp.promptImpl = async (sessionId) => new Promise<AcpOutcome>((resolve) => {
-    finishPrompt = () => {
-      acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "answer" });
-      resolve({ kind: "turn", stopReason: "end_turn" });
-    };
+  acp.promptImpl = async (sessionId) =>
+    new Promise<AcpOutcome>((resolve) => {
+      finishPrompt = () => {
+        acp.emit({
+          sessionId,
+          kind: "agent_message_chunk",
+          messageId: "answer",
+          text: "answer",
+        });
+        resolve({ kind: "turn", stopReason: "end_turn" });
+      };
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
   });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
 
   const completion = bridge.handleTimelineEvent(event("$typing-cadence:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
@@ -536,7 +641,11 @@ void test("typing refreshes every 10 seconds through output drain and stops befo
   clock.advanceBy(9999);
   assert.equal(matrix.typing.length, 1);
   clock.advanceBy(1);
-  assert.deepEqual(matrix.typing.at(-1), { roomId: ROOM_ONE, isTyping: true, timeoutMs: 30_000 });
+  assert.deepEqual(matrix.typing.at(-1), {
+    roomId: ROOM_ONE,
+    isTyping: true,
+    timeoutMs: 30_000,
+  });
 
   finishPrompt();
   await flush();
@@ -544,7 +653,10 @@ void test("typing refreshes every 10 seconds through output drain and stops befo
   clock.advanceBy(300);
   await completion;
 
-  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, true, false]);
+  assert.deepEqual(
+    matrix.typing.map(({ isTyping }) => isTyping),
+    [true, true, false],
+  );
   assert.equal(matrix.operationOrder.indexOf("typing:off") < matrix.operationOrder.indexOf("message:agent"), true);
   await bridge.stop();
 });
@@ -563,26 +675,41 @@ void test("typing survives one missed refresh before the server timeout", async 
     }
     await sendTyping(roomId, isTyping, timeoutMs);
   };
-  acp.promptImpl = async (_sessionId) => new Promise<AcpOutcome>((resolve) => {
-    finishPrompt = () => resolve({ kind: "turn", stopReason: "end_turn", text: "answer" });
+  acp.promptImpl = async (_sessionId) =>
+    new Promise<AcpOutcome>((resolve) => {
+      finishPrompt = () => resolve({ kind: "turn", stopReason: "end_turn", text: "answer" });
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
   });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
 
   const completion = bridge.handleTimelineEvent(event("$typing-recovery:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   clock.advanceBy(10_000);
   await flush();
-  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true]);
+  assert.deepEqual(
+    matrix.typing.map(({ isTyping }) => isTyping),
+    [true],
+  );
   clock.advanceBy(10_000);
   await flush();
-  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, true]);
+  assert.deepEqual(
+    matrix.typing.map(({ isTyping }) => isTyping),
+    [true, true],
+  );
 
   finishPrompt();
   await flush();
   await flush();
   clock.advanceBy(300);
   await completion;
-  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, true, false]);
+  assert.deepEqual(
+    matrix.typing.map(({ isTyping }) => isTyping),
+    [true, true, false],
+  );
   await bridge.stop();
 });
 
@@ -598,7 +725,9 @@ void test("receipts are exactly once for eligible dispositions and absent for po
 
   await bridge.handleTimelineEvent(event("$receipt-ordinary:example.org"));
   await bridge.handleTimelineEvent(event("$receipt-ordinary:example.org"));
-  await bridge.handleTimelineEvent(event("$receipt-unauthorized:example.org", ROOM_ONE, "hello", "@mallory:example.org"));
+  await bridge.handleTimelineEvent(
+    event("$receipt-unauthorized:example.org", ROOM_ONE, "hello", "@mallory:example.org"),
+  );
   await bridge.handleTimelineEvent(event("$receipt-self:example.org", ROOM_ONE, "hello", "@bridge:example.org"));
   await bridge.handleTimelineEvent({
     ...event("$receipt-unsupported:example.org"),
@@ -606,12 +735,19 @@ void test("receipts are exactly once for eligible dispositions and absent for po
   });
   await bridge.handleTimelineEvent({
     ...event("$receipt-malformed:example.org"),
-    content: { msgtype: "m.text", body: "hello", "m.relates_to": { "m.replace": { event_id: "$old" } } },
+    content: {
+      msgtype: "m.text",
+      body: "hello",
+      "m.relates_to": { "m.replace": { event_id: "$old" } },
+    },
   });
   // eslint-disable-next-line unicorn/no-useless-undefined -- omitted event IDs are explicit test input
   await bridge.handleTimelineEvent(event(undefined));
   assert.deepEqual(matrix.receipts, [{ roomId: ROOM_ONE, eventId: "$receipt-ordinary:example.org" }]);
-  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, false]);
+  assert.deepEqual(
+    matrix.typing.map(({ isTyping }) => isTyping),
+    [true, false],
+  );
   await bridge.stop();
 
   const oversizedAcp = new FakeAcp();
@@ -622,10 +758,12 @@ void test("receipts are exactly once for eligible dispositions and absent for po
     matrix: oversizedMatrix,
   });
   await oversizedBridge.handleTimelineEvent(event("$receipt-oversized:example.org", ROOM_ONE, "long"));
-  assert.deepEqual(oversizedMatrix.receipts, [{
-    roomId: ROOM_ONE,
-    eventId: "$receipt-oversized:example.org",
-  }]);
+  assert.deepEqual(oversizedMatrix.receipts, [
+    {
+      roomId: ROOM_ONE,
+      eventId: "$receipt-oversized:example.org",
+    },
+  ]);
   assert.equal(oversizedMatrix.typing.length, 0);
   assert.equal(oversizedAcp.promptCalls.length, 0);
   await oversizedBridge.stop();
@@ -633,9 +771,10 @@ void test("receipts are exactly once for eligible dispositions and absent for po
   const busyAcp = new FakeAcp();
   const busyMatrix = new FakeMatrix();
   const busyResolvers: Array<(outcome: AcpOutcome) => void> = [];
-  busyAcp.promptImpl = async () => new Promise<AcpOutcome>((resolve) => {
-    busyResolvers.push(resolve);
-  });
+  busyAcp.promptImpl = async () =>
+    new Promise<AcpOutcome>((resolve) => {
+      busyResolvers.push(resolve);
+    });
   const busyBridge = new BridgeCoordinator({
     config: config({ maxQueuedTurnsPerRoom: 1 }),
     acp: busyAcp,
@@ -646,18 +785,36 @@ void test("receipts are exactly once for eligible dispositions and absent for po
   const busySecond = busyBridge.handleTimelineEvent(event("$receipt-busy-two:example.org"));
   const busyThird = busyBridge.handleTimelineEvent(event("$receipt-busy-three:example.org"));
   await busyThird;
-  assert.equal(busyMatrix.receipts.some(({ eventId }) => eventId === "$receipt-busy-three:example.org"), true);
-  busyResolvers.shift()?.({ kind: "method_error", operation: "session_prompt", fatal: false });
+  assert.equal(
+    busyMatrix.receipts.some(({ eventId }) => eventId === "$receipt-busy-three:example.org"),
+    true,
+  );
+  busyResolvers.shift()?.({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await busyFirst;
   await waitFor(() => busyAcp.promptCalls.length === 2);
-  busyResolvers.shift()?.({ kind: "method_error", operation: "session_prompt", fatal: false });
+  busyResolvers.shift()?.({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await busySecond;
-  assert.deepEqual(busyMatrix.typing.map(({ isTyping }) => isTyping), [true, false, true, false]);
+  assert.deepEqual(
+    busyMatrix.typing.map(({ isTyping }) => isTyping),
+    [true, false, true, false],
+  );
   await busyBridge.stop();
 });
 
 void test("typing and receipt failures are sanitized, nonfatal, and never retried independently", async () => {
-  const records: Array<{ level: string; event: string; fields: Readonly<Record<string, unknown>> | undefined }> = [];
+  const records: Array<{
+    level: string;
+    event: string;
+    fields: Readonly<Record<string, unknown>> | undefined;
+  }> = [];
   const diagnostics: DiagnosticSink = {
     emit(level, eventName, fields) {
       records.push({ level, event: eventName, fields });
@@ -680,14 +837,25 @@ void test("typing and receipt failures are sanitized, nonfatal, and never retrie
   matrix.sendReadReceipt = async () => {
     throw new Error("receipt response body must not escape");
   };
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, diagnostics });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    diagnostics,
+  });
 
   await bridge.handleTimelineEvent(event("$ephemeral-failure:example.org"));
   assert.equal(matrix.sent[0]?.responseKind, "error");
   assert.equal(bridge.fatalError, undefined);
   assert.equal(records.length, 3);
-  assert.equal(records.every(({ event }) => event === "typing-operation-failed" || event === "receipt-operation-failed"), true);
-  assert.equal(records.some(({ fields }) => JSON.stringify(fields).includes("response body")), false);
+  assert.equal(
+    records.every(({ event }) => event === "typing-operation-failed" || event === "receipt-operation-failed"),
+    true,
+  );
+  assert.equal(
+    records.some(({ fields }) => JSON.stringify(fields).includes("response body")),
+    false,
+  );
   await bridge.stop();
 });
 
@@ -696,9 +864,10 @@ void test("timeout stops typing immediately while ACP cancellation is pending", 
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
   let finishPrompt!: () => void;
-  acp.promptImpl = async () => new Promise<AcpOutcome>((resolve) => {
-    finishPrompt = () => resolve({ kind: "turn", stopReason: "cancelled" });
-  });
+  acp.promptImpl = async () =>
+    new Promise<AcpOutcome>((resolve) => {
+      finishPrompt = () => resolve({ kind: "turn", stopReason: "cancelled" });
+    });
   const bridge = new BridgeCoordinator({
     config: config({ maxTurnSeconds: 1 }),
     acp,
@@ -709,12 +878,18 @@ void test("timeout stops typing immediately while ACP cancellation is pending", 
   const completion = bridge.handleTimelineEvent(event("$typing-timeout:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   clock.advanceBy(1000);
-  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, false]);
+  assert.deepEqual(
+    matrix.typing.map(({ isTyping }) => isTyping),
+    [true, false],
+  );
   assert.deepEqual(acp.cancelCalls, ["session-1"]);
 
   finishPrompt();
   await completion;
-  assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, false]);
+  assert.deepEqual(
+    matrix.typing.map(({ isTyping }) => isTyping),
+    [true, false],
+  );
   await bridge.stop();
 });
 
@@ -723,21 +898,31 @@ void test("fatal and graceful shutdown cleanup both turn typing off", async () =
     const clock = new FakeClock();
     const acp = new FakeAcp();
     const matrix = new FakeMatrix();
-    acp.promptImpl = async () => new Promise<AcpOutcome>(() => {
-      // Keep the prompt unresolved so cleanup, rather than normal rendering,
-      // is responsible for ending the typing indicator.
+    acp.promptImpl = async () =>
+      new Promise<AcpOutcome>(() => {
+        // Keep the prompt unresolved so cleanup, rather than normal rendering,
+        // is responsible for ending the typing indicator.
+      });
+    const bridge = new BridgeCoordinator({
+      config: config(),
+      acp,
+      matrix,
+      clock,
     });
-    const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
     void bridge.handleTimelineEvent(event(`$typing-${mode}:example.org`));
     await waitFor(() => acp.promptCalls.length === 1);
 
-    const stopping = mode === "fatal"
-      ? (() => {
-          acp.emitFatal({ code: "acp_transport", message: "ACP failed" });
-          return bridge.stop();
-        })()
-      : bridge.stop();
-    assert.deepEqual(matrix.typing.map(({ isTyping }) => isTyping), [true, false]);
+    const stopping =
+      mode === "fatal"
+        ? (() => {
+            acp.emitFatal({ code: "acp_transport", message: "ACP failed" });
+            return bridge.stop();
+          })()
+        : bridge.stop();
+    assert.deepEqual(
+      matrix.typing.map(({ isTyping }) => isTyping),
+      [true, false],
+    );
     clock.advanceBy(1000);
     await stopping;
   }
@@ -747,9 +932,10 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
   const queuedAcp = new FakeAcp();
   const queuedMatrix = new FakeMatrix();
   const queuedResolvers: Array<(outcome: AcpOutcome) => void> = [];
-  queuedAcp.promptImpl = async () => new Promise<AcpOutcome>((resolve) => {
-    queuedResolvers.push(resolve);
-  });
+  queuedAcp.promptImpl = async () =>
+    new Promise<AcpOutcome>((resolve) => {
+      queuedResolvers.push(resolve);
+    });
   const queuedBridge = new BridgeCoordinator({
     config: config({ maxQueuedTurnsPerRoom: 1 }),
     acp: queuedAcp,
@@ -759,20 +945,32 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
   await waitFor(() => queuedAcp.promptCalls.length === 1);
   const second = queuedBridge.handleTimelineEvent(event("$queued-two:example.org"));
   await flush();
-  assert.deepEqual(queuedMatrix.typing.map(({ isTyping }) => isTyping), [true]);
-  queuedResolvers.shift()?.({ kind: "method_error", operation: "session_prompt", fatal: false });
+  assert.deepEqual(
+    queuedMatrix.typing.map(({ isTyping }) => isTyping),
+    [true],
+  );
+  queuedResolvers.shift()?.({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await first;
   await waitFor(() => queuedAcp.promptCalls.length === 2);
-  queuedResolvers.shift()?.({ kind: "method_error", operation: "session_prompt", fatal: false });
+  queuedResolvers.shift()?.({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await second;
   await queuedBridge.stop();
 
   const semaphoreAcp = new FakeAcp();
   const semaphoreMatrix = new FakeMatrix();
   const semaphoreResolvers: Array<(outcome: AcpOutcome) => void> = [];
-  semaphoreAcp.promptImpl = async () => new Promise<AcpOutcome>((resolve) => {
-    semaphoreResolvers.push(resolve);
-  });
+  semaphoreAcp.promptImpl = async () =>
+    new Promise<AcpOutcome>((resolve) => {
+      semaphoreResolvers.push(resolve);
+    });
   const semaphoreBridge = new BridgeCoordinator({
     config: config({ maxConcurrentPrompts: 1 }),
     acp: semaphoreAcp,
@@ -782,11 +980,22 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
   await waitFor(() => semaphoreAcp.promptCalls.length === 1);
   const permitWaiter = semaphoreBridge.handleTimelineEvent(event("$permit-two:example.org", ROOM_ONE));
   await flush();
-  assert.deepEqual(semaphoreMatrix.typing.map(({ isTyping }) => isTyping), [true]);
-  semaphoreResolvers.shift()?.({ kind: "method_error", operation: "session_prompt", fatal: false });
+  assert.deepEqual(
+    semaphoreMatrix.typing.map(({ isTyping }) => isTyping),
+    [true],
+  );
+  semaphoreResolvers.shift()?.({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await permitHolder;
   await waitFor(() => semaphoreAcp.promptCalls.length === 2);
-  semaphoreResolvers.shift()?.({ kind: "method_error", operation: "session_prompt", fatal: false });
+  semaphoreResolvers.shift()?.({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await permitWaiter;
   await semaphoreBridge.stop();
 
@@ -804,9 +1013,10 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
     await store.setSessionMapping(ROOM_ONE, "saved-session");
     const loadingAcp = new FakeAcp();
     let finishLoad!: () => void;
-    loadingAcp.loadSessionImpl = async () => new Promise<AcpSession>((resolve) => {
-      finishLoad = () => resolve({ sessionId: "saved-session" });
-    });
+    loadingAcp.loadSessionImpl = async () =>
+      new Promise<AcpSession>((resolve) => {
+        finishLoad = () => resolve({ sessionId: "saved-session" });
+      });
     const loadingMatrix = new FakeMatrix();
     const loadingBridge = new BridgeCoordinator({
       config: config(),
@@ -825,7 +1035,10 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
     assert.equal(loadingMatrix.typing.length, 0);
     finishLoad();
     await waitFor(() => loadingAcp.promptCalls.length === 1);
-    assert.deepEqual(loadingMatrix.typing.map(({ isTyping }) => isTyping), [true, false]);
+    assert.deepEqual(
+      loadingMatrix.typing.map(({ isTyping }) => isTyping),
+      [true, false],
+    );
     await loadingEvent;
     await loadingBridge.stop();
   } finally {
@@ -835,9 +1048,10 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
   const catchupAcp = new FakeAcp();
   const catchupMatrix = new FakeMatrix();
   let finishCatchup!: (outcome: AcpOutcome) => void;
-  catchupAcp.promptImpl = async () => new Promise<AcpOutcome>((resolve) => {
-    finishCatchup = resolve;
-  });
+  catchupAcp.promptImpl = async () =>
+    new Promise<AcpOutcome>((resolve) => {
+      finishCatchup = resolve;
+    });
   const catchupBridge = new BridgeCoordinator({
     config: config({ maxQueuedTurnsPerRoom: 1 }),
     acp: catchupAcp,
@@ -852,12 +1066,26 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
     timeline: { phase: "incremental", isCatchUp: true, limited: false },
   });
   await omitted;
-  assert.deepEqual(catchupMatrix.typing.map(({ isTyping }) => isTyping), [true]);
-  assert.equal(catchupMatrix.receipts.some(({ eventId }) => eventId === "$catchup-omitted:example.org"), false);
-  finishCatchup({ kind: "method_error", operation: "session_prompt", fatal: false });
+  assert.deepEqual(
+    catchupMatrix.typing.map(({ isTyping }) => isTyping),
+    [true],
+  );
+  assert.equal(
+    catchupMatrix.receipts.some(({ eventId }) => eventId === "$catchup-omitted:example.org"),
+    false,
+  );
+  finishCatchup({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await catchupFirst;
   await waitFor(() => catchupAcp.promptCalls.length === 2);
-  finishCatchup({ kind: "method_error", operation: "session_prompt", fatal: false });
+  finishCatchup({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await catchupQueued;
   await catchupBridge.stop();
 });
@@ -865,7 +1093,11 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
 void test("exact reset is queued as a control and the next prompt creates a fresh session", async () => {
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
-  acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "fresh" });
+  acp.promptImpl = async () => ({
+    kind: "turn",
+    stopReason: "end_turn",
+    text: "fresh",
+  });
   const bridge = new BridgeCoordinator({ config: config(), acp, matrix });
 
   await bridge.handleTimelineEvent(event("$reset:example.org", ROOM_ONE, "/reset"));
@@ -901,18 +1133,13 @@ void test("recognizes reset only after authorization and reply normalization", a
   await bridge.handleTimelineEvent(replyReset);
   const typingAfterReset = matrix.typing.length;
 
-  const ordinaryBodies = [
-    "/reset ",
-    " /reset",
-    "/reset argument",
-    "/reset\n",
-    "//reset",
-    "> quoted\n\n/reset",
-  ];
+  const ordinaryBodies = ["/reset ", " /reset", "/reset argument", "/reset\n", "//reset", "> quoted\n\n/reset"];
   for (const [index, body] of ordinaryBodies.entries()) {
     await bridge.handleTimelineEvent(event(`$ordinary-reset-${index}:example.org`, ROOM_ONE, body));
   }
-  await bridge.handleTimelineEvent(event("$unauthorized-reset:example.org", ROOM_ONE, "/reset", "@mallory:example.org"));
+  await bridge.handleTimelineEvent(
+    event("$unauthorized-reset:example.org", ROOM_ONE, "/reset", "@mallory:example.org"),
+  );
   await bridge.handleTimelineEvent({
     ...event("$malformed-reset:example.org", ROOM_ONE, "/reset"),
     content: {
@@ -924,14 +1151,20 @@ void test("recognizes reset only after authorization and reply normalization", a
 
   assert.equal(matrix.sent[0]?.responseKind, "reset");
   assert.equal(matrix.sent[0]?.content.body, "Agent session reset.");
-  assert.deepEqual(acp.promptCalls.map(({ text }) => text), ordinaryBodies);
-  assert.equal(matrix.sent.some((part) => part.content.body === "Agent session reset."), true);
-  assert.equal(typingAfterReset, 0);
-  assert.equal(
-    matrix.receipts.filter(({ eventId }) => eventId === "$reply-reset:example.org").length,
-    1,
+  assert.deepEqual(
+    acp.promptCalls.map(({ text }) => text),
+    ordinaryBodies,
   );
-  assert.equal(matrix.receipts.some(({ eventId }) => eventId === "$unauthorized-reset:example.org"), false);
+  assert.equal(
+    matrix.sent.some((part) => part.content.body === "Agent session reset."),
+    true,
+  );
+  assert.equal(typingAfterReset, 0);
+  assert.equal(matrix.receipts.filter(({ eventId }) => eventId === "$reply-reset:example.org").length, 1);
+  assert.equal(
+    matrix.receipts.some(({ eventId }) => eventId === "$unauthorized-reset:example.org"),
+    false,
+  );
   await bridge.stop();
 });
 
@@ -968,17 +1201,36 @@ void test("reset stays in room order, is busy when the bounded queue is full, an
   assert.equal(acp.promptCalls.length, 1);
   assert.equal(bridge.getQueueDepth(ROOM_ONE), 2);
   await busy;
-  assert.equal(matrix.sent.some((part) => part.responseKind === "busy"), true);
-  assert.equal(acp.promptCalls.some(({ text }) => text === "/reset"), false);
+  assert.equal(
+    matrix.sent.some((part) => part.responseKind === "busy"),
+    true,
+  );
+  assert.equal(
+    acp.promptCalls.some(({ text }) => text === "/reset"),
+    false,
+  );
 
-  resolveFirst({ kind: "method_error", operation: "session_prompt", fatal: false });
+  resolveFirst({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await Promise.all([first, earlierQueued, reset]);
-  assert.deepEqual(acp.promptCalls.map(({ text }) => text), ["first", "earlier queued"]);
-  assert.equal(matrix.sent.some((part) => part.content.body === "Agent session reset."), true);
+  assert.deepEqual(
+    acp.promptCalls.map(({ text }) => text),
+    ["first", "earlier queued"],
+  );
+  assert.equal(
+    matrix.sent.some((part) => part.content.body === "Agent session reset."),
+    true,
+  );
 
   const afterReset = bridge.handleTimelineEvent(event("$ordered-after-reset:example.org", ROOM_ONE, "after reset"));
   await afterReset;
-  assert.deepEqual(acp.promptCalls.map(({ text }) => text), ["first", "earlier queued", "after reset"]);
+  assert.deepEqual(
+    acp.promptCalls.map(({ text }) => text),
+    ["first", "earlier queued", "after reset"],
+  );
   assert.notEqual(acp.promptCalls[0]?.sessionId, acp.promptCalls[2]?.sessionId);
   await bridge.stop();
 });
@@ -987,9 +1239,10 @@ void test("reset bypasses a saturated global prompt permit", async () => {
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = async () => new Promise<AcpOutcome>((resolve) => {
-    resolvePrompt = resolve;
-  });
+  acp.promptImpl = async () =>
+    new Promise<AcpOutcome>((resolve) => {
+      resolvePrompt = resolve;
+    });
   const bridge = new BridgeCoordinator({
     config: config({ maxConcurrentPrompts: 1 }),
     acp,
@@ -1004,7 +1257,11 @@ void test("reset bypasses a saturated global prompt permit", async () => {
   assert.equal(matrix.sent.at(-1)?.content.body, "Agent session reset.");
   assert.equal(acp.promptCalls.length, 1);
 
-  resolvePrompt({ kind: "method_error", operation: "session_prompt", fatal: false });
+  resolvePrompt({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   await ordinary;
   await bridge.stop();
 });
@@ -1077,7 +1334,9 @@ void test("reset uses stable retry transactions and abandons permanent Matrix fa
     attempts += 1;
     attemptedTransactionIds.push(part.transactionId);
     if (attempts === 1) {
-      throw { failure: { kind: "transient", retryable: true, sdkRetryable: false } };
+      throw {
+        failure: { kind: "transient", retryable: true, sdkRetryable: false },
+      };
     }
     matrix.sent.push(part);
   };
@@ -1102,7 +1361,9 @@ void test("reset uses stable retry transactions and abandons permanent Matrix fa
 
   const permanentMatrix = new FakeMatrix();
   permanentMatrix.send = async () => {
-    throw { failure: { kind: "permanent", retryable: false, sdkRetryable: false } };
+    throw {
+      failure: { kind: "permanent", retryable: false, sdkRetryable: false },
+    };
   };
   const permanentBridge = new BridgeCoordinator({
     config: config(),
@@ -1177,7 +1438,11 @@ void test("restores a durable room session before its first prompt", async () =>
     await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "saved-session");
     const acp = new FakeAcp();
-    acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "loaded answer" });
+    acp.promptImpl = async () => ({
+      kind: "turn",
+      stopReason: "end_turn",
+      text: "loaded answer",
+    });
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: config(),
@@ -1216,7 +1481,11 @@ void test("discards unsupported durable mappings and never persists a newly-crea
     await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "old-session");
     const acp = new FakeAcp();
-    acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "new answer" });
+    acp.promptImpl = async () => ({
+      kind: "turn",
+      stopReason: "end_turn",
+      text: "new answer",
+    });
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: config(),
@@ -1293,11 +1562,13 @@ void test("persists a new mapping before the first prompt and phase-gates every 
 
     const completion = bridge.handleTimelineEvent(event("$load-phase:example.org"));
     await waitFor(() => acp.loadCalls.length === 1 && loadActive);
-    assert.deepEqual(acp.loadOptions, [{
-      cwd: "/tmp",
-      mcpServers: [],
-      sessionId: "saved-session",
-    }]);
+    assert.deepEqual(acp.loadOptions, [
+      {
+        cwd: "/tmp",
+        mcpServers: [],
+        sessionId: "saved-session",
+      },
+    ]);
     assert.equal(acp.promptCalls.length, 0);
 
     acp.emit({
@@ -1340,7 +1611,11 @@ void test("replaces a stale mapping after a healthy load method error and warns 
     });
     await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "stale-session");
-    const diagnostics: Array<{ level: string; event: string; fields: Readonly<Record<string, unknown>> | undefined }> = [];
+    const diagnostics: Array<{
+      level: string;
+      event: string;
+      fields: Readonly<Record<string, unknown>> | undefined;
+    }> = [];
     const diagnosticSink: DiagnosticSink = {
       emit(level, eventName, fields) {
         diagnostics.push({ level, event: eventName, fields });
@@ -1352,9 +1627,17 @@ void test("replaces a stale mapping after a healthy load method error and warns 
     };
     const acp = new FakeAcp();
     acp.loadSessionImpl = async () => {
-      return { kind: "method_error", operation: "session_load", fatal: false } as unknown as AcpSession;
+      return {
+        kind: "method_error",
+        operation: "session_load",
+        fatal: false,
+      } as unknown as AcpSession;
     };
-    acp.promptImpl = async () => ({ kind: "turn", stopReason: "end_turn", text: "replacement" });
+    acp.promptImpl = async () => ({
+      kind: "turn",
+      stopReason: "end_turn",
+      text: "replacement",
+    });
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: config(),
@@ -1378,7 +1661,10 @@ void test("replaces a stale mapping after a healthy load method error and warns 
     const reset = diagnostics.find((entry) => entry.event === "room-context-reset");
     assert.equal(reset?.level, "warn");
     assert.deepEqual(reset?.fields, { roomId: ROOM_ONE });
-    assert.equal(diagnostics.some((entry) => JSON.stringify(entry.fields).includes("stale-session")), false);
+    assert.equal(
+      diagnostics.some((entry) => JSON.stringify(entry.fields).includes("stale-session")),
+      false,
+    );
     await bridge.stop();
   } finally {
     await rm(stateDir, { recursive: true, force: true });
@@ -1448,7 +1734,11 @@ void test("prunes removed-room mappings and keeps restored sessions isolated by 
     await store.setSessionMapping(ROOM_ONE, "room-one-session");
     await store.setSessionMapping(ROOM_TWO, "removed-room-session");
     const acp = new FakeAcp();
-    acp.promptImpl = async (_sessionId, text) => ({ kind: "turn", stopReason: "end_turn", text });
+    acp.promptImpl = async (_sessionId, text) => ({
+      kind: "turn",
+      stopReason: "end_turn",
+      text,
+    });
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: {
@@ -1480,21 +1770,39 @@ void test("streamed thought paragraphs stay separate and unbolded through Matrix
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$thought-paragraphs:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "**First heading**" });
+  acp.emit({
+    sessionId,
+    kind: "agent_thought_chunk",
+    text: "**First heading**",
+  });
   acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "**Second heading**" });
+  acp.emit({
+    sessionId,
+    kind: "agent_thought_chunk",
+    text: "**Second heading**",
+  });
   await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Second heading")));
   const current = matrix.html.at(-1);
   assert.equal(current?.body, "💭 First heading\n\n💭 Second heading");
   assert.equal(current?.formattedBody, "<p>💭 First heading</p>\n<p>💭 Second heading</p>");
   acp.emit({ sessionId, kind: "agent_message_chunk", text: "Done" });
   await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")));
-  const archived = [...matrix.html].reverse().find((message) => message.formattedBody.includes("Past agent events (1)"));
+  const archived = [...matrix.html]
+    .reverse()
+    .find((message) => message.formattedBody.includes("Past agent events (1)"));
   assert.match(archived?.formattedBody ?? "", /<p>💭 First heading<\/p>\n<p>💭 Second heading<\/p>/);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
@@ -1508,16 +1816,34 @@ void test("agent text renders complete Markdown once when its message closes", a
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$markdown-live:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "markdown", text: "**Wild" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "markdown",
+    text: "**Wild",
+  });
   await flush();
   assert.equal(matrix.html.length, 0);
   const continuation = " Card**\n\n- One\n- Two\n\n[site](https://example.com) `code` <script>";
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "markdown", text: continuation });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "markdown",
+    text: continuation,
+  });
   await flush();
   assert.equal(matrix.html.length, 0);
   acp.emit({ sessionId, kind: "agent_thought_chunk", text: "A new thought" });
@@ -1545,25 +1871,55 @@ void test("tool, thought, and distinct IDs close text in order without text edit
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$text-boundaries:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
 
   acp.emit({ sessionId, kind: "agent_message_chunk", text: "Before " });
   acp.emit({ sessionId, kind: "agent_message_chunk", text: "tool" });
-  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "missing", status: "in_progress" });
+  acp.emit({
+    sessionId,
+    kind: "tool_call_update",
+    toolCallId: "missing",
+    status: "in_progress",
+  });
   acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
   await flush();
   assert.equal(matrix.html.length, 0);
-  acp.emit({ sessionId, kind: "tool_call", toolCallId: "read", title: "read", toolKind: "read", status: "pending" });
+  acp.emit({
+    sessionId,
+    kind: "tool_call",
+    toolCallId: "read",
+    title: "read",
+    toolKind: "read",
+    status: "pending",
+  });
   await waitFor(() => matrix.html.length >= 2);
   assert.equal(matrix.html[0]?.body, "Before tool");
   assert.match(matrix.html[1]?.body ?? "", /Read/);
 
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "after-tool", text: "After " });
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "after-tool", text: "tool" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "after-tool",
+    text: "After ",
+  });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "after-tool",
+    text: "tool",
+  });
   acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
   await flush();
   assert.equal(matrix.html.filter((message) => message.body === "After tool").length, 0);
@@ -1573,18 +1929,41 @@ void test("tool, thought, and distinct IDs close text in order without text edit
   const textIndex = matrix.html.findIndex((message) => message.body === "After tool");
   assert.ok(thoughtIndex > textIndex);
 
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "first", text: "One" });
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "second", text: "Two" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "first",
+    text: "One",
+  });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "second",
+    text: "Two",
+  });
   await waitFor(() => matrix.html.some((message) => message.body === "One"));
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "first", text: "stale" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "first",
+    text: "stale",
+  });
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(300);
   await completion;
   assert.equal(matrix.html.filter((message) => message.body === "Two").length, 1);
-  assert.equal(matrix.html.some((message) => message.targetEventId !== undefined &&
-    ["Before tool", "After tool", "One", "Two"].includes(message.body)), false);
-  assert.equal(matrix.html.some((message) => message.body.includes("stale")), false);
+  assert.equal(
+    matrix.html.some(
+      (message) =>
+        message.targetEventId !== undefined && ["Before tool", "After tool", "One", "Two"].includes(message.body),
+    ),
+    false,
+  );
+  assert.equal(
+    matrix.html.some((message) => message.body.includes("stale")),
+    false,
+  );
   assert.equal(matrix.sent.length, 0);
   await bridge.stop();
 });
@@ -1594,30 +1973,64 @@ void test("live mcpScript activity includes its ACP code input on send and resul
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$script-live:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
   const source = "return { probe: '<sample>', sum: 2 + 3 };";
-  acp.emit({ sessionId, kind: "tool_call", toolCallId: "script", title: "mcpScript", toolKind: "other",
-    status: "pending", rawInput: { code: source } });
+  acp.emit({
+    sessionId,
+    kind: "tool_call",
+    toolCallId: "script",
+    title: "mcpScript",
+    toolKind: "other",
+    status: "pending",
+    rawInput: { code: source },
+  });
   await waitFor(() => matrix.html.length > 0);
   assert.match(matrix.html[0]?.formattedBody ?? "", /MCP Script\(/);
   assert.match(matrix.html[0]?.formattedBody ?? "", /<pre><code>return \{ probe: &#39;&lt;sample&gt;&#39;/);
   assert.match(matrix.html[0]?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};/);
-  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "script", status: "completed",
-    content: [{ type: "content", text: "{\"probe\":\"done\"}" }] });
+  acp.emit({
+    sessionId,
+    kind: "tool_call_update",
+    toolCallId: "script",
+    status: "completed",
+    content: [{ type: "content", text: '{"probe":"done"}' }],
+  });
   await waitFor(() => matrix.html.some((message) => message.body.includes("done")));
   assert.match(matrix.html.at(-1)?.formattedBody ?? "", /<pre><code>return \{ probe: &#39;&lt;sample&gt;&#39;/);
-  assert.match(matrix.html.at(-1)?.formattedBody ?? "", /<\/details>\n<blockquote><pre><code>\{&quot;probe&quot;:&quot;done&quot;\}<\/code><\/pre><\/blockquote>$/);
+  assert.match(
+    matrix.html.at(-1)?.formattedBody ?? "",
+    /<\/details>\n<blockquote><pre><code>\{&quot;probe&quot;:&quot;done&quot;\}<\/code><\/pre><\/blockquote>$/,
+  );
   assert.match(matrix.html.at(-1)?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};/);
-  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "script", status: "completed",
-    content: [{ type: "content", text: "<result>\nline 2\nline 3\nline 4" }] });
+  acp.emit({
+    sessionId,
+    kind: "tool_call_update",
+    toolCallId: "script",
+    status: "completed",
+    content: [{ type: "content", text: "<result>\nline 2\nline 3\nline 4" }],
+  });
   await waitFor(() => matrix.html.some((message) => message.body.includes("line 3")));
   const longResult = matrix.html.at(-1);
-  assert.match(longResult?.formattedBody ?? "", /<\/details>\n<blockquote><pre><code>&lt;result&gt;&#10;line 2&#10;line 3&#10;line 4<\/code><\/pre><\/blockquote>$/);
-  assert.match(longResult?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};\n<result>\nline 2\nline 3\nline 4$/);
+  assert.match(
+    longResult?.formattedBody ?? "",
+    /<\/details>\n<blockquote><pre><code>&lt;result&gt;&#10;line 2&#10;line 3&#10;line 4<\/code><\/pre><\/blockquote>$/,
+  );
+  assert.match(
+    longResult?.body ?? "",
+    /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};\n<result>\nline 2\nline 3\nline 4$/,
+  );
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(30_000); // Tool-only turns drain at the cap, not the text quiet period.
@@ -1630,38 +2043,104 @@ void test("live activity rolls over after ten events, archives at agent text, an
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$activity:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
   for (let index = 0; index < 9; index += 1) {
-    acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: `thought-${index}`, text: `thought ${index}` });
+    acp.emit({
+      sessionId,
+      kind: "agent_thought_chunk",
+      messageId: `thought-${index}`,
+      text: `thought ${index}`,
+    });
   }
-  acp.emit({ sessionId, kind: "tool_call", toolCallId: "late-tool", title: "read", toolKind: "read", status: "pending" });
+  acp.emit({
+    sessionId,
+    kind: "tool_call",
+    toolCallId: "late-tool",
+    title: "read",
+    toolKind: "read",
+    status: "pending",
+  });
   await waitFor(() => matrix.html.length > 0);
-  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "thought-11", text: "eleventh" });
+  acp.emit({
+    sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "thought-11",
+    text: "eleventh",
+  });
   await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (10)")));
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "Hello" });
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: " world" });
-  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "late-tool", status: "completed",
-    content: [{ type: "content", text: "result" }] });
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "!" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "answer",
+    text: "Hello",
+  });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "answer",
+    text: " world",
+  });
+  acp.emit({
+    sessionId,
+    kind: "tool_call_update",
+    toolCallId: "late-tool",
+    status: "completed",
+    content: [{ type: "content", text: "result" }],
+  });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "answer",
+    text: "!",
+  });
   await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("result")));
-  assert.equal(matrix.html.some((message) => message.body === "Hello world!"), false);
+  assert.equal(
+    matrix.html.some((message) => message.body === "Hello world!"),
+    false,
+  );
   const firstBatch = matrix.html.filter((message) => message.formattedBody.includes("Past agent events (10)"));
   assert.equal(firstBatch.at(-1)?.targetEventId, firstBatch[0]?.targetEventId);
   assert.match(firstBatch.at(-1)?.formattedBody ?? "", /<blockquote><pre><code>result<\/code><\/pre><\/blockquote>/);
-  assert.equal(matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")), true);
-  assert.equal(matrix.html.some((message) => message.body.includes("eleventh") &&
-    message.targetEventId === undefined && !message.formattedBody.includes("Past agent events")), true);
+  assert.equal(
+    matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")),
+    true,
+  );
+  assert.equal(
+    matrix.html.some(
+      (message) =>
+        message.body.includes("eleventh") &&
+        message.targetEventId === undefined &&
+        !message.formattedBody.includes("Past agent events"),
+    ),
+    true,
+  );
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(300);
   await completion;
   assert.equal(matrix.sent.length, 0);
-  assert.equal(matrix.html.filter((message) => message.body === "Hello world!" && message.targetEventId === undefined).length, 1);
-  acp.emit({ sessionId, kind: "tool_call_update", toolCallId: "late-tool", status: "failed" });
+  assert.equal(
+    matrix.html.filter((message) => message.body === "Hello world!" && message.targetEventId === undefined).length,
+    1,
+  );
+  acp.emit({
+    sessionId,
+    kind: "tool_call_update",
+    toolCallId: "late-tool",
+    status: "failed",
+  });
   await flush();
   assert.equal(matrix.html.at(-1)?.body.includes("failed"), false);
   await bridge.stop();
@@ -1672,27 +2151,63 @@ void test("agent text collapses the latest activity after its first expanded sen
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$activity-boundary:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
   for (let index = 0; index < 11; index += 1) {
-    acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: `thought-${index}`, text: `thought ${index}` });
+    acp.emit({
+      sessionId,
+      kind: "agent_thought_chunk",
+      messageId: `thought-${index}`,
+      text: `thought ${index}`,
+    });
   }
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "Answer" });
-  await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (10)")) &&
-    matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")));
-  assert.equal(matrix.html.some((message) => message.body === "Answer"), false);
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "answer",
+    text: "Answer",
+  });
+  await waitFor(
+    () =>
+      matrix.html.some((message) => message.formattedBody.includes("Past agent events (10)")) &&
+      matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")),
+  );
+  assert.equal(
+    matrix.html.some((message) => message.body === "Answer"),
+    false,
+  );
   const latest = matrix.html.filter((message) => message.body.includes("thought 10"));
   assert.ok(latest.length >= 2);
-  assert.equal(latest.some((message) => message.targetEventId === undefined &&
-    !message.formattedBody.includes("Past agent events")), true);
+  assert.equal(
+    latest.some(
+      (message) => message.targetEventId === undefined && !message.formattedBody.includes("Past agent events"),
+    ),
+    true,
+  );
   assert.match(latest.at(-1)?.formattedBody ?? "", /Past agent events \(1\)/);
 
-  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "next", text: "newest" });
-  await waitFor(() => matrix.html.some((message) => message.body.includes("newest")) &&
-    matrix.html.some((message) => message.body === "Answer"));
+  acp.emit({
+    sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "next",
+    text: "newest",
+  });
+  await waitFor(
+    () =>
+      matrix.html.some((message) => message.body.includes("newest")) &&
+      matrix.html.some((message) => message.body === "Answer"),
+  );
   assert.equal(matrix.html.at(-1)?.formattedBody.includes("Past agent events"), false);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
@@ -1706,18 +2221,44 @@ void test("rapid rollover and agent text never send a new batch already collapse
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$rapid-activity:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
   for (let index = 0; index < 11; index += 1) {
-    acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: `thought-${index}`, text: `thought ${index}` });
+    acp.emit({
+      sessionId,
+      kind: "agent_thought_chunk",
+      messageId: `thought-${index}`,
+      text: `thought ${index}`,
+    });
   }
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "Answer" });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "next", text: "newest" });
-  await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")) &&
-    matrix.html.some((message) => message.body.includes("newest")));
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "answer",
+    text: "Answer",
+  });
+  acp.emit({
+    sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "next",
+    text: "newest",
+  });
+  await waitFor(
+    () =>
+      matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")) &&
+      matrix.html.some((message) => message.body.includes("newest")),
+  );
   const prior = matrix.html.filter((message) => message.body.includes("thought 10"));
   assert.ok(prior.length >= 2);
   assert.equal(prior[0]?.targetEventId, undefined);
@@ -1735,32 +2276,65 @@ void test("live Matrix retry reuses the transaction ID and keeps rooms independe
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   const resolvers: Array<(outcome: AcpOutcome) => void> = [];
-  acp.promptImpl = () => new Promise((resolve) => { resolvers.push(resolve); });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvers.push(resolve);
+    });
   let failed = false;
   matrix.htmlSend = async (message) => {
     if (!failed && message.roomId === ROOM_ONE) {
       failed = true;
-      throw { failure: { kind: "transient", retryable: true, sdkRetryable: false, retryAfterMs: 0 } };
+      throw {
+        failure: {
+          kind: "transient",
+          retryable: true,
+          sdkRetryable: false,
+          retryAfterMs: 0,
+        },
+      };
     }
     matrix.html.push(message);
     return message.targetEventId ?? `$live-${matrix.html.length}:example.org`;
   };
-  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock, random: () => 0 });
+  const bridge = new BridgeCoordinator({
+    config: config(),
+    acp,
+    matrix,
+    clock,
+    random: () => 0,
+  });
   const one = bridge.handleTimelineEvent(event("$live-one:example.org", ROOM_ONE));
   const two = bridge.handleTimelineEvent(event("$live-two:example.org", ROOM_TWO));
   await waitFor(() => acp.promptCalls.length === 2);
   for (const call of acp.promptCalls) {
-    acp.emit({ sessionId: call.sessionId, kind: "agent_message_chunk", text: call.sessionId });
-    acp.emit({ sessionId: call.sessionId, kind: "tool_call", toolCallId: "boundary", title: "read", toolKind: "read", status: "pending" });
+    acp.emit({
+      sessionId: call.sessionId,
+      kind: "agent_message_chunk",
+      text: call.sessionId,
+    });
+    acp.emit({
+      sessionId: call.sessionId,
+      kind: "tool_call",
+      toolCallId: "boundary",
+      title: "read",
+      toolKind: "read",
+      status: "pending",
+    });
   }
   await waitFor(() => matrix.attempts.length >= 2);
   clock.advanceBy(0);
-  await waitFor(() => matrix.html.some((message) => message.roomId === ROOM_ONE && message.body === acp.promptCalls[0]?.sessionId) &&
-    matrix.html.some((message) => message.roomId === ROOM_TWO && message.body === acp.promptCalls[1]?.sessionId));
+  await waitFor(
+    () =>
+      matrix.html.some((message) => message.roomId === ROOM_ONE && message.body === acp.promptCalls[0]?.sessionId) &&
+      matrix.html.some((message) => message.roomId === ROOM_TWO && message.body === acp.promptCalls[1]?.sessionId),
+  );
   const attempts = matrix.attempts.filter((message) => message.roomId === ROOM_ONE);
   assert.ok(attempts.length >= 2);
   assert.equal(attempts[0]?.transactionId, attempts[1]?.transactionId);
-  assert.equal(matrix.html.some((message) => message.roomId === ROOM_TWO), true);
+  assert.equal(
+    matrix.html.some((message) => message.roomId === ROOM_TWO),
+    true,
+  );
   for (const resolve of resolvers) resolve({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(300);
@@ -1773,8 +2347,16 @@ void test("long live text splits at the Matrix limit without a duplicate final r
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config({ maxMatrixMessageBytes: 800 }), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config({ maxMatrixMessageBytes: 800 }),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$long-live:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
@@ -1804,15 +2386,36 @@ void test("oversized activity truncates detail and rolls over before the encoded
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () => new Promise((resolve) => { resolvePrompt = resolve; });
-  const bridge = new BridgeCoordinator({ config: config({ maxMatrixMessageBytes: 800 }), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const bridge = new BridgeCoordinator({
+    config: config({ maxMatrixMessageBytes: 800 }),
+    acp,
+    matrix,
+    clock,
+  });
   const completion = bridge.handleTimelineEvent(event("$oversized-activity:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
-  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "one", text: "<&".repeat(3000) });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "two", text: "second thought" });
+  acp.emit({
+    sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "one",
+    text: "<&".repeat(3000),
+  });
+  acp.emit({
+    sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "two",
+    text: "second thought",
+  });
   await waitFor(() => matrix.html.some((message) => message.body.includes("second thought")));
-  assert.equal(matrix.html.some((message) => message.body.includes("(truncated)")), true);
+  assert.equal(
+    matrix.html.some((message) => message.body.includes("(truncated)")),
+    true,
+  );
   resolvePrompt({ kind: "turn", stopReason: "end_turn", text: "done" });
   await flush();
   clock.advanceBy(300);
@@ -1832,12 +2435,25 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
   const resolvers: Array<(outcome: AcpOutcome) => void> = [];
-  acp.promptImpl = () => new Promise((resolve) => { resolvers.push(resolve); });
-  const bridge = new BridgeCoordinator({ config: config({ maxTurnSeconds: 1 }), acp, matrix, clock });
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvers.push(resolve);
+    });
+  const bridge = new BridgeCoordinator({
+    config: config({ maxTurnSeconds: 1 }),
+    acp,
+    matrix,
+    clock,
+  });
   const first = bridge.handleTimelineEvent(event("$live-timeout:example.org"));
   await waitFor(() => acp.promptCalls.length === 1);
   const sessionId = acp.promptCalls[0]!.sessionId;
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "first", text: "partial" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "first",
+    text: "partial",
+  });
   await flush();
   assert.equal(matrix.html.length, 0);
   clock.advanceBy(1000);
@@ -1848,15 +2464,31 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
   assert.equal(matrix.sent.at(-1)?.content.body, "[agent timed out]");
   const second = bridge.handleTimelineEvent(event("$live-after-timeout:example.org"));
   await waitFor(() => acp.promptCalls.length === 2);
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "first", text: "stale" });
-  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "second", text: "fresh" });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "first",
+    text: "stale",
+  });
+  acp.emit({
+    sessionId,
+    kind: "agent_message_chunk",
+    messageId: "second",
+    text: "fresh",
+  });
   await flush();
-  assert.equal(matrix.html.some((message) => message.body === "fresh"), false);
+  assert.equal(
+    matrix.html.some((message) => message.body === "fresh"),
+    false,
+  );
   resolvers.shift()!({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(300);
   await second;
   assert.equal(matrix.html.filter((message) => message.body === "fresh").length, 1);
-  assert.equal(matrix.html.some((message) => message.body.includes("stale")), false);
+  assert.equal(
+    matrix.html.some((message) => message.body.includes("stale")),
+    false,
+  );
   await bridge.stop();
 });

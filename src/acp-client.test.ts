@@ -148,7 +148,10 @@ function assertProtocolFrame(frame: Record<string, unknown>): void {
   assert.ok(typeof frame.method === "string" || "result" in frame || "error" in frame);
 }
 
-function fatalSignal(client: AcpClient): { readonly errors: FatalError[]; readonly done: Promise<FatalError> } {
+function fatalSignal(client: AcpClient): {
+  readonly errors: FatalError[];
+  readonly done: Promise<FatalError>;
+} {
   const errors: FatalError[] = [];
   // eslint-disable-next-line unicorn/consistent-function-scoping -- resolver is test-local state
   let resolveDone: (error: FatalError) => void = () => {};
@@ -186,7 +189,10 @@ async function createSession(
   // eslint-disable-next-line unicorn/no-object-as-default-parameter -- test helper defaults mirror ACP responses
   result: Record<string, unknown> = { sessionId: "session-1" },
 ): Promise<string> {
-  const promise = client.createSession({ cwd: "/caller-supplied-cwd", mcpServers: [] });
+  const promise = client.createSession({
+    cwd: "/caller-supplied-cwd",
+    mcpServers: [],
+  });
   const frame = await output.nextFrame();
   assert.deepEqual(frame.params, { cwd: CWD, mcpServers: [] });
   input.push(rpcResponse(frame.id, result));
@@ -227,10 +233,12 @@ void test("retains the agent loadSession capability while defaulting absent capa
 
   const initializePromise = client.initialize(INIT_OPTIONS);
   const frame = await output.nextFrame();
-  input.push(rpcResponse(frame.id, {
-    protocolVersion: 1,
-    agentCapabilities: { loadSession: true },
-  }));
+  input.push(
+    rpcResponse(frame.id, {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+    }),
+  );
   assert.deepEqual(await initializePromise, {
     protocolVersion: 1,
     agentCapabilities: { loadSession: true },
@@ -298,7 +306,11 @@ void test("classifies a healthy session/load method error without poisoning tran
     throw new Error("loadSession capability was not installed");
   }
   const fatal = fatalSignal(client);
-  const loading = client.loadSession({ cwd: CWD, mcpServers: [], sessionId: "stale-session" });
+  const loading = client.loadSession({
+    cwd: CWD,
+    mcpServers: [],
+    sessionId: "stale-session",
+  });
   const frame = await output.nextFrame();
   input.push({
     jsonrpc: "2.0",
@@ -306,7 +318,11 @@ void test("classifies a healthy session/load method error without poisoning tran
     error: { code: -32_000, message: "stale session" },
   });
   await assert.rejects(loading, (error: unknown) => {
-    assert.deepEqual(error, { kind: "method_error", operation: "session_load", fatal: false });
+    assert.deepEqual(error, {
+      kind: "method_error",
+      operation: "session_load",
+      fatal: false,
+    });
     return true;
   });
   assert.equal(fatal.errors.length, 0);
@@ -324,7 +340,11 @@ void test("rejects a non-v1 negotiated version and emits one protocol fatal", as
   input.push(rpcResponse(frame.id, { protocolVersion: 2 }));
 
   await assert.rejects(initializePromise, (error: unknown) => {
-    assert.deepEqual(error, { kind: "protocol_error", operation: "initialize", fatal: true });
+    assert.deepEqual(error, {
+      kind: "protocol_error",
+      operation: "initialize",
+      fatal: true,
+    });
     return true;
   });
   await fatal.done;
@@ -355,49 +375,59 @@ void test("maps text and ignored updates and joins distinct message IDs", async 
     sessionId,
     prompt: [{ type: "text", text: "hello" }],
   });
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "hello " },
-      messageId: "message-1",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "hello " },
+        messageId: "message-1",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "world" },
-      messageId: "message-1",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "world" },
+        messageId: "message-1",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "next" },
-      messageId: "message-2",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "next" },
+        messageId: "message-2",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_thought_chunk",
-      content: { type: "text", text: "hidden" },
-      messageId: "thought-1",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "hidden" },
+        messageId: "thought-1",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "image", data: "AA==", mimeType: "image/png" },
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "image", data: "AA==", mimeType: "image/png" },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
   input.push(rpcResponse(promptFrame.id, { stopReason: "end_turn" }));
 
@@ -445,34 +475,82 @@ void test("preserves bounded thought and tool activity with optional fields and 
   const updates: unknown[] = [];
   client.onUpdate((update) => updates.push(update));
   const prompt = client.prompt(sessionId, "hello", {
-    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+    cancelled: false,
+    reason: undefined,
+    onCancel() {
+      return () => {};
+    },
   });
   const frame = await output.nextFrame();
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "agent_thought_chunk", messageId: "thought", content: { type: "text", text: "thinking" },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        messageId: "thought",
+        content: { type: "text", text: "thinking" },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call", toolCallId: "tool-1", kind: "edit", status: "pending", title: "write",
-    rawInput: { path: "/tmp/example", content: "x".repeat(20_000) },
-    locations: [{ path: "/tmp/example", line: 3 }],
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-1",
+        kind: "edit",
+        status: "pending",
+        title: "write",
+        rawInput: { path: "/tmp/example", content: "x".repeat(20_000) },
+        locations: [{ path: "/tmp/example", line: 3 }],
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed",
-    content: [{ type: "diff", path: "/tmp/example", oldText: null, newText: "new" }],
-    _meta: { terminal_output: { terminal_id: "terminal-1", data: "ok" },
-      terminal_exit: { terminal_id: "terminal-1", exit_code: 0, signal: null } },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        status: "completed",
+        content: [{ type: "diff", path: "/tmp/example", oldText: null, newText: "new" }],
+        _meta: {
+          terminal_output: { terminal_id: "terminal-1", data: "ok" },
+          terminal_exit: {
+            terminal_id: "terminal-1",
+            exit_code: 0,
+            signal: null,
+          },
+        },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
   input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
   await prompt;
-  assert.deepEqual(updates[0], { sessionId, kind: "agent_thought_chunk", messageId: "thought", text: "thinking" });
-  assert.deepEqual(updates[1], { sessionId, kind: "tool_call", toolCallId: "tool-1", title: "write",
-    toolKind: "edit", status: "pending", rawInput: { path: "/tmp/example", content: "x".repeat(20_000) },
+  assert.deepEqual(updates[0], {
+    sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "thought",
+    text: "thinking",
+  });
+  assert.deepEqual(updates[1], {
+    sessionId,
+    kind: "tool_call",
+    toolCallId: "tool-1",
+    title: "write",
+    toolKind: "edit",
+    status: "pending",
+    rawInput: { path: "/tmp/example", content: "x".repeat(20_000) },
     locations: [{ path: "/tmp/example", line: 3 }],
   });
-  assert.deepEqual(updates[2], { sessionId, kind: "tool_call_update", toolCallId: "tool-1", status: "completed",
+  assert.deepEqual(updates[2], {
+    sessionId,
+    kind: "tool_call_update",
+    toolCallId: "tool-1",
+    status: "completed",
     content: [{ type: "diff", path: "/tmp/example", oldText: null, newText: "new" }],
     terminalOutput: { terminalId: "terminal-1", data: "ok" },
     terminalExit: { terminalId: "terminal-1", exitCode: 0, signal: null },
@@ -489,21 +567,56 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   const model = new AcpActivityModel();
   client.onUpdate((update) => model.accept(update));
   const prompt = client.prompt(sessionId, "hello", {
-    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+    cancelled: false,
+    reason: undefined,
+    onCancel() {
+      return () => {};
+    },
   });
   const frame = await output.nextFrame();
   const push = (update: unknown) => input.push(rpcNotification("session/update", { sessionId, update }));
-  push({ sessionUpdate: "agent_thought_chunk", messageId: "thought",
-    content: { type: "text", text: `${"a".repeat(8190)}😀tail` } });
-  push({ sessionUpdate: "agent_thought_chunk", messageId: "thought",
-    content: { type: "text", text: "later thought" } });
-  push({ sessionUpdate: "tool_call", toolCallId: "tool", title: "read", kind: "read" });
-  push({ sessionUpdate: "tool_call_update", toolCallId: "tool", status: "completed",
-    content: [{ type: "content", content: { type: "text", text: `${"b".repeat(8190)}😀tail` } }] });
-  push({ sessionUpdate: "tool_call", toolCallId: "many", title: "read", kind: "read" });
-  push({ sessionUpdate: "tool_call_update", toolCallId: "many", status: "completed",
-    content: Array.from({ length: 33 }, (_, index) => ({ type: "content",
-      content: { type: "text", text: String(index) } })) });
+  push({
+    sessionUpdate: "agent_thought_chunk",
+    messageId: "thought",
+    content: { type: "text", text: `${"a".repeat(8190)}😀tail` },
+  });
+  push({
+    sessionUpdate: "agent_thought_chunk",
+    messageId: "thought",
+    content: { type: "text", text: "later thought" },
+  });
+  push({
+    sessionUpdate: "tool_call",
+    toolCallId: "tool",
+    title: "read",
+    kind: "read",
+  });
+  push({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "tool",
+    status: "completed",
+    content: [
+      {
+        type: "content",
+        content: { type: "text", text: `${"b".repeat(8190)}😀tail` },
+      },
+    ],
+  });
+  push({
+    sessionUpdate: "tool_call",
+    toolCallId: "many",
+    title: "read",
+    kind: "read",
+  });
+  push({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "many",
+    status: "completed",
+    content: Array.from({ length: 33 }, (_, index) => ({
+      type: "content",
+      content: { type: "text", text: String(index) },
+    })),
+  });
   input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
   await prompt;
   assert.equal(model.events.length, 3);
@@ -522,7 +635,8 @@ void test("client activity remains Unicode-safe and visibly truncated through re
     assert.equal(Buffer.byteLength(thought.text, "utf8"), 8192);
     assert.ok(thought.text.startsWith("a".repeat(8190)));
   }
-  if (tool.type === "tool") assert.equal(tool.content?.[0]?.type === "content" && tool.content[0].text, "b".repeat(8190));
+  if (tool.type === "tool")
+    assert.equal(tool.content?.[0]?.type === "content" && tool.content[0].text, "b".repeat(8190));
   if (many.type === "tool") assert.equal(many.contentCut, true);
   await client.close();
 });
@@ -536,14 +650,24 @@ void test("large terminal notification preserves the first and last UTF-8 bytes"
   const updates: unknown[] = [];
   client.onUpdate((update) => updates.push(update));
   const prompt = client.prompt(sessionId, "hello", {
-    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+    cancelled: false,
+    reason: undefined,
+    onCancel() {
+      return () => {};
+    },
   });
   const frame = await output.nextFrame();
   const data = `FIRST_OUTPUT${"😀".repeat(100_000)}LAST_OUTPUT`;
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call_update", toolCallId: "tool-1",
-    _meta: { terminal_output: { data } },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        _meta: { terminal_output: { data } },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
   input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
   await prompt;
@@ -569,41 +693,85 @@ void test("activity ingestion keeps substantial output and shares one budget acr
     if (update.kind === "agent_thought_chunk") thoughts.push(update);
   });
   const prompt = client.prompt(sessionId, "hello", {
-    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+    cancelled: false,
+    reason: undefined,
+    onCancel() {
+      return () => {};
+    },
   });
   const frame = await output.nextFrame();
   const text = "😀".repeat(16_384);
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call", toolCallId: "small", title: "read", kind: "read",
-    content: [{ type: "content", content: { type: "text", text } }],
-    _meta: { terminal_output: { data: text } },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "small",
+        title: "read",
+        kind: "read",
+        content: [{ type: "content", content: { type: "text", text } }],
+        _meta: { terminal_output: { data: text } },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call", toolCallId: "large", title: "edit", kind: "edit",
-    locations: [{ path: "file" }],
-    content: [
-      { type: "diff", path: "file", oldText: text, newText: text },
-      { type: "content", content: { type: "text", text } },
-    ],
-    _meta: { terminal_output: { data: text } },
-    rawInput: { code: text }, rawOutput: { content: [{ text }] },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "large",
+        title: "edit",
+        kind: "edit",
+        locations: [{ path: "file" }],
+        content: [
+          { type: "diff", path: "file", oldText: text, newText: text },
+          { type: "content", content: { type: "text", text } },
+        ],
+        _meta: { terminal_output: { data: text } },
+        rawInput: { code: text },
+        rawOutput: { content: [{ text }] },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call_update", toolCallId: "large",
-    rawInput: { code: text.repeat(3) }, rawOutput: { text: text.repeat(3) },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "large",
+        rawInput: { code: text.repeat(3) },
+        rawOutput: { text: text.repeat(3) },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "agent_thought_chunk",
-    content: { type: "text", text: "😀".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES / 4) },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: {
+          type: "text",
+          text: "😀".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES / 4),
+        },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "agent_thought_chunk",
-    content: { type: "text", text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 1)}😀` },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: {
+          type: "text",
+          text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 1)}😀`,
+        },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
   input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
   await prompt;
@@ -614,8 +782,13 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   assert.equal(small.terminalOutput?.data, text);
   assert.equal(small.terminalOutput?.originalBytes, undefined);
   assert.equal(large.activityCut, true);
-  const strings = [large.toolCallId, large.title, large.toolKind, large.locations?.[0]?.path,
-    large.terminalOutput?.data];
+  const strings = [
+    large.toolCallId,
+    large.title,
+    large.toolKind,
+    large.locations?.[0]?.path,
+    large.terminalOutput?.data,
+  ];
   for (const item of large.content ?? []) {
     if (item.type === "content") strings.push(item.text);
     if (item.type === "diff") strings.push(item.path, item.oldText ?? "", item.newText);
@@ -633,7 +806,9 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   const rawOutput = raw.rawOutput as { text: string };
   assert.equal(rawInput.code, text.repeat(3));
   assert.ok(Buffer.byteLength(rawOutput.text, "utf8") < Buffer.byteLength(text.repeat(3), "utf8"));
-  assert.ok(Buffer.byteLength(rawInput.code + rawOutput.text + "codetextlarge", "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
+  assert.ok(
+    Buffer.byteLength(rawInput.code + rawOutput.text + "codetextlarge", "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES,
+  );
   assert.equal(raw.activityCut, true);
   assert.doesNotMatch(rawOutput.text, /�/u);
   assert.equal(Buffer.byteLength(thoughts[0]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES);
@@ -651,34 +826,70 @@ void test("malformed optional activity fields do not escape into updates or diag
   const input = createFakeInput();
   const output = createFakeOutput();
   const diagnostics: unknown[] = [];
-  const client = newClient(input, output, { diagnostics: {
-    ...createDiagnostics(),
-    emit(_level: unknown, _event: unknown, fields: unknown) { diagnostics.push(fields); },
-  } });
+  const client = newClient(input, output, {
+    diagnostics: {
+      ...createDiagnostics(),
+      emit(_level: unknown, _event: unknown, fields: unknown) {
+        diagnostics.push(fields);
+      },
+    },
+  });
   await initialize(client, input, output);
   const sessionId = await createSession(client, input, output);
   const updates: unknown[] = [];
   client.onUpdate((update) => updates.push(update));
   const prompt = client.prompt(sessionId, "hello", {
-    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+    cancelled: false,
+    reason: undefined,
+    onCancel() {
+      return () => {};
+    },
   });
   const frame = await output.nextFrame();
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call_update", toolCallId: "tool-2", title: 8, status: false,
-    content: [{ type: "diff", path: 4 }, { type: "content", content: { type: "image", data: "private" } }],
-    locations: [{ path: 3 }], rawInput: { invalid: undefined },
-    _meta: { terminal_output: { data: 9 }, terminal_exit: { exit_code: "private" } },
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-2",
+        title: 8,
+        status: false,
+        content: [
+          { type: "diff", path: 4 },
+          { type: "content", content: { type: "image", data: "private" } },
+        ],
+        locations: [{ path: 3 }],
+        rawInput: { invalid: undefined },
+        _meta: {
+          terminal_output: { data: 9 },
+          terminal_exit: { exit_code: "private" },
+        },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", { sessionId, update: {
-    sessionUpdate: "tool_call_update", toolCallId: "tool-3",
-  } }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-3",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
   input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
   await prompt;
   assert.deepEqual(updates, [
-    { sessionId, kind: "tool_call_update", toolCallId: "tool-2",
-      content: [], locations: [], rawInput: {}, terminalExit: {} },
+    {
+      sessionId,
+      kind: "tool_call_update",
+      toolCallId: "tool-2",
+      content: [],
+      locations: [],
+      rawInput: {},
+      terminalExit: {},
+    },
     { sessionId, kind: "tool_call_update", toolCallId: "tool-3" },
   ]);
   assert.equal(JSON.stringify(diagnostics).includes("private"), false);
@@ -694,14 +905,16 @@ void test("ignores agent text updates before a prompt while preserving later pro
   const updates: unknown[] = [];
   client.onUpdate((update) => updates.push(update));
 
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "startup history" },
-      messageId: "startup-message",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "startup history" },
+        messageId: "startup-message",
+      },
+    }),
+  );
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(updates, []);
 
@@ -713,14 +926,16 @@ void test("ignores agent text updates before a prompt while preserving later pro
     },
   });
   const promptFrame = await output.nextFrame();
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "answer" },
-      messageId: "answer-message",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "answer" },
+        messageId: "answer-message",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
   input.push(rpcResponse(promptFrame.id, { stopReason: "end_turn" }));
 
@@ -760,31 +975,37 @@ void test("suppresses a session startup prelude that races the first prompt", as
     },
   });
   const promptFrame = await output.nextFrame();
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "startup prelude" },
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "startup prelude" },
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "actual " },
-      messageId: "answer-message",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "actual " },
+        messageId: "answer-message",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
-  input.push(rpcNotification("session/update", {
-    sessionId,
-    update: {
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "prompt text" },
-      messageId: "answer-message",
-    },
-  }));
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "prompt text" },
+        messageId: "answer-message",
+      },
+    }),
+  );
   // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends one ordered protocol frame
   input.push(rpcResponse(promptFrame.id, { stopReason: "end_turn" }));
 
@@ -847,7 +1068,10 @@ void test("returns healthy-transport prompt errors without poisoning the connect
   });
   const healthyFrame = await output.nextFrame();
   input.push(rpcResponse(healthyFrame.id, { stopReason: "end_turn" }));
-  assert.deepEqual(await healthyPrompt, { kind: "turn", stopReason: "end_turn" });
+  assert.deepEqual(await healthyPrompt, {
+    kind: "turn",
+    stopReason: "end_turn",
+  });
   await client.close();
 });
 
@@ -859,11 +1083,13 @@ void test("auto-selects allow_always, falls back to allow_once, and cancels othe
   const sessionId = await createSession(client, input, output);
 
   const permission = (id: number, options: unknown[]) => {
-    input.push(rpcRequest(id, "session/request_permission", {
-      sessionId,
-      toolCall: { toolCallId: `tool-${id}` },
-      options,
-    }));
+    input.push(
+      rpcRequest(id, "session/request_permission", {
+        sessionId,
+        toolCall: { toolCallId: `tool-${id}` },
+        options,
+      }),
+    );
   };
   const always = {
     optionId: "always",
@@ -941,17 +1167,18 @@ void test("close answers pending permission requests with cancelled", async () =
       }),
   });
   await initialize(client, input, output);
-  input.push(rpcRequest(20, "session/request_permission", {
-    sessionId: "session-1",
-    toolCall: { toolCallId: "tool-20" },
-    options: [{ optionId: "once", name: "Once", kind: "allow_once" }],
-  }));
+  input.push(
+    rpcRequest(20, "session/request_permission", {
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-20" },
+      options: [{ optionId: "once", name: "Once", kind: "allow_once" }],
+    }),
+  );
 
   await handlerStarted;
   await client.close();
-  const response = output.frames.find((frame) =>
-    (frame as Record<string, unknown>).id === 20,
-  ) as Record<string, unknown> | undefined;
+  const response = output.frames.find((frame) => (frame as Record<string, unknown>).id === 20) as
+    Record<string, unknown> | undefined;
   assert.deepEqual(response?.result, { outcome: { outcome: "cancelled" } });
 });
 

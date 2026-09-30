@@ -3,11 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  runSender as runSenderProcess,
-  startBridgePair,
-  stopBridgePair,
-} from "../e2e-support/acp.mjs";
+import { runSender as runSenderProcess, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
 import { defaultEnvironmentPath, readEnvironment, testDir, writePrivateFile } from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
@@ -85,8 +81,12 @@ async function runSender(prompt, expected) {
     args: ["--prompt", prompt, "--expect", expected],
     forwardStderr: false,
   });
-  if (result.event !== "exchange-complete" || result.responseCount !== 1 ||
-      result.promptWireType !== "m.room.message" || result.responseWireType !== "m.room.message") {
+  if (
+    result.event !== "exchange-complete" ||
+    result.responseCount !== 1 ||
+    result.promptWireType !== "m.room.message" ||
+    result.responseWireType !== "m.room.message"
+  ) {
     throw new Error("sender did not report a valid plaintext exchange");
   }
 }
@@ -110,11 +110,20 @@ async function assertResetRemovedMapping(observed) {
 function assertProtocol(observed) {
   const [first, second] = observed.prompts;
   const [firstNew, secondNew] = observed.newSessionIds;
-  if (observed.newRequests !== 2 || observed.loadRequests !== 0 || observed.deleteRequests !== 0 ||
-      observed.prompts.length !== 2 || first?.text !== initialPrompt || second?.text !== followupPrompt ||
-      first?.sessionId !== firstNew || second?.sessionId !== secondNew || firstNew === secondNew ||
-      typeof firstNew !== "string" || typeof secondNew !== "string" ||
-      observed.prompts.some(({ text }) => text === "/reset")) {
+  if (
+    observed.newRequests !== 2 ||
+    observed.loadRequests !== 0 ||
+    observed.deleteRequests !== 0 ||
+    observed.prompts.length !== 2 ||
+    first?.text !== initialPrompt ||
+    second?.text !== followupPrompt ||
+    first?.sessionId !== firstNew ||
+    second?.sessionId !== secondNew ||
+    firstNew === secondNew ||
+    typeof firstNew !== "string" ||
+    typeof secondNew !== "string" ||
+    observed.prompts.some(({ text }) => text === "/reset")
+  ) {
     throw new Error("/reset ACP protocol assertions failed");
   }
 }

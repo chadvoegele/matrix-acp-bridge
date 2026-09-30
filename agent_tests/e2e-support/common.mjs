@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const supportDir = dirname(fileURLToPath(import.meta.url));
+
 export const repoRoot = resolve(supportDir, "../..");
 
 export async function readEnvironment(path, { roleKeys = {} } = {}) {
@@ -12,8 +13,11 @@ export async function readEnvironment(path, { roleKeys = {} } = {}) {
   for (const key of ["homeserver", "roomId", "acpCwd", "acpCommand"]) {
     if (value[key] === undefined) throw new Error(`environment is missing ${key}`);
   }
-  if (!Array.isArray(value.acpCommand) || value.acpCommand.length === 0 ||
-      !value.acpCommand.every((part) => typeof part === "string" && part.length > 0)) {
+  if (
+    !Array.isArray(value.acpCommand) ||
+    value.acpCommand.length === 0 ||
+    !value.acpCommand.every((part) => typeof part === "string" && part.length > 0)
+  ) {
     throw new Error("environment acpCommand must be a nonempty string array");
   }
   for (const [role, keys] of Object.entries(roleKeys)) {
@@ -63,8 +67,8 @@ export async function login(homeserver, userId, passwordValue, id, displayName) 
       }),
     });
     const body = await response.json().catch(() => ({}));
-    if (response.ok && typeof body.access_token === "string" &&
-        body.device_id === id && body.user_id === userId) return body.access_token;
+    if (response.ok && typeof body.access_token === "string" && body.device_id === id && body.user_id === userId)
+      return body.access_token;
     if (response.status === 429 && attempt < 4) {
       const delay = Number.isFinite(body.retry_after_ms) ? Math.max(1000, body.retry_after_ms) : 30_000;
       await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
@@ -101,8 +105,11 @@ export async function provisionEnvironment({
   afterProvision,
   message,
 }) {
-  if (!Array.isArray(acpCommand) || acpCommand.length === 0 ||
-      !acpCommand.every((part) => typeof part === "string" && part.length > 0)) {
+  if (
+    !Array.isArray(acpCommand) ||
+    acpCommand.length === 0 ||
+    !acpCommand.every((part) => typeof part === "string" && part.length > 0)
+  ) {
     throw new Error("E2E_ACP_COMMAND must be a nonempty JSON string array");
   }
   if (privateRoot === "/" || privateRoot.length < 8) throw new Error("unsafe private root");
@@ -149,10 +156,14 @@ export async function provisionEnvironment({
       delete identity.displayName;
     }
   } catch (error) {
-    await Promise.all(issuedTokens.map((token) => fetch(`${homeserver}/_matrix/client/v3/logout`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}` },
-    }).catch(() => {})));
+    await Promise.all(
+      issuedTokens.map((token) =>
+        fetch(`${homeserver}/_matrix/client/v3/logout`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        }).catch(() => {}),
+      ),
+    );
     await rm(privateRoot, { recursive: true, force: true });
     throw error;
   }

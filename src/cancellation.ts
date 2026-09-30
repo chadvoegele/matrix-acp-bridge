@@ -15,8 +15,11 @@ const noop: Unsubscribe = () => {};
 
 class DefaultCancellation implements CancellationController, CancellationSignal {
   readonly signal: CancellationSignal = this;
+
   #cancelled = false;
+
   #reason: string | undefined;
+
   #listeners = new Set<(reason?: string) => void>();
 
   get cancelled(): boolean {

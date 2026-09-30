@@ -37,8 +37,8 @@ export const defaultOperatorTtyFactory: OperatorTtyFactory = {
           if (result.bytesRead === 0) {
             return bytes.length === 0 ? undefined : Buffer.from(bytes).toString("utf8");
           }
-          if (buffer[0] === 0x0A) {
-            if (bytes.at(-1) === 0x0D) {
+          if (buffer[0] === 0x0a) {
+            if (bytes.at(-1) === 0x0d) {
               bytes.pop();
             }
             return Buffer.from(bytes).toString("utf8");

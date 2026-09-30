@@ -2,17 +2,10 @@ import { RateLimitedDiagnosticSink } from "./diagnostics.js";
 import type { Clock } from "./clock.js";
 import type { BridgeConfig, EncryptionMode } from "./config.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
-import type {
-  InboundMatrixEvent,
-  MatrixEventId,
-  MatrixRoomId,
-  MatrixUserId,
-} from "./matrix-client.js";
+import type { InboundMatrixEvent, MatrixEventId, MatrixRoomId, MatrixUserId } from "./matrix-client.js";
 import { isValidMatrixEventId } from "./matrix-validation.js";
 import { hasOwn, isRecord } from "./object-validation.js";
 import { utf8ByteLength } from "./text-utils.js";
-
-
 
 export interface InReplyToRelation {
   readonly eventId: MatrixEventId;
@@ -44,8 +37,7 @@ export const INBOUND_REJECTION_REASONS = {
   oversized: "oversized",
 } as const;
 
-export type InboundRejectionReason =
-  (typeof INBOUND_REJECTION_REASONS)[keyof typeof INBOUND_REJECTION_REASONS];
+export type InboundRejectionReason = (typeof INBOUND_REJECTION_REASONS)[keyof typeof INBOUND_REJECTION_REASONS];
 
 export interface InboundAuthorizationOptions {
   readonly allowedRooms: Iterable<MatrixRoomId>;
@@ -83,10 +75,7 @@ export interface OversizedInboundDecision {
   };
 }
 
-export type InboundAuthorizationDecision =
-  | AcceptedInboundDecision
-  | RejectedInboundDecision
-  | OversizedInboundDecision;
+export type InboundAuthorizationDecision = AcceptedInboundDecision | RejectedInboundDecision | OversizedInboundDecision;
 
 interface ResolvedAuthorizationOptions {
   readonly allowedRooms: ReadonlySet<MatrixRoomId>;
@@ -123,9 +112,7 @@ function iterableToSet(values: Iterable<string>, name: string): ReadonlySet<stri
   return result;
 }
 
-function resolveOptions(
-  options: InboundAuthorizationConfig,
-): ResolvedAuthorizationOptions {
+function resolveOptions(options: InboundAuthorizationConfig): ResolvedAuthorizationOptions {
   const candidate = options as Partial<InboundAuthorizationOptions> & {
     readonly matrix?: BridgeConfig["matrix"];
     readonly limits?: BridgeConfig["limits"];
@@ -148,11 +135,7 @@ function resolveOptions(
   if (bridgeUserId === undefined || typeof bridgeUserId !== "string") {
     throw new TypeError("bridgeUserId is required");
   }
-  if (
-    maxInputBytes === undefined ||
-    !Number.isSafeInteger(maxInputBytes) ||
-    maxInputBytes <= 0
-  ) {
+  if (maxInputBytes === undefined || !Number.isSafeInteger(maxInputBytes) || maxInputBytes <= 0) {
     throw new RangeError("maxInputBytes must be a positive safe integer");
   }
   if (encryption !== "disabled" && encryption !== "required") {
@@ -165,17 +148,12 @@ function resolveOptions(
     bridgeUserId,
     maxInputBytes,
     encryption,
-    ...(candidate.diagnostics === undefined
-      ? {}
-      : { diagnostics: candidate.diagnostics }),
+    ...(candidate.diagnostics === undefined ? {} : { diagnostics: candidate.diagnostics }),
     ...(candidate.clock === undefined ? {} : { clock: candidate.clock }),
   };
 }
 
-function diagnosticSinkFor(
-  sink: DiagnosticSink | undefined,
-  clock: Clock | undefined,
-): DiagnosticSink | undefined {
+function diagnosticSinkFor(sink: DiagnosticSink | undefined, clock: Clock | undefined): DiagnosticSink | undefined {
   if (sink === undefined) {
     return undefined;
   }
@@ -190,26 +168,21 @@ function diagnosticSinkFor(
     return existing;
   }
 
-  const limited = new RateLimitedDiagnosticSink(
-    sink,
-    clock === undefined ? {} : { clock },
-  );
+  const limited = new RateLimitedDiagnosticSink(sink, clock === undefined ? {} : { clock });
   cachedDiagnosticSinks.set(sink, limited);
   return limited;
 }
 
-function relationFromContent(
-  content: RecordLike,
-): { readonly relation?: { readonly eventId: MatrixEventId }; readonly valid: boolean } {
+function relationFromContent(content: RecordLike): {
+  readonly relation?: { readonly eventId: MatrixEventId };
+  readonly valid: boolean;
+} {
   if (!hasOwn(content, "m.relates_to")) {
     return { valid: true };
   }
 
   const relatesTo = content["m.relates_to"];
-  if (
-    !isRecord(relatesTo) ||
-    !hasExactlyOwnKeys(relatesTo, ["m.in_reply_to"])
-  ) {
+  if (!isRecord(relatesTo) || !hasExactlyOwnKeys(relatesTo, ["m.in_reply_to"])) {
     return { valid: false };
   }
 
@@ -227,10 +200,7 @@ function relationFromContent(
 
 function hasExactlyOwnKeys(value: RecordLike, expected: readonly string[]): boolean {
   const keys = Reflect.ownKeys(value);
-  return (
-    keys.length === expected.length &&
-    expected.every((key) => keys.includes(key))
-  );
+  return keys.length === expected.length && expected.every((key) => keys.includes(key));
 }
 
 /**
@@ -287,18 +257,13 @@ function findLineBreak(value: string, from: number): LineBreak | undefined {
       return { start: index, end: index + 1 };
     }
     if (character === "\r") {
-      return value[index + 1] === "\n"
-        ? { start: index, end: index + 2 }
-        : { start: index, end: index + 1 };
+      return value[index + 1] === "\n" ? { start: index, end: index + 2 } : { start: index, end: index + 1 };
     }
   }
   return undefined;
 }
 
-function diagnosticFieldsFor(
-  event: unknown,
-  reason: InboundRejectionReason,
-): DiagnosticFields {
+function diagnosticFieldsFor(event: unknown, reason: InboundRejectionReason): DiagnosticFields {
   const record = isRecord(event) ? event : {};
   return {
     eventId: stringValue(record.eventId),
@@ -314,6 +279,7 @@ function isStateEvent(event: RecordLike): boolean {
 
 export class InboundAuthorizer {
   readonly #options: ResolvedAuthorizationOptions;
+
   readonly #diagnostics: DiagnosticSink | undefined;
 
   constructor(options: InboundAuthorizationConfig) {
@@ -379,9 +345,7 @@ export class InboundAuthorizer {
       return this.#reject(event, INBOUND_REJECTION_REASONS.invalidRelation);
     }
 
-    const body = relation.relation === undefined
-      ? content.body
-      : stripReplyFallback(content.body);
+    const body = relation.relation === undefined ? content.body : stripReplyFallback(content.body);
     if (body.trim().length === 0) {
       return this.#reject(event, INBOUND_REJECTION_REASONS.emptyBody);
     }
@@ -408,10 +372,7 @@ export class InboundAuthorizer {
     return { accepted: true, kind: "accepted", event: normalized };
   }
 
-  #reject(
-    event: unknown,
-    reason: Exclude<InboundRejectionReason, "oversized">,
-  ): RejectedInboundDecision {
+  #reject(event: unknown, reason: Exclude<InboundRejectionReason, "oversized">): RejectedInboundDecision {
     this.#diagnose(event, reason);
     return { accepted: false, kind: "rejected", reason };
   }
@@ -421,10 +382,8 @@ export class InboundAuthorizer {
   }
 }
 
-export function createInboundAuthorizer(
-  options: InboundAuthorizationConfig,
-): InboundAuthorizer {
+export function createInboundAuthorizer(options: InboundAuthorizationConfig): InboundAuthorizer {
   return new InboundAuthorizer(options);
 }
 
-export {isValidMatrixEventId} from "./matrix-validation.js";
+export { isValidMatrixEventId } from "./matrix-validation.js";

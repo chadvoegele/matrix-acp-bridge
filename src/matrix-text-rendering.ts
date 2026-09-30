@@ -11,7 +11,11 @@ export function renderMatrixText(body: string): MatrixHtmlBody {
 }
 
 /** Find the next Unicode-safe Markdown chunk that fits a Matrix message. */
-export function renderMatrixTextChunk(characters: readonly string[], offset: number, maxBytes: number): MatrixTextChunk | undefined {
+export function renderMatrixTextChunk(
+  characters: readonly string[],
+  offset: number,
+  maxBytes: number,
+): MatrixTextChunk | undefined {
   let low = 1;
   let high = characters.length - offset;
   let fitting = 0;

@@ -103,7 +103,10 @@ interface NodeIndexedDatabaseTransaction {
 interface NodeIndexedDatabase {
   createObjectStore(
     name: string,
-    options: { readonly keyPath: string | readonly string[] | null; readonly autoIncrement: boolean },
+    options: {
+      readonly keyPath: string | readonly string[] | null;
+      readonly autoIncrement: boolean;
+    },
   ): NodeIndexedDatabaseObjectStore;
   transaction(storeNames: readonly string[] | string, mode?: string): NodeIndexedDatabaseTransaction;
   close(): void;
@@ -125,14 +128,18 @@ function isNodeEnvironment(): boolean {
 }
 
 function isSnapshot(value: unknown): value is IndexedDatabaseSnapshot {
-  if (!isRecord(value) || value.schemaVersion !== SNAPSHOT_SCHEMA_VERSION ||
-      !Array.isArray(value.databases)) {
+  if (!isRecord(value) || value.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || !Array.isArray(value.databases)) {
     return false;
   }
-  return value.databases.every((database) => isRecord(database) &&
-    typeof database.name === "string" &&
-    typeof database.version === "number" && Number.isSafeInteger(database.version) && database.version > 0 &&
-    Array.isArray(database.objectStores));
+  return value.databases.every(
+    (database) =>
+      isRecord(database) &&
+      typeof database.name === "string" &&
+      typeof database.version === "number" &&
+      Number.isSafeInteger(database.version) &&
+      database.version > 0 &&
+      Array.isArray(database.objectStores),
+  );
 }
 
 function snapshotFile(path: string): string {
@@ -148,8 +155,7 @@ function factory(): FakeIndexedDatabaseFactory {
 }
 
 function databaseMatchesPath(name: string): boolean {
-  return databasePath !== undefined &&
-    (name === databasePath || name.startsWith(`${databasePath}::`));
+  return databasePath !== undefined && (name === databasePath || name.startsWith(`${databasePath}::`));
 }
 
 function captureSnapshot(): IndexedDatabaseSnapshot {
@@ -176,17 +182,13 @@ function captureSnapshot(): IndexedDatabaseSnapshot {
         .filter((index) => !isRecord(index) || index.deleted !== true)
         .map((index) => ({
           name: index.name,
-          keyPath: index.keyPath === null || typeof index.keyPath === "string"
-            ? index.keyPath
-            : [...index.keyPath],
+          keyPath: index.keyPath === null || typeof index.keyPath === "string" ? index.keyPath : [...index.keyPath],
           multiEntry: index.multiEntry,
           unique: index.unique,
         }));
       objectStores.push({
         name: storeName,
-        keyPath: store.keyPath === null || typeof store.keyPath === "string"
-          ? store.keyPath
-          : [...store.keyPath],
+        keyPath: store.keyPath === null || typeof store.keyPath === "string" ? store.keyPath : [...store.keyPath],
         autoIncrement: store.autoIncrement,
         ...(store.keyGenerator === undefined || store.keyGenerator === null
           ? {}
@@ -227,19 +229,29 @@ function scheduleSnapshot(): void {
 function requestResult(request: NodeIndexedDatabaseRequest): Promise<NodeIndexedDatabase> {
   return new Promise((resolve, reject) => {
     request.addEventListener("success", () => resolve(request.result));
-    request.addEventListener("error", () => reject(request.error instanceof Error ? request.error : new Error("IndexedDB request failed")));
+    request.addEventListener("error", () =>
+      reject(request.error instanceof Error ? request.error : new Error("IndexedDB request failed")),
+    );
   });
 }
 
 function transactionComplete(transaction: NodeIndexedDatabaseTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.addEventListener("complete", () => resolve(), { once: true });
-    transaction.addEventListener("abort", () => reject(transaction.error instanceof Error ? transaction.error : new Error("IndexedDB transaction aborted")), {
-      once: true,
-    });
-    transaction.addEventListener("error", () => reject(transaction.error instanceof Error ? transaction.error : new Error("IndexedDB transaction failed")), {
-      once: true,
-    });
+    transaction.addEventListener(
+      "abort",
+      () => reject(transaction.error instanceof Error ? transaction.error : new Error("IndexedDB transaction aborted")),
+      {
+        once: true,
+      },
+    );
+    transaction.addEventListener(
+      "error",
+      () => reject(transaction.error instanceof Error ? transaction.error : new Error("IndexedDB transaction failed")),
+      {
+        once: true,
+      },
+    );
   });
 }
 
@@ -323,12 +335,12 @@ function patchConnection(connection: NodeIndexedDatabase): void {
   }
   patchedConnections.add(connection);
   const transaction = connection.transaction.bind(connection);
-  connection.transaction = ((storeNames: readonly string[] | string, mode?: string) => {
+  connection.transaction = (storeNames: readonly string[] | string, mode?: string) => {
     const result = transaction(storeNames, mode);
     result.addEventListener("complete", scheduleSnapshot, { once: true });
     result.addEventListener("abort", scheduleSnapshot, { once: true });
     return result;
-  });
+  };
 }
 
 function patchFactory(): void {
@@ -338,12 +350,12 @@ function patchFactory(): void {
   factoryOpenPatched = true;
   const currentFactory = factory();
   const open = currentFactory.open.bind(currentFactory);
-  currentFactory.open = ((name: string, version?: number) => {
+  currentFactory.open = (name: string, version?: number) => {
     const request = version === undefined ? open(name) : open(name, version);
     request.addEventListener("upgradeneeded", () => patchConnection(request.result));
     request.addEventListener("success", () => patchConnection(request.result));
     return request;
-  });
+  };
 }
 
 /**

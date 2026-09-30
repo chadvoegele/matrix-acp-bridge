@@ -90,11 +90,11 @@ shutdown_grace_seconds = 30
 
 12. Stop the processes and clean up from an `EXIT` trap:
 
-   ```sh
-   node agent_tests/unencrypted-e2e/cleanup.mjs
-   ```
+```sh
+node agent_tests/unencrypted-e2e/cleanup.mjs
+```
 
-   Cleanup must delete saved ACP sessions, log out both temporary Matrix devices, and remove generated tokens, configuration, sync/session state, and locks. It preserves local state if remote cleanup fails.
+Cleanup must delete saved ACP sessions, log out both temporary Matrix devices, and remove generated tokens, configuration, sync/session state, and locks. It preserves local state if remote cleanup fails.
 
 ## State created by the test
 

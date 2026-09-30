@@ -27,7 +27,11 @@ export function jsonLineTap(inspect) {
       const lines = pending.split("\n");
       pending = lines.pop() ?? "";
       for (const line of lines) {
-        try { inspect(JSON.parse(line)); } catch { /* Preserve malformed ACP frames unchanged. */ }
+        try {
+          inspect(JSON.parse(line));
+        } catch {
+          /* Preserve malformed ACP frames unchanged. */
+        }
       }
       callback(null, chunk);
     },
@@ -35,14 +39,24 @@ export function jsonLineTap(inspect) {
 }
 
 export function parseDiagnostics(text) {
-  return text.split("\n").filter(Boolean).flatMap((line) => {
-    try { return [JSON.parse(line)]; } catch { return []; }
-  });
+  return text
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
 }
 
 export async function startBridgePair(environment, { onOutbound, onInbound } = {}) {
   const [acpProgram, ...acpArguments] = environment.acpCommand;
-  const acp = spawn(acpProgram, acpArguments, { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] });
+  const acp = spawn(acpProgram, acpArguments, {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const bridge = spawn(process.execPath, [join(repoRoot, "dist/main.js"), "--config", environment.bridge.configFile], {
     cwd: repoRoot,
     stdio: ["pipe", "pipe", "pipe"],
@@ -54,20 +68,19 @@ export async function startBridgePair(environment, { onOutbound, onInbound } = {
 
   let bridgeDiagnostics = "";
   let acpDiagnostics = "";
-  bridge.stderr.on("data", (chunk) => { bridgeDiagnostics += chunk.toString("utf8"); });
-  acp.stderr.on("data", (chunk) => { acpDiagnostics += chunk.toString("utf8"); });
+  bridge.stderr.on("data", (chunk) => {
+    bridgeDiagnostics += chunk.toString("utf8");
+  });
+  acp.stderr.on("data", (chunk) => {
+    acpDiagnostics += chunk.toString("utf8");
+  });
   const pair = {
     acp,
     bridge,
     bridgeDiagnostics: () => bridgeDiagnostics,
     acpDiagnostics: () => acpDiagnostics,
   };
-  await waitFor(
-    () => bridgeDiagnostics.includes("startup-ready"),
-    "bridge startup-ready",
-    120_000,
-    pair,
-  );
+  await waitFor(() => bridgeDiagnostics.includes("startup-ready"), "bridge startup-ready", 120_000, pair);
   return pair;
 }
 
@@ -85,7 +98,9 @@ export async function runSender({ environmentPath, senderPath, args, forwardStde
   });
   let stdout = "";
   let stderr = "";
-  child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString("utf8");
+  });
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString("utf8");
     if (forwardStderr) process.stderr.write(chunk);

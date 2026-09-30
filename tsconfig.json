@@ -19,11 +19,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": [
-    "dist",
-    "dist-test",
-    "node_modules",
-    "src/**/*.test.ts",
-    "src/test-support/**/*.ts"
-  ]
+  "exclude": ["dist", "dist-test", "node_modules", "src/**/*.test.ts", "src/test-support/**/*.ts"]
 }

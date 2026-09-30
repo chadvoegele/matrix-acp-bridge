@@ -77,16 +77,28 @@ const CRYPTO_KEYS = {
 } as const;
 
 const SILENT_DIAGNOSTICS: DiagnosticSink = {
-  emit() { /* test sink */ },
-  debug() { /* test sink */ },
-  info() { /* test sink */ },
-  warn() { /* test sink */ },
-  error() { /* test sink */ },
+  emit() {
+    /* test sink */
+  },
+  debug() {
+    /* test sink */
+  },
+  info() {
+    /* test sink */
+  },
+  warn() {
+    /* test sink */
+  },
+  error() {
+    /* test sink */
+  },
 };
 
 class FakeStateLock implements StateLockLike {
   readonly lockPath = `${CONFIG.stateDir}/.lock`;
+
   released = false;
+
   releaseCalls = 0;
 
   async release(): Promise<void> {
@@ -97,10 +109,15 @@ class FakeStateLock implements StateLockLike {
 
 class FakeAcp implements AcpClient {
   readonly updates = new Set<(update: AcpUpdate) => void>();
+
   readonly fatalListeners = new Set<(error: FatalError) => void>();
+
   initializeCalls = 0;
+
   closeCalls = 0;
+
   readonly initializeAction: () => Promise<void>;
+
   readonly log: string[];
 
   constructor(log: string[], initializeAction: () => Promise<void> = async () => {}) {
@@ -119,11 +136,7 @@ class FakeAcp implements AcpClient {
     return { sessionId: "session-1" };
   }
 
-  async prompt(
-    _sessionId: string,
-    _text: string,
-    _cancellation: CancellationSignal,
-  ): Promise<AcpOutcome> {
+  async prompt(_sessionId: string, _text: string, _cancellation: CancellationSignal): Promise<AcpOutcome> {
     return { kind: "turn", stopReason: "end_turn" };
   }
 
@@ -149,29 +162,46 @@ class FakeAcp implements AcpClient {
 
 class FakeMatrix implements MatrixClientAdapter {
   readonly fatalListeners = new Set<(error: FatalError) => void>();
+
   readonly syncListeners = new Set<(change: MatrixSyncStateChange) => void>();
+
   readonly syncBatchListeners = new Set<(batch: MatrixSyncBatch) => void | Promise<void>>();
+
   whoamiCalls = 0;
+
   startCalls = 0;
+
   syncBatchSubscriptionCalls = 0;
+
   stopCalls = 0;
+
   cryptoInitializeCalls = 0;
+
   cryptoKeyCalls = 0;
+
   cryptoCloseCalls = 0;
+
   readonly log: string[];
+
   readonly startAction: () => Promise<void>;
-  readonly identity: MatrixIdentity = { userId: USER_ID, deviceId: "BRIDGEDEVICE" };
+
+  readonly identity: MatrixIdentity = {
+    userId: USER_ID,
+    deviceId: "BRIDGEDEVICE",
+  };
 
   constructor(log: string[], startAction?: () => Promise<void>) {
     this.log = log;
-    this.startAction = startAction ?? (async () => {
-      for (const listener of this.syncListeners) {
-        listener({ state: "PREPARED", previousState: null });
-      }
-      for (const listener of this.syncBatchListeners) {
-        await listener({ phase: "initial", rooms: [] });
-      }
-    });
+    this.startAction =
+      startAction ??
+      (async () => {
+        for (const listener of this.syncListeners) {
+          listener({ state: "PREPARED", previousState: null });
+        }
+        for (const listener of this.syncBatchListeners) {
+          await listener({ phase: "initial", rooms: [] });
+        }
+      });
   }
 
   async whoAmI(): Promise<MatrixIdentity> {
@@ -234,13 +264,21 @@ class FakeMatrix implements MatrixClientAdapter {
 
 class FakeBridge implements DaemonBridge {
   readonly fatalListeners = new Set<(error: FatalError) => void>();
+
   readonly log: string[];
+
   readonly acp: FakeAcp;
+
   readonly matrix: FakeMatrix;
+
   readonly initializeAction: () => Promise<void>;
+
   readonly stopAction: (() => Promise<void>) | undefined;
+
   intakeOpen = false;
+
   dispatchOpen = false;
+
   stopCalls = 0;
 
   constructor(
@@ -340,23 +378,27 @@ async function withRequiredCryptoState(run: (stateDir: string) => Promise<void>)
   }
 }
 
-function makeRig(options: {
-  readonly acp?: FakeAcp;
-  readonly matrix?: FakeMatrix;
-  readonly bridge?: FakeBridge;
-  readonly initializeAction?: () => Promise<void>;
-  readonly stopAction?: () => Promise<void>;
-  readonly dependencies?: Partial<DaemonDependencies>;
-} = {}): Rig {
+function makeRig(
+  options: {
+    readonly acp?: FakeAcp;
+    readonly matrix?: FakeMatrix;
+    readonly bridge?: FakeBridge;
+    readonly initializeAction?: () => Promise<void>;
+    readonly stopAction?: () => Promise<void>;
+    readonly dependencies?: Partial<DaemonDependencies>;
+  } = {},
+): Rig {
   const log: string[] = [];
   const clock = new FakeClock();
   const lock = new FakeStateLock();
   const acp = options.acp ?? new FakeAcp(log);
   const matrix = options.matrix ?? new FakeMatrix(log);
-  const bridge = options.bridge ?? new FakeBridge(log, acp, matrix, {
-    ...(options.initializeAction === undefined ? {} : { initializeAction: options.initializeAction }),
-    ...(options.stopAction === undefined ? {} : { stopAction: options.stopAction }),
-  });
+  const bridge =
+    options.bridge ??
+    new FakeBridge(log, acp, matrix, {
+      ...(options.initializeAction === undefined ? {} : { initializeAction: options.initializeAction }),
+      ...(options.stopAction === undefined ? {} : { stopAction: options.stopAction }),
+    });
   const dependencies: DaemonDependencies = {
     clock,
     diagnostics: SILENT_DIAGNOSTICS,
@@ -404,13 +446,10 @@ void test("parses the exact crypto bootstrap and verification command forms", ()
     configPath: "bridge.toml",
     command: { kind: "bootstrap" },
   });
-  assert.deepEqual(
-    parseCommandLine(["--config", "bridge.toml", "crypto", "verify", "--device", "TRUSTED01"]),
-    {
-      configPath: "bridge.toml",
-      command: { kind: "verify", deviceId: "TRUSTED01" },
-    },
-  );
+  assert.deepEqual(parseCommandLine(["--config", "bridge.toml", "crypto", "verify", "--device", "TRUSTED01"]), {
+    configPath: "bridge.toml",
+    command: { kind: "verify", deviceId: "TRUSTED01" },
+  });
 
   for (const args of [
     ["--config", "bridge.toml", "crypto"],
@@ -530,7 +569,15 @@ void test("required startup restores crypto before ACP and does not open gates u
     });
 
     const run = lifecycle.run();
-    await waitForReady({ lifecycle, clock: new FakeClock(), lock, acp, matrix, bridge, log });
+    await waitForReady({
+      lifecycle,
+      clock: new FakeClock(),
+      lock,
+      acp,
+      matrix,
+      bridge,
+      log,
+    });
 
     assert.deepEqual(log.slice(0, 8), [
       "crypto.initialize",
@@ -636,9 +683,14 @@ void test("cleans up resources in reverse order for each partial startup failure
   for (const stage of stages) {
     const log: string[] = [];
     const lock = new FakeStateLock();
-    const acp = new FakeAcp(log, stage === "initialize"
-      ? async () => { throw new Error("failure"); }
-      : async () => {});
+    const acp = new FakeAcp(
+      log,
+      stage === "initialize"
+        ? async () => {
+            throw new Error("failure");
+          }
+        : async () => {},
+    );
     const matrix = new FakeMatrix(log);
     const bridge = new FakeBridge(log, acp, matrix);
     const lifecycle = new DaemonLifecycle({
@@ -722,7 +774,10 @@ void test("fatal Matrix/runtime state exits 1 and still releases the lock", asyn
   const rig = makeRig();
   const run = rig.lifecycle.run();
   await waitForReady(rig);
-  rig.bridge.emitFatal({ code: "matrix_invariant", message: "room invariant failed" });
+  rig.bridge.emitFatal({
+    code: "matrix_invariant",
+    message: "room invariant failed",
+  });
 
   assert.equal(await run, 1);
   assert.equal(rig.bridge.stopCalls, 1);

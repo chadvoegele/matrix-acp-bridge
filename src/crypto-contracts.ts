@@ -10,18 +10,9 @@ export interface CryptoStatePaths {
   readonly manifestPath: string;
 }
 
-export type CryptoCommand =
-  | { readonly kind: "bootstrap" }
-  | { readonly kind: "verify"; readonly deviceId: string };
+export type CryptoCommand = { readonly kind: "bootstrap" } | { readonly kind: "verify"; readonly deviceId: string };
 
-export type CryptoOperation =
-  | "initialize"
-  | "restore"
-  | "bootstrap"
-  | "verify"
-  | "encrypt"
-  | "decrypt"
-  | "close";
+export type CryptoOperation = "initialize" | "restore" | "bootstrap" | "verify" | "encrypt" | "decrypt" | "close";
 
 export type CryptoFailureReason =
   | "not_initialized"

@@ -4,22 +4,13 @@ import { promises as fs, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  validatePrivateStateDirectory,
-  validatePrivateStateFileMetadata,
-  ConfigurationError,
-} from "./config.js";
+import { validatePrivateStateDirectory, validatePrivateStateFileMetadata, ConfigurationError } from "./config.js";
 import type { DiagnosticSink } from "./diagnostics.js";
 import type { AcpSessionId } from "./acp-client.js";
 import { closeQuietly, unlinkQuietly } from "./file-utils.js";
 import { isMatrixId, isSafeHomeserver, isValidMatrixEventId } from "./matrix-validation.js";
 import { hasExactKeys, isNodeError, isRecord } from "./object-validation.js";
-import type {
-  MatrixDeviceId,
-  MatrixEventId,
-  MatrixRoomId,
-  MatrixUserId,
-} from "./matrix-client.js";
+import type { MatrixDeviceId, MatrixEventId, MatrixRoomId, MatrixUserId } from "./matrix-client.js";
 
 export interface MatrixBridgeIdentity {
   readonly homeserver: string;
@@ -70,18 +61,13 @@ export interface BridgeStateStore {
 }
 
 export const BRIDGE_STATE_FILE_NAME = "bridge-state.json";
+
 export const BRIDGE_STATE_SCHEMA_VERSION = 12;
 
-export type BridgeStateFaultPoint =
-  | "write"
-  | "file-fsync"
-  | "rename"
-  | "directory-fsync";
+export type BridgeStateFaultPoint = "write" | "file-fsync" | "rename" | "directory-fsync";
 
 /** Test-only fault boundary; injected failures are sanitized before escaping. */
-export type BridgeStateFaultInjector = (
-  point: BridgeStateFaultPoint,
-) => void | Promise<void>;
+export type BridgeStateFaultInjector = (point: BridgeStateFaultPoint) => void | Promise<void>;
 
 export type BridgeStateFailureCategory =
   | "unsafe-path"
@@ -103,8 +89,11 @@ export type BridgeStateFailureCategory =
  */
 export class BridgeStateError extends Error {
   readonly code = "state" as const;
+
   readonly fatal = true as const;
+
   readonly category: BridgeStateFailureCategory;
+
   readonly statePath: string;
 
   constructor(category: BridgeStateFailureCategory, statePath: string) {
@@ -141,9 +130,7 @@ const STATE_FILE_FLAGS = constants.O_RDONLY | NOFOLLOW;
 const TEMP_FILE_FLAGS = constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NOFOLLOW;
 
 /** Open and validate the one private bridge-state document for a process. */
-export async function openBridgeStateStore(
-  options: BridgeStateStoreOptions,
-): Promise<PrivateBridgeStateStore> {
+export async function openBridgeStateStore(options: BridgeStateStoreOptions): Promise<PrivateBridgeStateStore> {
   const requestedPath = join(options.stateDir, BRIDGE_STATE_FILE_NAME);
   let stateDir: string;
   try {
@@ -153,10 +140,7 @@ export async function openBridgeStateStore(
       emitStateFailure(options.diagnostics, error);
       throw error;
     }
-    const failure = new BridgeStateError(
-      error instanceof ConfigurationError ? "unsafe-path" : "read",
-      requestedPath,
-    );
+    const failure = new BridgeStateError(error instanceof ConfigurationError ? "unsafe-path" : "read", requestedPath);
     emitStateFailure(options.diagnostics, failure);
     throw failure;
   }
@@ -168,10 +152,15 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   readonly statePath: string;
 
   readonly #stateDir: string;
+
   readonly #identity: MatrixBridgeIdentity;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #faultInjector: BridgeStateFaultInjector | undefined;
+
   #state: InternalState | undefined;
+
   #tail: Promise<void> = Promise.resolve();
 
   private constructor(
@@ -500,10 +489,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 
   async #persist(state: InternalState): Promise<void> {
     const document = this.#serializeState(state);
-    const temporaryPath = join(
-      this.#stateDir,
-      `.${BRIDGE_STATE_FILE_NAME}.${randomUUID()}.tmp`,
-    );
+    const temporaryPath = join(this.#stateDir, `.${BRIDGE_STATE_FILE_NAME}.${randomUUID()}.tmp`);
     let handle: FileHandle | undefined;
     let renamed = false;
     let stage: BridgeStateFailureCategory = "write";
@@ -599,17 +585,30 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     }
     const sessions = this.#parseSessions(value.sessions);
     const completedEventIds = this.#parseCompletedEventIds(value.completedEventIds);
-    return { identity, initialized: value.initialized, sessions, completedEventIds };
+    return {
+      identity,
+      initialized: value.initialized,
+      sessions,
+      completedEventIds,
+    };
   }
 
   #parseIdentity(value: unknown): MatrixBridgeIdentity {
     if (!isRecord(value) || !hasExactKeys(value, ["homeserver", "userId", "deviceId"])) {
       throw this.#failure("corrupt");
     }
-    if (typeof value.homeserver !== "string" || typeof value.userId !== "string" || typeof value.deviceId !== "string") {
+    if (
+      typeof value.homeserver !== "string" ||
+      typeof value.userId !== "string" ||
+      typeof value.deviceId !== "string"
+    ) {
       throw this.#failure("corrupt");
     }
-    const identity = { homeserver: value.homeserver, userId: value.userId, deviceId: value.deviceId };
+    const identity = {
+      homeserver: value.homeserver,
+      userId: value.userId,
+      deviceId: value.deviceId,
+    };
     this.#validateIdentity(identity);
     return identity;
   }
@@ -741,8 +740,12 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 
   #validateSessionId(sessionId: unknown): asserts sessionId is AcpSessionId {
     // Control characters are forbidden in persisted identifiers.
-    // eslint-disable-next-line no-control-regex -- reject ASCII control characters
-    if (typeof sessionId !== "string" || sessionId.length === 0 || /[\u0000-\u001F\u007F]/u.test(sessionId)) {
+    if (
+      typeof sessionId !== "string" ||
+      sessionId.length === 0 ||
+      // eslint-disable-next-line no-control-regex -- reject ASCII control characters
+      /[\u0000-\u001F\u007F]/u.test(sessionId)
+    ) {
       throw this.#failure("invalid-input");
     }
   }
@@ -798,7 +801,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 
   #emit(level: "debug" | "error", event: string, fields: Record<string, string | number | boolean> = {}): void {
     try {
-      this.#diagnostics?.emit(level, event, { path: this.statePath, ...fields });
+      this.#diagnostics?.emit(level, event, {
+        path: this.statePath,
+        ...fields,
+      });
     } catch {
       // Diagnostics must never change state semantics.
     }
@@ -810,7 +816,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const run = this.#tail.then(operation, operation);
-    this.#tail = run.then(() => {}, () => {});
+    this.#tail = run.then(
+      () => {},
+      () => {},
+    );
     return run;
   }
 }
@@ -818,9 +827,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 function cloneCompletedEventIds(
   source: ReadonlyMap<MatrixRoomId, readonly MatrixEventId[]> | undefined,
 ): Map<MatrixRoomId, MatrixEventId[]> {
-  return new Map(
-    [...(source?.entries() ?? [])].map(([roomId, eventIds]) => [roomId, [...eventIds]]),
-  );
+  return new Map([...(source?.entries() ?? [])].map(([roomId, eventIds]) => [roomId, [...eventIds]]));
 }
 
 function mergeCompletedEventIds(
@@ -851,8 +858,11 @@ function completedLedgersEqual(
   }
   for (const [roomId, eventIds] of right) {
     const previous = left?.get(roomId);
-    if (previous === undefined || previous.length !== eventIds.length ||
-        !previous.every((eventId, index) => eventId === eventIds[index])) {
+    if (
+      previous === undefined ||
+      previous.length !== eventIds.length ||
+      !previous.every((eventId, index) => eventId === eventIds[index])
+    ) {
       return false;
     }
   }

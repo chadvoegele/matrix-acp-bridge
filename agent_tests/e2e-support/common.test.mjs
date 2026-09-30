@@ -33,13 +33,15 @@ test("provisions with an in-memory password without persisting it", async (conte
     acpCommand: ["test-acp"],
     privateRoot: join(root, "private"),
     environmentPath,
-    roles: [{
-      name: "sender",
-      userId: "@sender:example.test",
-      deviceId: "TESTDEVICE",
-      password,
-      displayName: "Test sender",
-    }],
+    roles: [
+      {
+        name: "sender",
+        userId: "@sender:example.test",
+        deviceId: "TESTDEVICE",
+        password,
+        displayName: "Test sender",
+      },
+    ],
     makeConfig: () => "",
     message: "Provisioned test device.",
   });

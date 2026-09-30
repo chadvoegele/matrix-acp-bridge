@@ -82,12 +82,12 @@ void test("classifies crypto failures with metadata-only stable categories", () 
 
 void test("matches a manifest only for the exact identity and current public keys", () => {
   assert.equal(cryptoManifestMatches(MANIFEST, MATRIX, FINGERPRINTS), true);
+  assert.equal(cryptoManifestMatches(MANIFEST, { ...MATRIX, deviceId: "OTHER" }, FINGERPRINTS), false);
   assert.equal(
-    cryptoManifestMatches(MANIFEST, { ...MATRIX, deviceId: "OTHER" }, FINGERPRINTS),
-    false,
-  );
-  assert.equal(
-    cryptoManifestMatches(MANIFEST, MATRIX, { ...FINGERPRINTS, ed25519Fingerprint: "changed" }),
+    cryptoManifestMatches(MANIFEST, MATRIX, {
+      ...FINGERPRINTS,
+      ed25519Fingerprint: "changed",
+    }),
     false,
   );
   assert.equal(cryptoManifestMatches({ ...MANIFEST, schemaVersion: 1 }, MATRIX, FINGERPRINTS), true);

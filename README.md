@@ -28,7 +28,8 @@ npm ci                         # installs exactly package-lock.json
 npm run build                  # cleans and emits production files to dist/
 npm run typecheck              # checks production and test sources without emitting
 npm test                       # builds dist/ and dist-test/ before running tests
-npm run check                  # final typecheck and test gate
+npm run format                 # fix spacing and format the repository
+npm run check                  # formatting, lint, typecheck, and test gate
 ```
 
 ## ACP Connection

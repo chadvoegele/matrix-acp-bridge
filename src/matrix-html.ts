@@ -1,6 +1,7 @@
 import { escapeHtml } from "./html.js";
 
 declare const safeMatrixHtml: unique symbol;
+
 /** HTML assembled from static markup and escaped dynamic values. */
 export type MatrixSafeHtml = string & { readonly [safeMatrixHtml]: true };
 

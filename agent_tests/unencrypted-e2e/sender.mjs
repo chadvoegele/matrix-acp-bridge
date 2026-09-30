@@ -41,7 +41,9 @@ async function matrixRequest(path, options = {}) {
 async function sync(since, timeout = 0) {
   const query = new URLSearchParams({ timeout: String(timeout) });
   if (since !== undefined) query.set("since", since);
-  return matrixRequest(`/sync?${query}`, { signal: AbortSignal.timeout(timeout + 15_000) });
+  return matrixRequest(`/sync?${query}`, {
+    signal: AbortSignal.timeout(timeout + 15_000),
+  });
 }
 
 function roomEvents(result) {
@@ -64,24 +66,29 @@ if (mode === "watch") {
   if (typeof cursor !== "string") throw new Error("initial Matrix sync did not return next_batch");
   const transactionId = `mab_plain_${randomBytes(16).toString("hex")}`;
   process.stderr.write("Sender is ready; sending plaintext prompt.\n");
-  const sent = await matrixRequest(
-    `/rooms/${roomPath}/send/m.room.message/${transactionId}`,
-    { method: "PUT", body: JSON.stringify({ msgtype: "m.text", body: prompt }) },
-  );
+  const sent = await matrixRequest(`/rooms/${roomPath}/send/m.room.message/${transactionId}`, {
+    method: "PUT",
+    body: JSON.stringify({ msgtype: "m.text", body: prompt }),
+  });
   if (typeof sent.event_id !== "string") throw new Error("Matrix send did not return an event ID");
   promptEventId = sent.event_id;
   if (mode === "send-only") {
     const promptEvent = await rawEvent(promptEventId);
-    if (promptEvent.type !== "m.room.message" || promptEvent.content?.msgtype !== "m.text" ||
-        promptEvent.content.body !== prompt) {
+    if (
+      promptEvent.type !== "m.room.message" ||
+      promptEvent.content?.msgtype !== "m.text" ||
+      promptEvent.content.body !== prompt
+    ) {
       throw new Error("prompt was not a plaintext m.room.message event");
     }
-    process.stdout.write(`${JSON.stringify({
-      event: "prompt-sent",
-      promptEventId,
-      promptWireType: promptEvent.type,
-      syncCursor: cursor,
-    })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({
+        event: "prompt-sent",
+        promptEventId,
+        promptWireType: promptEvent.type,
+        syncCursor: cursor,
+      })}\n`,
+    );
     process.exit(0);
   }
 }
@@ -93,8 +100,13 @@ while (Date.now() < deadline && responseEvents.length === 0) {
   if (typeof result.next_batch !== "string") throw new Error("Matrix sync did not return next_batch");
   cursor = result.next_batch;
   for (const event of roomEvents(result)) {
-    if (event?.type === "m.room.message" && event.sender === environment.bridge.userId &&
-        event.content?.msgtype === "m.text" && event.content.body === expected) responseEvents.push(event);
+    if (
+      event?.type === "m.room.message" &&
+      event.sender === environment.bridge.userId &&
+      event.content?.msgtype === "m.text" &&
+      event.content.body === expected
+    )
+      responseEvents.push(event);
   }
 }
 if (responseEvents.length === 0) throw new Error("plaintext exchange timed out");
@@ -102,15 +114,17 @@ if (responseEvents.length === 0) throw new Error("plaintext exchange timed out")
 // Give an accidental duplicate response time to arrive.
 const finalSync = await sync(cursor, 2000);
 for (const event of roomEvents(finalSync)) {
-  if (event?.type === "m.room.message" && event.sender === environment.bridge.userId &&
-      event.content?.msgtype === "m.text" && event.content.body === expected) responseEvents.push(event);
+  if (
+    event?.type === "m.room.message" &&
+    event.sender === environment.bridge.userId &&
+    event.content?.msgtype === "m.text" &&
+    event.content.body === expected
+  )
+    responseEvents.push(event);
 }
 if (responseEvents.length !== 1) throw new Error(`expected one response, received ${responseEvents.length}`);
 
-const [promptEvent, responseEvent] = await Promise.all([
-  rawEvent(promptEventId),
-  rawEvent(responseEvents[0].event_id),
-]);
+const [promptEvent, responseEvent] = await Promise.all([rawEvent(promptEventId), rawEvent(responseEvents[0].event_id)]);
 for (const [label, event, body] of [
   ["prompt", promptEvent, prompt],
   ["response", responseEvent, expected],
@@ -119,16 +133,20 @@ for (const [label, event, body] of [
     throw new Error(`${label} was not a plaintext m.room.message event`);
   }
 }
-if (expectedFormattedBody !== undefined &&
-    (responseEvent.content?.format !== "org.matrix.custom.html" ||
-     responseEvent.content.formatted_body !== expectedFormattedBody)) {
+if (
+  expectedFormattedBody !== undefined &&
+  (responseEvent.content?.format !== "org.matrix.custom.html" ||
+    responseEvent.content.formatted_body !== expectedFormattedBody)
+) {
   throw new Error("response did not contain the expected Matrix formatted body");
 }
-process.stdout.write(`${JSON.stringify({
-  event: "exchange-complete",
-  promptEventId,
-  responseEventId: responseEvents[0].event_id,
-  promptWireType: promptEvent.type,
-  responseWireType: responseEvent.type,
-  responseCount: responseEvents.length,
-})}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    event: "exchange-complete",
+    promptEventId,
+    responseEventId: responseEvents[0].event_id,
+    promptWireType: promptEvent.type,
+    responseWireType: responseEvent.type,
+    responseCount: responseEvents.length,
+  })}\n`,
+);

@@ -3,11 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  runSender as runSenderProcess,
-  startBridgePair,
-  stopBridgePair,
-} from "../e2e-support/acp.mjs";
+import { runSender as runSenderProcess, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
 import { defaultEnvironmentPath, readEnvironment, testDir } from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
@@ -34,8 +30,7 @@ function assertSchemaV12State(state, label) {
   assert(Object.hasOwn(state, "cursor") === false, `${label} state contains a legacy cursor`);
   assert(Object.hasOwn(state, "pendingBatches") === false, `${label} state contains legacy pending batches`);
   const ids = state.completedEventIds?.[environment.roomId];
-  assert(Array.isArray(ids) && new Set(ids).size === ids.length,
-    `${label} state has no completed-event ledger`);
+  assert(Array.isArray(ids) && new Set(ids).size === ids.length, `${label} state has no completed-event ledger`);
 }
 
 async function startPair({ expectedPrompt, suppressedPrompt }) {
@@ -60,10 +55,14 @@ async function runSender(prompt, expected, expectedFormattedBody) {
     senderPath: join(testDir, "sender.mjs"),
     args,
   });
-  assert(result.event === "exchange-complete" && result.responseCount === 1,
-    "sender did not report exactly one plaintext exchange");
-  assert(result.promptWireType === "m.room.message" && result.responseWireType === "m.room.message",
-    "sender did not report top-level plaintext Matrix events");
+  assert(
+    result.event === "exchange-complete" && result.responseCount === 1,
+    "sender did not report exactly one plaintext exchange",
+  );
+  assert(
+    result.promptWireType === "m.room.message" && result.responseWireType === "m.room.message",
+    "sender did not report top-level plaintext Matrix events",
+  );
   return result;
 }
 
@@ -76,21 +75,28 @@ try {
   assert(pair.counter.suppressed === 0, "first prompt was unexpectedly submitted during baseline startup");
   const firstState = await readState();
   assertSchemaV12State(firstState, "first");
-  assert(firstState.completedEventIds[environment.roomId].includes(first.promptEventId),
-    "first plaintext prompt was not recorded as completed");
+  assert(
+    firstState.completedEventIds[environment.roomId].includes(first.promptEventId),
+    "first plaintext prompt was not recorded as completed",
+  );
   await stopBridgePair(pair);
   pair = undefined;
 
   process.stdout.write("Restarting and proving completed-ID suppression before the second exchange...\n");
-  pair = await startPair({ expectedPrompt: secondPrompt, suppressedPrompt: firstPrompt });
+  pair = await startPair({
+    expectedPrompt: secondPrompt,
+    suppressedPrompt: firstPrompt,
+  });
   assert(pair.counter.suppressed === 0, "completed plaintext prompt was replayed to ACP after restart");
   const second = await runSender(secondPrompt, secondExpected);
   assert(pair.counter.matching === 1, `second prompt reached ACP ${pair.counter.matching} times`);
   assert(pair.counter.suppressed === 0, "completed plaintext prompt was replayed during the second exchange");
   const secondState = await readState();
   assertSchemaV12State(secondState, "second");
-  assert(secondState.completedEventIds[environment.roomId].includes(second.promptEventId),
-    "second plaintext prompt was not recorded as completed");
+  assert(
+    secondState.completedEventIds[environment.roomId].includes(second.promptEventId),
+    "second plaintext prompt was not recorded as completed",
+  );
   await stopBridgePair(pair);
   pair = undefined;
   process.stdout.write("Unencrypted E2E test passed with normal initial-sync recovery and exactly-once ACP prompts.\n");

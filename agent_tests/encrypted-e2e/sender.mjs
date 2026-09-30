@@ -57,7 +57,12 @@ async function rawEventType(eventId) {
 }
 
 function assertEncrypted(event, label) {
-  if (event?.eventId === undefined || event.isEncrypted !== true || event.isDecrypted !== true || event.isPlaintext === true) {
+  if (
+    event?.eventId === undefined ||
+    event.isEncrypted !== true ||
+    event.isDecrypted !== true ||
+    event.isPlaintext === true
+  ) {
     throw new Error(`${label} was not an authenticated decrypted encrypted event`);
   }
 }
@@ -93,14 +98,16 @@ try {
   if (promptWireType !== "m.room.encrypted" || responseWireType !== "m.room.encrypted") {
     throw new Error("prompt or response was plaintext on the wire");
   }
-  process.stdout.write(`${JSON.stringify({
-    event: "exchange-complete",
-    promptEventId: promptEvent.eventId,
-    responseEventId: responseEvent.eventId,
-    promptWireType,
-    responseWireType,
-    responseCount: responseEvents.length,
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      event: "exchange-complete",
+      promptEventId: promptEvent.eventId,
+      responseEventId: responseEvent.eventId,
+      promptWireType,
+      responseWireType,
+      responseCount: responseEvents.length,
+    })}\n`,
+  );
 } finally {
   clearTimeout(timer);
   await adapter.stop().catch(() => {});

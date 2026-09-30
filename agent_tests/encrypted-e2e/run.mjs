@@ -3,11 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  runSender as runSenderProcess,
-  startBridgePair,
-  stopBridgePair,
-} from "../e2e-support/acp.mjs";
+import { runSender as runSenderProcess, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
 import { defaultEnvironmentPath, readEnvironment, testDir } from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
@@ -28,7 +24,11 @@ async function startPair(expectedPrompt, suppressedPrompt) {
       if (Array.isArray(prompt) && prompt.some((part) => part?.type === "text" && part.text === expectedPrompt)) {
         counter.matching += 1;
       }
-      if (suppressedPrompt !== undefined && Array.isArray(prompt) && prompt.some((part) => part?.type === "text" && part.text === suppressedPrompt)) {
+      if (
+        suppressedPrompt !== undefined &&
+        Array.isArray(prompt) &&
+        prompt.some((part) => part?.type === "text" && part.text === suppressedPrompt)
+      ) {
         counter.suppressed += 1;
       }
     },
@@ -55,8 +55,12 @@ async function runSender(prompt, expected) {
     senderPath: join(testDir, "sender.mjs"),
     args: ["--prompt", prompt, "--expect", expected],
   });
-  if (result.event !== "exchange-complete" || result.responseCount !== 1 ||
-      result.promptWireType !== "m.room.encrypted" || result.responseWireType !== "m.room.encrypted") {
+  if (
+    result.event !== "exchange-complete" ||
+    result.responseCount !== 1 ||
+    result.promptWireType !== "m.room.encrypted" ||
+    result.responseWireType !== "m.room.encrypted"
+  ) {
     throw new Error("sender did not report a valid encrypted exchange");
   }
   return result;
@@ -98,7 +102,9 @@ async function assertNoTemporarySnapshot() {
 // Each invocation starts a new delivery test while preserving the established
 // crypto identity. This prevents messages from an interrupted prior test run
 // from being submitted as bounded catch-up work.
-await rm(join(environment.bridge.stateDir, "bridge-state.json"), { force: true });
+await rm(join(environment.bridge.stateDir, "bridge-state.json"), {
+  force: true,
+});
 const originalFingerprints = await fingerprints();
 let pair;
 try {
@@ -107,7 +113,9 @@ try {
   process.stdout.write("Bridge is ready; starting sender...\n");
   const first = await runSender(firstPrompt, firstExpected);
   if (pair.counter.matching !== 1 || pair.counter.suppressed !== 0) {
-    throw new Error(`first encrypted prompt count was matching=${pair.counter.matching}, suppressed=${pair.counter.suppressed}`);
+    throw new Error(
+      `first encrypted prompt count was matching=${pair.counter.matching}, suppressed=${pair.counter.suppressed}`,
+    );
   }
   const firstState = await bridgeState();
   assertSchemaV12State(firstState, "first");
@@ -130,7 +138,9 @@ try {
   }
   const second = await runSender(secondPrompt, secondExpected);
   if (pair.counter.matching !== 1 || pair.counter.suppressed !== 0) {
-    throw new Error(`second encrypted prompt count was matching=${pair.counter.matching}, suppressed=${pair.counter.suppressed}`);
+    throw new Error(
+      `second encrypted prompt count was matching=${pair.counter.matching}, suppressed=${pair.counter.suppressed}`,
+    );
   }
   const secondState = await bridgeState();
   const completedIds = assertSchemaV12State(secondState, "second");

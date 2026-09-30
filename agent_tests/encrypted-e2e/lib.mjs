@@ -1,22 +1,20 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  readEnvironment as readSharedEnvironment,
-  readToken,
-} from "../e2e-support/common.mjs";
+import { readEnvironment as readSharedEnvironment, readToken } from "../e2e-support/common.mjs";
 
 export const testDir = dirname(fileURLToPath(import.meta.url));
+
 export const defaultEnvironmentPath = join(testDir, "environment.json");
 
-
-export const readEnvironment = (path = defaultEnvironmentPath) => readSharedEnvironment(path, {
-  roleKeys: {
-    bridge: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
-    helper: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
-    sender: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
-  },
-});
+export const readEnvironment = (path = defaultEnvironmentPath) =>
+  readSharedEnvironment(path, {
+    roleKeys: {
+      bridge: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
+      helper: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
+      sender: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
+    },
+  });
 
 export function cryptoPaths(stateDir) {
   return {
@@ -77,4 +75,4 @@ shutdown_grace_seconds = 30
 `;
 }
 
-export {repoRoot, writePrivateFile, readToken} from "../e2e-support/common.mjs";
+export { repoRoot, writePrivateFile, readToken } from "../e2e-support/common.mjs";

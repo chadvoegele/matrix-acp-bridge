@@ -64,7 +64,9 @@ function safeFailure(side, phase, reason, detail) {
   const safeSide = side === "bridge" || side === "helper" ? side : "unknown";
   const safePhase = safeValue(phase, safePhases);
   const safeReason = safeValue(reason, safeReasons);
-  return new Error(`SAS verification failed on ${safeSide} during ${safePhase} (${safeReason})${detail === undefined ? "" : `; ${detail}`}`);
+  return new Error(
+    `SAS verification failed on ${safeSide} during ${safePhase} (${safeReason})${detail === undefined ? "" : `; ${detail}`}`,
+  );
 }
 
 function shellQuote(value) {
@@ -81,7 +83,9 @@ function bridgeCommand() {
     "verify",
     "--device",
     environment.helper.deviceId,
-  ].map((argument) => shellQuote(argument)).join(" ");
+  ]
+    .map((argument) => shellQuote(argument))
+    .join(" ");
 }
 
 function stop(child) {
@@ -133,15 +137,20 @@ const result = new Promise((resolve, reject) => {
       if (emoji !== null) bridgeEmoji = emoji[1]?.replace(/\r/gu, "");
       check();
     });
-    bridge.stderr.on("data", (chunk) => { bridgeDiagnostics.stderrSeen ||= chunk.length > 0; });
-    bridge.once("error", () => finish(safeFailure("bridge", bridgePhase, "unknown",
-      `spawn error; ${bridgeDiagnostics.summary()}`)));
+    bridge.stderr.on("data", (chunk) => {
+      bridgeDiagnostics.stderrSeen ||= chunk.length > 0;
+    });
+    bridge.once("error", () =>
+      finish(safeFailure("bridge", bridgePhase, "unknown", `spawn error; ${bridgeDiagnostics.summary()}`)),
+    );
     bridge.once("exit", (code, signal) => {
       bridgeExit = code;
       bridgeDiagnostics.finish();
-      if (code === 0) {check();}
-      else {finish(safeFailure("bridge", bridgePhase, bridgeDiagnostics.reason,
-        bridgeDiagnostics.summary(code, signal)));}
+      if (code === 0) {
+        check();
+      } else {
+        finish(safeFailure("bridge", bridgePhase, bridgeDiagnostics.reason, bridgeDiagnostics.summary(code, signal)));
+      }
     });
   }
 
@@ -163,35 +172,35 @@ const result = new Promise((resolve, reject) => {
         return;
       }
       switch (event.event) {
-      case "ready": {
-        helperReady = true;
-        helperPhase = "request-received";
+        case "ready": {
+          helperReady = true;
+          helperPhase = "request-received";
 
-      break;
-      }
-      case "sas": {
-        helperSas = event;
-        helperPhase = "sas-shown";
+          break;
+        }
+        case "sas": {
+          helperSas = event;
+          helperPhase = "sas-shown";
 
-      break;
-      }
-      case "verified": {
-        helperVerified = true;
-        helperPhase = "verified";
+          break;
+        }
+        case "verified": {
+          helperVerified = true;
+          helperPhase = "verified";
 
-      break;
-      }
-      case "verification-attempt-failed": {
-        helperPhase = safeValue(event.phase, safePhases, "helper-verification");
-        finish(safeFailure("helper", helperPhase, event.reason));
-        return;
-      }
-      case "error":
-      case "cancelled": {
-        finish(safeFailure("helper", helperPhase, event.reason));
-        return;
-      }
-      // No default
+          break;
+        }
+        case "verification-attempt-failed": {
+          helperPhase = safeValue(event.phase, safePhases, "helper-verification");
+          finish(safeFailure("helper", helperPhase, event.reason));
+          return;
+        }
+        case "error":
+        case "cancelled": {
+          finish(safeFailure("helper", helperPhase, event.reason));
+          return;
+        }
+        // No default
       }
       check();
     }
@@ -199,8 +208,11 @@ const result = new Promise((resolve, reject) => {
   helper.stderr.resume();
   helper.once("error", () => finish(safeFailure("helper", helperPhase, "protocol")));
   helper.once("exit", (_code, _signal) => {
-    if (helperVerified) {check();}
-    else {finish(safeFailure("helper", helperPhase, "verification-failed"));}
+    if (helperVerified) {
+      check();
+    } else {
+      finish(safeFailure("helper", helperPhase, "verification-failed"));
+    }
   });
 });
 

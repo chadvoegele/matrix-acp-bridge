@@ -4,9 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  CryptoBootstrapLifecycle,
-} from "./main.js";
+import { CryptoBootstrapLifecycle } from "./main.js";
 import type { BridgeConfig, LoadedConfiguration, StateLockLike } from "./config.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 import type { Unsubscribe } from "./cancellation.js";
@@ -49,15 +47,26 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
 };
 
 const DIAGNOSTICS: DiagnosticSink = {
-  emit() { /* hermetic test sink */ },
-  debug() { /* hermetic test sink */ },
-  info() { /* hermetic test sink */ },
-  warn() { /* hermetic test sink */ },
-  error() { /* hermetic test sink */ },
+  emit() {
+    /* hermetic test sink */
+  },
+  debug() {
+    /* hermetic test sink */
+  },
+  info() {
+    /* hermetic test sink */
+  },
+  warn() {
+    /* hermetic test sink */
+  },
+  error() {
+    /* hermetic test sink */
+  },
 };
 
 class TestLock implements StateLockLike {
   readonly lockPath: string;
+
   released = false;
 
   constructor(stateDir: string) {
@@ -71,25 +80,38 @@ class TestLock implements StateLockLike {
 
 class TestMatrix implements MatrixClientAdapter {
   readonly fatalListeners = new Set<(error: FatalError) => void>();
+
   readonly log: string[] = [];
+
   readonly fingerprints: CryptoDeviceKeyFingerprints;
+
   readonly identity: MatrixIdentity;
+
   readonly initializeError: unknown;
+
   readonly keysError: unknown;
+
   readonly whoamiError: unknown;
+
   initializeCalls = 0;
+
   startCalls = 0;
+
   stopCalls = 0;
+
   closeCryptoCalls = 0;
+
   startOptions: MatrixSyncStartOptions | undefined;
 
-  constructor(options: {
-    readonly fingerprints?: CryptoDeviceKeyFingerprints;
-    readonly identity?: MatrixIdentity;
-    readonly initializeError?: unknown;
-    readonly keysError?: unknown;
-    readonly whoamiError?: unknown;
-  } = {}) {
+  constructor(
+    options: {
+      readonly fingerprints?: CryptoDeviceKeyFingerprints;
+      readonly identity?: MatrixIdentity;
+      readonly initializeError?: unknown;
+      readonly keysError?: unknown;
+      readonly whoamiError?: unknown;
+    } = {},
+  ) {
     this.fingerprints = options.fingerprints ?? {
       ed25519Fingerprint: "ed25519-public",
       curve25519Fingerprint: "curve25519-public",
@@ -220,25 +242,36 @@ void test("crypto bootstrap creates private state, publishes keys before the man
 void test("interrupted bootstrap resumes the established database and idempotent bootstrap does not replace keys", async () => {
   await withState(async (stateDir) => {
     const failedLock = new TestLock(stateDir);
-    const failed = new TestMatrix({ keysError: new Error("sdk failure with secret material") });
-    assert.equal(await new CryptoBootstrapLifecycle({
-      loadedConfiguration: loaded(stateDir, failedLock),
-      dependencies: dependencies(failed),
-    }).run(), 1);
+    const failed = new TestMatrix({
+      keysError: new Error("sdk failure with secret material"),
+    });
+    assert.equal(
+      await new CryptoBootstrapLifecycle({
+        loadedConfiguration: loaded(stateDir, failedLock),
+        dependencies: dependencies(failed),
+      }).run(),
+      1,
+    );
 
     const resumedLock = new TestLock(stateDir);
     const resumed = new TestMatrix();
-    assert.equal(await new CryptoBootstrapLifecycle({
-      loadedConfiguration: loaded(stateDir, resumedLock),
-      dependencies: dependencies(resumed),
-    }).run(), 0);
+    assert.equal(
+      await new CryptoBootstrapLifecycle({
+        loadedConfiguration: loaded(stateDir, resumedLock),
+        dependencies: dependencies(resumed),
+      }).run(),
+      0,
+    );
 
     const idempotentLock = new TestLock(stateDir);
     const idempotent = new TestMatrix();
-    assert.equal(await new CryptoBootstrapLifecycle({
-      loadedConfiguration: loaded(stateDir, idempotentLock),
-      dependencies: dependencies(idempotent),
-    }).run(), 0);
+    assert.equal(
+      await new CryptoBootstrapLifecycle({
+        loadedConfiguration: loaded(stateDir, idempotentLock),
+        dependencies: dependencies(idempotent),
+      }).run(),
+      0,
+    );
     assert.equal(idempotent.initializeCalls, 1);
   });
 });
@@ -246,35 +279,55 @@ void test("interrupted bootstrap resumes the established database and idempotent
 void test("bootstrap rejects wrong whoami, changed fingerprints, and SDK initialization failures without false completion", async () => {
   await withState(async (stateDir) => {
     const wrongIdentity = new TestMatrix({
-      identity: { userId: "@wrong:example.org", deviceId: CONFIG_BASE.matrix.deviceId },
+      identity: {
+        userId: "@wrong:example.org",
+        deviceId: CONFIG_BASE.matrix.deviceId,
+      },
     });
-    assert.equal(await new CryptoBootstrapLifecycle({
-      loadedConfiguration: loaded(stateDir, new TestLock(stateDir)),
-      dependencies: dependencies(wrongIdentity),
-    }).run(), 1);
+    assert.equal(
+      await new CryptoBootstrapLifecycle({
+        loadedConfiguration: loaded(stateDir, new TestLock(stateDir)),
+        dependencies: dependencies(wrongIdentity),
+      }).run(),
+      1,
+    );
 
     const first = new TestMatrix();
-    assert.equal(await new CryptoBootstrapLifecycle({
-      loadedConfiguration: loaded(stateDir, new TestLock(stateDir)),
-      dependencies: dependencies(first),
-    }).run(), 0);
+    assert.equal(
+      await new CryptoBootstrapLifecycle({
+        loadedConfiguration: loaded(stateDir, new TestLock(stateDir)),
+        dependencies: dependencies(first),
+      }).run(),
+      0,
+    );
 
     const changed = new TestMatrix({
-      fingerprints: { ed25519Fingerprint: "replacement", curve25519Fingerprint: "curve25519-public" },
+      fingerprints: {
+        ed25519Fingerprint: "replacement",
+        curve25519Fingerprint: "curve25519-public",
+      },
     });
-    assert.equal(await new CryptoBootstrapLifecycle({
-      loadedConfiguration: loaded(stateDir, new TestLock(stateDir)),
-      dependencies: dependencies(changed),
-    }).run(), 1);
+    assert.equal(
+      await new CryptoBootstrapLifecycle({
+        loadedConfiguration: loaded(stateDir, new TestLock(stateDir)),
+        dependencies: dependencies(changed),
+      }).run(),
+      1,
+    );
     assert.equal(changed.stopCalls, 1);
 
     const sdkFailureState = await mkdtemp(join(tmpdir(), "matrix-acp-bootstrap-sdk-"));
     try {
-      const sdkFailure = new TestMatrix({ initializeError: new Error("private SDK error") });
-      assert.equal(await new CryptoBootstrapLifecycle({
-        loadedConfiguration: loaded(sdkFailureState, new TestLock(sdkFailureState)),
-        dependencies: dependencies(sdkFailure),
-      }).run(), 1);
+      const sdkFailure = new TestMatrix({
+        initializeError: new Error("private SDK error"),
+      });
+      assert.equal(
+        await new CryptoBootstrapLifecycle({
+          loadedConfiguration: loaded(sdkFailureState, new TestLock(sdkFailureState)),
+          dependencies: dependencies(sdkFailure),
+        }).run(),
+        1,
+      );
       await assert.rejects(readFile(join(sdkFailureState, "crypto-state.json")));
     } finally {
       await rm(sdkFailureState, { recursive: true, force: true });

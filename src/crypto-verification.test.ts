@@ -6,10 +6,7 @@ import test from "node:test";
 
 import { ensureCryptoDatabaseDirectory, openCryptoStateStore } from "./crypto-state.js";
 import type { CryptoStateFaultInjector } from "./crypto-state.js";
-import {
-  CryptoVerificationError,
-  MatrixCryptoVerificationOperation,
-} from "./crypto-verification.js";
+import { CryptoVerificationError, MatrixCryptoVerificationOperation } from "./crypto-verification.js";
 import { MatrixSdkCryptoAdapter } from "./matrix-client.js";
 import type {
   CryptoSasCallbacks,
@@ -64,8 +61,11 @@ async function waitForTestCondition(condition: () => boolean): Promise<boolean> 
 
 class TestTty implements OperatorTty {
   readonly writes: string[] = [];
+
   readonly answer: string | undefined;
+
   readonly pending: boolean;
+
   closed = false;
 
   constructor(answer: string | undefined, pending = false) {
@@ -91,9 +91,14 @@ class TestTty implements OperatorTty {
 
 class TestVerifier implements CryptoSasVerifier {
   readonly showListeners = new Set<(sas: CryptoSasCallbacks) => void>();
+
   readonly cancelListeners = new Set<() => void>();
+
   readonly shown: CryptoSasCallbacks = {
-    emoji: [["😀", "grinning face"], ["🚀", "rocket"]],
+    emoji: [
+      ["😀", "grinning face"],
+      ["🚀", "rocket"],
+    ],
     decimal: [123, 456, 789],
     confirm: async () => {
       this.confirmed = true;
@@ -108,12 +113,19 @@ class TestVerifier implements CryptoSasVerifier {
       this.reject?.(new Error("cancelled"));
     },
   };
+
   confirmed = false;
+
   rejected = false;
+
   cancelled = false;
+
   started = false;
+
   #done: Promise<void> | undefined;
+
   resolve: (() => void) | undefined;
+
   reject: ((error: Error) => void) | undefined;
 
   onShowSas(listener: (sas: CryptoSasCallbacks) => void): Unsubscribe {
@@ -149,29 +161,42 @@ class TestVerifier implements CryptoSasVerifier {
 
 class TestRequest implements CryptoVerificationRequestHandle {
   userId: string;
+
   deviceId: string;
+
   readonly initiatedByMe: boolean;
+
   phase: CryptoVerificationRequestPhase;
+
   readonly chosenMethod: string | undefined;
+
   readonly verifier: CryptoSasVerifier | undefined;
+
   readonly startVerifier: CryptoSasVerifier | undefined;
+
   readonly methods: readonly string[];
+
   readonly capabilitiesAfterReady: boolean;
+
   readonly #changeListeners = new Set<() => void>();
+
   startCalls = 0;
+
   cancelCalls = 0;
 
-  constructor(options: {
-    readonly userId?: string;
-    readonly deviceId?: string;
-    readonly initiatedByMe?: boolean;
-    readonly phase?: CryptoVerificationRequestPhase;
-    readonly methods?: readonly string[];
-    readonly capabilitiesAfterReady?: boolean;
-    readonly chosenMethod?: string;
-    readonly verifier?: CryptoSasVerifier;
-    readonly startVerifier?: CryptoSasVerifier;
-  } = {}) {
+  constructor(
+    options: {
+      readonly userId?: string;
+      readonly deviceId?: string;
+      readonly initiatedByMe?: boolean;
+      readonly phase?: CryptoVerificationRequestPhase;
+      readonly methods?: readonly string[];
+      readonly capabilitiesAfterReady?: boolean;
+      readonly chosenMethod?: string;
+      readonly verifier?: CryptoSasVerifier;
+      readonly startVerifier?: CryptoSasVerifier;
+    } = {},
+  ) {
     this.userId = options.userId ?? IDENTITY.userId;
     this.deviceId = options.deviceId ?? TARGET;
     this.initiatedByMe = options.initiatedByMe ?? true;
@@ -227,11 +252,17 @@ class TestRequest implements CryptoVerificationRequestHandle {
 
 class TestCrypto implements MatrixCryptoVerificationAdapter {
   readonly request: TestRequest;
+
   readonly incoming = new Set<(request: CryptoVerificationRequestHandle) => void>();
+
   readonly forbiddenCalls: string[] = [];
+
   requestCalls = 0;
+
   refreshCalls = 0;
+
   closeCalls = 0;
+
   readonly emitOnRequest: readonly TestRequest[];
 
   constructor(request: TestRequest, emitOnRequest: readonly TestRequest[] = []) {
@@ -271,18 +302,40 @@ class TestCrypto implements MatrixCryptoVerificationAdapter {
     return this.request;
   }
 
-  bootstrapCrossSigning(): void { this.forbiddenCalls.push("bootstrapCrossSigning"); }
-  resetEncryption(): void { this.forbiddenCalls.push("resetEncryption"); }
-  setDeviceVerified(): void { this.forbiddenCalls.push("setDeviceVerified"); }
-  generateQRCode(): void { this.forbiddenCalls.push("generateQRCode"); }
-  requestVerificationDM(): void { this.forbiddenCalls.push("requestVerificationDM"); }
-  requestOwnUserVerification(): void { this.forbiddenCalls.push("requestOwnUserVerification"); }
-  storeSessionBackupPrivateKey(): void { this.forbiddenCalls.push("storeSessionBackupPrivateKey"); }
+  bootstrapCrossSigning(): void {
+    this.forbiddenCalls.push("bootstrapCrossSigning");
+  }
+
+  resetEncryption(): void {
+    this.forbiddenCalls.push("resetEncryption");
+  }
+
+  setDeviceVerified(): void {
+    this.forbiddenCalls.push("setDeviceVerified");
+  }
+
+  generateQRCode(): void {
+    this.forbiddenCalls.push("generateQRCode");
+  }
+
+  requestVerificationDM(): void {
+    this.forbiddenCalls.push("requestVerificationDM");
+  }
+
+  requestOwnUserVerification(): void {
+    this.forbiddenCalls.push("requestOwnUserVerification");
+  }
+
+  storeSessionBackupPrivateKey(): void {
+    this.forbiddenCalls.push("storeSessionBackupPrivateKey");
+  }
 }
 
 class RustSdkSasVerifierDouble {
   readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+
   confirmed = false;
+
   #reject: ((error: Error) => void) | undefined;
 
   on(event: string, listener: (...args: unknown[]) => void): void {
@@ -322,7 +375,7 @@ class RustSdkSasVerifierDouble {
   }
 
   #emit(event: string, ...args: unknown[]): void {
-    for (const listener of (this.listeners.get(event) ?? [])) {
+    for (const listener of this.listeners.get(event) ?? []) {
       listener(...args);
     }
   }
@@ -330,13 +383,21 @@ class RustSdkSasVerifierDouble {
 
 class RustSdkVerificationRequestDouble {
   readonly otherUserId = IDENTITY.userId;
+
   otherDeviceId: string | undefined;
+
   readonly initiatedByMe = true;
+
   readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+
   readonly sasVerifier = new RustSdkSasVerifierDouble();
+
   phase = 2;
+
   startCalls = 0;
+
   cancelCalls = 0;
+
   methodsRead = false;
 
   get methods(): never {
@@ -370,7 +431,7 @@ class RustSdkVerificationRequestDouble {
   }
 
   emit(event: string): void {
-    for (const listener of (this.listeners.get(event) ?? [])) {
+    for (const listener of this.listeners.get(event) ?? []) {
       listener();
     }
   }
@@ -387,7 +448,10 @@ class RustSdkVerificationRequestDouble {
   }
 }
 
-async function makeState(): Promise<{ readonly stateDir: string; readonly cleanup: () => Promise<void> }> {
+async function makeState(): Promise<{
+  readonly stateDir: string;
+  readonly cleanup: () => Promise<void>;
+}> {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-verification-"));
   await ensureCryptoDatabaseDirectory(stateDir);
   const store = await openCryptoStateStore({ stateDir, identity: IDENTITY });
@@ -406,7 +470,10 @@ async function runOperation(
   stateDir: string,
   crypto: MatrixCryptoVerificationAdapter,
   tty: TestTty,
-  options: { readonly clock?: FakeClock; readonly stateFaultInjector?: CryptoStateFaultInjector } = {},
+  options: {
+    readonly clock?: FakeClock;
+    readonly stateFaultInjector?: CryptoStateFaultInjector;
+  } = {},
 ): Promise<Awaited<ReturnType<MatrixCryptoVerificationOperation["run"]>>> {
   const operation = new MatrixCryptoVerificationOperation({
     crypto,
@@ -504,7 +571,7 @@ void test("waits for an outgoing request to become ready before starting SAS", a
     const crypto = new TestCrypto(request);
     const tty = new TestTty("yes");
     const pending = runOperation(state.stateDir, crypto, tty);
-    if (!await waitForTestCondition(() => request.changeListenerCount > 0)) {
+    if (!(await waitForTestCondition(() => request.changeListenerCount > 0))) {
       await request.cancel();
       await pending.catch(() => {});
       assert.fail("verification readiness listener was not installed");
@@ -534,15 +601,14 @@ void test("defers outgoing Rust target validation until the device identity is a
         }),
         processDeviceLists: async () => {},
         onSyncCompleted: () => {},
-        getUserDeviceInfo: async () => new Map([
-          [IDENTITY.userId, new Map([[TARGET, rustDevice(IDENTITY.userId, TARGET)]])],
-        ]),
+        getUserDeviceInfo: async () =>
+          new Map([[IDENTITY.userId, new Map([[TARGET, rustDevice(IDENTITY.userId, TARGET)]])]]),
         requestDeviceVerification: async () => rawRequest,
       }),
     } as unknown as MatrixSdkClientLike;
     const crypto = new MatrixSdkCryptoAdapter(sdkClient);
     const pending = runOperation(state.stateDir, crypto, new TestTty("yes"));
-    if (!await waitForTestCondition(() => (rawRequest.listeners.get("change")?.size ?? 0) > 0)) {
+    if (!(await waitForTestCondition(() => (rawRequest.listeners.get("change")?.size ?? 0) > 0))) {
       await rawRequest.cancel();
       await pending.catch(() => {});
       assert.fail("verification readiness listener was not installed");
@@ -572,14 +638,17 @@ void test("refreshes an absent Rust target through the SDK device-list path befo
     const calls: string[] = [];
     let localDevices = new Map<string, unknown>();
     const serverDevices = new Map<string, unknown>([
-      [TARGET, {
-        userId: IDENTITY.userId,
-        deviceId: TARGET,
-        keys: new Map([
-          [`ed25519:${TARGET}`, "valid-ed25519-key"],
-          [`curve25519:${TARGET}`, "valid-curve25519-key"],
-        ]),
-      }],
+      [
+        TARGET,
+        {
+          userId: IDENTITY.userId,
+          deviceId: TARGET,
+          keys: new Map([
+            [`ed25519:${TARGET}`, "valid-ed25519-key"],
+            [`curve25519:${TARGET}`, "valid-curve25519-key"],
+          ]),
+        },
+      ],
     ]);
     const sdkCrypto = {
       getOwnDeviceKeys: async () => ({
@@ -611,10 +680,7 @@ void test("refreshes an absent Rust target through the SDK device-list path befo
     } as unknown as MatrixSdkClientLike;
     const crypto = new MatrixSdkCryptoAdapter(sdkClient);
 
-    await assert.rejects(
-      () => crypto.requestDeviceVerification(IDENTITY.userId, TARGET),
-      /could not be created/u,
-    );
+    await assert.rejects(() => crypto.requestDeviceVerification(IDENTITY.userId, TARGET), /could not be created/u);
     await runOperation(state.stateDir, crypto, new TestTty("yes"));
 
     assert.deepEqual(calls, [
@@ -637,7 +703,11 @@ void test("refresh rejects a missing, substituted, or wrong-user target without 
     readonly returnedUserId: string;
     readonly returnedDeviceId?: string;
   }[] = [
-    { name: "missing", requestedUserId: IDENTITY.userId, returnedUserId: IDENTITY.userId },
+    {
+      name: "missing",
+      requestedUserId: IDENTITY.userId,
+      returnedUserId: IDENTITY.userId,
+    },
     {
       name: "substituted",
       requestedUserId: IDENTITY.userId,
@@ -672,11 +742,7 @@ void test("refresh rejects a missing, substituted, or wrong-user target without 
       getCrypto: () => sdkCrypto,
     } as unknown as MatrixSdkClientLike);
 
-    assert.equal(
-      await crypto.refreshDeviceKeys(item.requestedUserId, TARGET),
-      false,
-      item.name,
-    );
+    assert.equal(await crypto.refreshDeviceKeys(item.requestedUserId, TARGET), false, item.name);
   }
 });
 
@@ -693,15 +759,14 @@ void test("fails closed when an outgoing Rust request later exposes a conflictin
         }),
         processDeviceLists: async () => {},
         onSyncCompleted: () => {},
-        getUserDeviceInfo: async () => new Map([
-          [IDENTITY.userId, new Map([[TARGET, rustDevice(IDENTITY.userId, TARGET)]])],
-        ]),
+        getUserDeviceInfo: async () =>
+          new Map([[IDENTITY.userId, new Map([[TARGET, rustDevice(IDENTITY.userId, TARGET)]])]]),
         requestDeviceVerification: async () => rawRequest,
       }),
     } as unknown as MatrixSdkClientLike;
     const crypto = new MatrixSdkCryptoAdapter(sdkClient);
     const pending = runOperation(state.stateDir, crypto, new TestTty("yes"));
-    if (!await waitForTestCondition(() => (rawRequest.listeners.get("change")?.size ?? 0) > 0)) {
+    if (!(await waitForTestCondition(() => (rawRequest.listeners.get("change")?.size ?? 0) > 0))) {
       await rawRequest.cancel();
       await pending.catch(() => {});
       assert.fail("verification readiness listener was not installed");
@@ -731,16 +796,15 @@ void test("cancels an active SAS flow when the outgoing target changes later", a
         }),
         processDeviceLists: async () => {},
         onSyncCompleted: () => {},
-        getUserDeviceInfo: async () => new Map([
-          [IDENTITY.userId, new Map([[TARGET, rustDevice(IDENTITY.userId, TARGET)]])],
-        ]),
+        getUserDeviceInfo: async () =>
+          new Map([[IDENTITY.userId, new Map([[TARGET, rustDevice(IDENTITY.userId, TARGET)]])]]),
         requestDeviceVerification: async () => rawRequest,
       }),
     } as unknown as MatrixSdkClientLike;
     const crypto = new MatrixSdkCryptoAdapter(sdkClient);
     const verifier = rawRequest.sasVerifier;
     const pending = runOperation(state.stateDir, crypto, new TestTty(undefined, true));
-    if (!await waitForTestCondition(() => (rawRequest.listeners.get("change")?.size ?? 0) > 0)) {
+    if (!(await waitForTestCondition(() => (rawRequest.listeners.get("change")?.size ?? 0) > 0))) {
       await rawRequest.cancel();
       await pending.catch(() => {});
       assert.fail("verification readiness listener was not installed");
@@ -748,7 +812,7 @@ void test("cancels an active SAS flow when the outgoing target changes later", a
     rawRequest.otherDeviceId = TARGET;
     rawRequest.phase = 3;
     rawRequest.emit("change");
-    if (!await waitForTestCondition(() => rawRequest.startCalls === 1)) {
+    if (!(await waitForTestCondition(() => rawRequest.startCalls === 1))) {
       await rawRequest.cancel();
       await pending.catch(() => {});
       assert.fail("verification did not start");
@@ -773,8 +837,14 @@ void test("rejects other-device traffic and never accepts an exact-target incomi
       methods: ["m.sas.v1"],
       startVerifier: verifier,
     });
-    const wrongUser = new TestRequest({ initiatedByMe: false, userId: "@intruder:example.org" });
-    const wrongDevice = new TestRequest({ initiatedByMe: false, deviceId: "OTHER01" });
+    const wrongUser = new TestRequest({
+      initiatedByMe: false,
+      userId: "@intruder:example.org",
+    });
+    const wrongDevice = new TestRequest({
+      initiatedByMe: false,
+      deviceId: "OTHER01",
+    });
     const untargeted = new TestRequest({ initiatedByMe: false, deviceId: "" });
     const outgoing = new TestRequest({ startVerifier: new TestVerifier() });
     const crypto = new TestCrypto(outgoing, [wrongUser, wrongDevice, untargeted, incoming]);
@@ -846,7 +916,7 @@ void test("times out a pending operator interaction, handles remote cancellation
       },
       targetDeviceId: TARGET,
     });
-    if (!await waitForTestCondition(() => clock.pendingTimerCount > 0)) {
+    if (!(await waitForTestCondition(() => clock.pendingTimerCount > 0))) {
       await operation.cancel();
       await pending.catch(() => {});
       assert.fail("verification timeout timer was not installed");
@@ -877,7 +947,7 @@ void test("times out a pending operator interaction, handles remote cancellation
       },
       targetDeviceId: TARGET,
     });
-    if (!await waitForTestCondition(() => verifier.started)) {
+    if (!(await waitForTestCondition(() => verifier.started))) {
       await operation.cancel();
       await pending.catch(() => {});
       assert.fail("verification verifier was not started");

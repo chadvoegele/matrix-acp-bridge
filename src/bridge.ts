@@ -5,17 +5,9 @@ import { AcpActivityBatches, type ActivityBatch } from "./acp-activity-batches.j
 import { renderMatrixTextChunk } from "./matrix-text-rendering.js";
 import type { MatrixSafeHtml } from "./matrix-html.js";
 import { systemClock } from "./clock.js";
-import type {
-  CancellationController,
-  Unsubscribe,
-} from "./cancellation.js";
+import type { CancellationController, Unsubscribe } from "./cancellation.js";
 import type { Clock, TimerHandle } from "./clock.js";
-import type {
-  DiagnosticFields,
-  DiagnosticSink,
-  FatalError,
-  FatalErrorListener,
-} from "./diagnostics.js";
+import type { DiagnosticFields, DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
 import type { BridgeConfig } from "./config.js";
 import { isRecord, numberProperty, stringProperty } from "./object-validation.js";
 import {
@@ -28,13 +20,7 @@ import {
 import { InMemorySessionStore } from "./session-store.js";
 import { matrixHtmlContentBytes, matrixHtmlEditContentBytes, type MatrixHtmlBody } from "./matrix-message-content.js";
 import type { SessionStore } from "./session-store.js";
-import type {
-  AcpClient,
-  AcpOutcome,
-  AcpSession,
-  AcpSessionId,
-  AcpUpdate,
-} from "./acp-client.js";
+import type { AcpClient, AcpOutcome, AcpSession, AcpSessionId, AcpUpdate } from "./acp-client.js";
 import {
   renderMatrixResponse,
   type MatrixResponseDescriptor,
@@ -69,12 +55,7 @@ const noop = (): void => undefined;
  * useful to callers that want to distinguish admission from a duplicate or a
  * policy rejection without inspecting diagnostics.
  */
-export type BridgeAdmission =
-  | "ignored"
-  | "duplicate"
-  | "accepted"
-  | "busy"
-  | "oversized";
+export type BridgeAdmission = "ignored" | "duplicate" | "accepted" | "busy" | "oversized";
 
 /** Called at the durable terminal boundary, before Matrix response delivery. */
 export type BridgeTerminalCompletion = () => Promise<void>;
@@ -84,9 +65,7 @@ export interface BridgeCoordinatorOptions {
   readonly acp: AcpClient;
   readonly matrix: MatrixBridgeAdapter;
   /** A policy object or a test-friendly authorization function. */
-  readonly authorizer?:
-    | InboundAuthorizer
-    | ((event: InboundMatrixEvent) => InboundAuthorizationDecision);
+  readonly authorizer?: InboundAuthorizer | ((event: InboundMatrixEvent) => InboundAuthorizationDecision);
   readonly sessionStore?: SessionStore;
   readonly stateStore?: BridgeStateStore;
   readonly loadSession?: boolean;
@@ -266,10 +245,7 @@ function isAcpOutcome(value: unknown): value is AcpOutcome {
   if (value.kind === "method_error") {
     return value.fatal === false;
   }
-  return (
-    (value.kind === "transport_error" || value.kind === "protocol_error") &&
-    value.fatal === true
-  );
+  return (value.kind === "transport_error" || value.kind === "protocol_error") && value.fatal === true;
 }
 
 function normalizeStopReason(outcome: AcpOutcome): AcpOutcome {
@@ -292,9 +268,9 @@ function normalizeStopReason(outcome: AcpOutcome): AcpOutcome {
 }
 
 function isFatalAcpOutcome(value: unknown): boolean {
-  return isRecord(value) &&
-    (value.kind === "transport_error" || value.kind === "protocol_error") &&
-    value.fatal === true;
+  return (
+    isRecord(value) && (value.kind === "transport_error" || value.kind === "protocol_error") && value.fatal === true
+  );
 }
 
 function isMethodError(value: unknown): boolean {
@@ -326,7 +302,10 @@ function secondsToMilliseconds(seconds: number): number {
   return clampTimer(seconds * 1000);
 }
 
-function sessionOptions(config: BridgeConfig): { readonly cwd: string; readonly mcpServers: readonly [] } {
+function sessionOptions(config: BridgeConfig): {
+  readonly cwd: string;
+  readonly mcpServers: readonly [];
+} {
   return { cwd: config.acp.cwd, mcpServers: [] };
 }
 
@@ -374,10 +353,7 @@ function normalizeFailureClassification(value: unknown): MatrixFailureClassifica
   }
   const kind = candidate.kind;
   const retryable = candidate.retryable;
-  if (
-    (kind !== "transient" && kind !== "permanent") ||
-    typeof retryable !== "boolean"
-  ) {
+  if ((kind !== "transient" && kind !== "permanent") || typeof retryable !== "boolean") {
     return undefined;
   }
   const retryAfterMs = numberProperty(candidate, "retryAfterMs", "retry_after_ms");
@@ -405,10 +381,7 @@ function matrixFailureFor(error: unknown): MatrixFailureClassification {
   const data = isRecord(error) ? error.data : undefined;
   const dataRetryAfter = numberProperty(data, "retry_after_ms");
   const effectiveRetryAfter = retryAfterMs ?? dataRetryAfter ?? retryAfterFromError(error);
-  const transientStatus =
-    status === 408 ||
-    status === 429 ||
-    (status !== undefined && status >= 500 && status < 600);
+  const transientStatus = status === 408 || status === 429 || (status !== undefined && status >= 500 && status < 600);
   const code = stringProperty(error, "code");
   const name = stringProperty(error, "name");
   const message = stringProperty(error, "message")?.toLowerCase() ?? "";
@@ -435,11 +408,7 @@ function matrixFailureFor(error: unknown): MatrixFailureClassification {
   };
 }
 
-function retryDelay(
-  failure: MatrixFailureClassification,
-  attempt: number,
-  random: () => number,
-): number {
+function retryDelay(failure: MatrixFailureClassification, attempt: number, random: () => number): number {
   if (failure.retryAfterMs !== undefined && Number.isFinite(failure.retryAfterMs)) {
     return clampTimer(Math.max(0, failure.retryAfterMs));
   }
@@ -466,11 +435,9 @@ class OutboundMutex {
     this.#tail = new Promise<void>((resolve) => {
       release = resolve;
     });
-    return previous
-      .then(operation)
-      .finally(() => {
-        release?.();
-      });
+    return previous.then(operation).finally(() => {
+      release?.();
+    });
   }
 }
 
@@ -482,6 +449,7 @@ interface PermitWaiter {
 /** A small cancellable semaphore for unresolved ACP prompt requests. */
 class PromptSemaphore {
   #available: number;
+
   readonly #waiters: PermitWaiter[] = [];
 
   constructor(limit: number) {
@@ -569,40 +537,73 @@ function makeQueueEntry(
  */
 export class BridgeCoordinator {
   readonly #config: BridgeConfig;
+
   readonly #acp: AcpClient;
+
   readonly #matrix: MatrixBridgeAdapter;
+
   readonly #authorizer: InboundAuthorizer | ((event: InboundMatrixEvent) => InboundAuthorizationDecision);
+
   readonly #sessionStore: SessionStore;
+
   readonly #stateStore: BridgeStateStore | undefined;
+
   readonly #loadSession: boolean;
+
   readonly #clock: Clock;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #random: () => number;
+
   readonly #rooms = new Map<MatrixRoomId, RoomState>();
+
   readonly #eventIds = new Set<MatrixEventId>();
+
   readonly #eventOrder: MatrixEventId[] = [];
+
   readonly #closedMessageIds = new Map<AcpSessionId, { readonly set: Set<string>; readonly order: string[] }>();
+
   readonly #turnsBySession = new Map<AcpSessionId, TurnCollector>();
+
   readonly #activeRuns = new Set<ActiveRun>();
+
   readonly #retryWaits = new Set<RetryWait>();
+
   readonly #fatalListeners = new Set<FatalErrorListener>();
+
   readonly #idleWaiters = new Set<() => void>();
+
   readonly #semaphore: PromptSemaphore;
+
   readonly #subscriptions: Unsubscribe[] = [];
+
   readonly #loadingSessions = new Set<AcpSessionId>();
 
   #intakeOpen: boolean;
+
   #dispatchOpen: boolean;
+
   #stopping = false;
+
   #stopped = false;
+
   #fatal: FatalError | undefined;
+
   #outboundOperations = 0;
+
   #unresolvedPrompts = 0;
+
   #stopPromise: Promise<void> | undefined;
+
   #resolveStop: (() => void) | undefined;
+
   #stopDeadlineTimer: TimerHandle;
+
   #stopFinalizeStarted = false;
+
   #initializePromise: Promise<void> | undefined;
+
   #sessionStatePreparation: Promise<void> | undefined;
 
   constructor(options: BridgeCoordinatorOptions);
@@ -618,14 +619,15 @@ export class BridgeCoordinator {
     matrixArgument?: MatrixBridgeAdapter,
     additionalOptions: Omit<BridgeCoordinatorOptions, "config" | "acp" | "matrix"> = {},
   ) {
-    const options = "config" in optionsOrConfig
-      ? optionsOrConfig
-      : {
-          ...additionalOptions,
-          config: optionsOrConfig,
-          acp: acpArgument,
-          matrix: matrixArgument,
-        } as BridgeCoordinatorOptions;
+    const options =
+      "config" in optionsOrConfig
+        ? optionsOrConfig
+        : ({
+            ...additionalOptions,
+            config: optionsOrConfig,
+            acp: acpArgument,
+            matrix: matrixArgument,
+          } as BridgeCoordinatorOptions);
     const acp = options.acp;
     const matrix = options.matrix;
     if (acp === undefined || matrix === undefined) {
@@ -641,15 +643,17 @@ export class BridgeCoordinator {
     this.#sessionStore = options.sessionStore ?? new InMemorySessionStore();
     this.#stateStore = options.stateStore;
     this.#loadSession = options.loadSession === true;
-    this.#authorizer = options.authorizer ?? createInboundAuthorizer({
-      allowedRooms: this.#config.matrix.allowedRooms,
-      allowedSenders: this.#config.matrix.allowedSenders,
-      bridgeUserId: this.#config.matrix.userId,
-      maxInputBytes: this.#config.limits.maxInputBytes,
-      encryption: this.#config.matrix.encryption,
-      ...(this.#diagnostics === undefined ? {} : { diagnostics: this.#diagnostics }),
-      clock: this.#clock,
-    });
+    this.#authorizer =
+      options.authorizer ??
+      createInboundAuthorizer({
+        allowedRooms: this.#config.matrix.allowedRooms,
+        allowedSenders: this.#config.matrix.allowedSenders,
+        bridgeUserId: this.#config.matrix.userId,
+        maxInputBytes: this.#config.limits.maxInputBytes,
+        encryption: this.#config.matrix.encryption,
+        ...(this.#diagnostics === undefined ? {} : { diagnostics: this.#diagnostics }),
+        clock: this.#clock,
+      });
     this.#semaphore = new PromptSemaphore(this.#config.limits.maxConcurrentPrompts);
     this.#intakeOpen = options.intakeOpen ?? true;
     this.#dispatchOpen = options.dispatchOpen ?? true;
@@ -822,10 +826,7 @@ export class BridgeCoordinator {
    * MatrixSyncCoordinator calls this method after durable batch registration.
    * It is also public for deterministic unit tests and alternate adapters.
    */
-  handleTimelineEvent(
-    event: InboundMatrixEvent,
-    terminalCompletion?: BridgeTerminalCompletion,
-  ): Promise<void> {
+  handleTimelineEvent(event: InboundMatrixEvent, terminalCompletion?: BridgeTerminalCompletion): Promise<void> {
     return this.#submit(event, terminalCompletion);
   }
 
@@ -885,13 +886,15 @@ export class BridgeCoordinator {
       }),
       ...(this.#acp.onSessionPhase === undefined
         ? []
-        : [this.#acp.onSessionPhase((change) => {
-            if (change.phase === "loading") {
-              this.#loadingSessions.add(change.sessionId);
-            } else {
-              this.#loadingSessions.delete(change.sessionId);
-            }
-          })]),
+        : [
+            this.#acp.onSessionPhase((change) => {
+              if (change.phase === "loading") {
+                this.#loadingSessions.add(change.sessionId);
+              } else {
+                this.#loadingSessions.delete(change.sessionId);
+              }
+            }),
+          ]),
       this.#acp.onFatalError((error) => {
         this.#triggerFatal(error);
       }),
@@ -899,21 +902,14 @@ export class BridgeCoordinator {
     this.#subscriptions.push(...subscriptions);
   }
 
-  async #submit(
-    event: InboundMatrixEvent,
-    terminalCompletion?: BridgeTerminalCompletion,
-  ): Promise<void> {
+  async #submit(event: InboundMatrixEvent, terminalCompletion?: BridgeTerminalCompletion): Promise<void> {
     const admission = this.#admit(event);
     if (admission === "ignored" || admission === "duplicate") {
       return;
     }
 
-    const eventId = isRecord(event) && typeof event.eventId === "string"
-      ? event.eventId
-      : undefined;
-    const roomId = isRecord(event) && typeof event.roomId === "string"
-      ? event.roomId
-      : undefined;
+    const eventId = isRecord(event) && typeof event.eventId === "string" ? event.eventId : undefined;
+    const roomId = isRecord(event) && typeof event.roomId === "string" ? event.roomId : undefined;
     if (eventId === undefined || roomId === undefined) {
       return;
     }
@@ -971,9 +967,7 @@ export class BridgeCoordinator {
     await completion;
   }
 
-  async #completeTerminal(
-    terminalCompletion: BridgeTerminalCompletion | undefined,
-  ): Promise<boolean> {
+  async #completeTerminal(terminalCompletion: BridgeTerminalCompletion | undefined): Promise<boolean> {
     if (terminalCompletion === undefined) {
       return true;
     }
@@ -981,7 +975,10 @@ export class BridgeCoordinator {
       await terminalCompletion();
       return true;
     } catch {
-      this.#triggerFatal({ code: "state", message: "Private bridge state failure" });
+      this.#triggerFatal({
+        code: "state",
+        message: "Private bridge state failure",
+      });
       return false;
     }
   }
@@ -993,9 +990,7 @@ export class BridgeCoordinator {
     if (!this.#intakeOpen || this.#stopping || this.#fatal !== undefined) {
       return "ignored";
     }
-    const eventId = isRecord(event) && typeof event.eventId === "string"
-      ? event.eventId
-      : undefined;
+    const eventId = isRecord(event) && typeof event.eventId === "string" ? event.eventId : undefined;
     if (eventId === undefined || !isValidMatrixEventId(eventId)) {
       // Missing/invalid IDs are intentionally silent: there is no stable
       // transaction ID and therefore no safe user-facing response.
@@ -1008,9 +1003,7 @@ export class BridgeCoordinator {
 
     let decision: InboundAuthorizationDecision;
     try {
-      decision = typeof this.#authorizer === "function"
-        ? this.#authorizer(event)
-        : this.#authorizer.authorize(event);
+      decision = typeof this.#authorizer === "function" ? this.#authorizer(event) : this.#authorizer.authorize(event);
     } catch {
       this.#diagnostic("error", "inbound-policy-failed", {
         eventId,
@@ -1040,7 +1033,13 @@ export class BridgeCoordinator {
   }
 
   #newRoom(roomId: MatrixRoomId): RoomState {
-    return { roomId, waiting: [], outbound: new OutboundMutex(), active: undefined, sessionId: undefined };
+    return {
+      roomId,
+      waiting: [],
+      outbound: new OutboundMutex(),
+      active: undefined,
+      sessionId: undefined,
+    };
   }
 
   #room(roomId: MatrixRoomId): RoomState {
@@ -1085,7 +1084,10 @@ export class BridgeCoordinator {
       // The run is always converted into a response or a fatal state.  This
       // guard protects the event loop if an injected adapter violates its
       // promise contract.
-      this.#triggerFatal({ code: "acp_transport", message: "Bridge turn failed" });
+      this.#triggerFatal({
+        code: "acp_transport",
+        message: "Bridge turn failed",
+      });
       this.#finishRun(run);
     });
   }
@@ -1114,10 +1116,15 @@ export class BridgeCoordinator {
           this.#sessionStore.delete(run.room.roomId);
           run.room.sessionId = undefined;
         } catch {
-          this.#triggerFatal({ code: "state", message: "Private bridge state failure" });
+          this.#triggerFatal({
+            code: "state",
+            message: "Private bridge state failure",
+          });
           return;
         }
-        this.#diagnostic("info", "room-context-reset", { roomId: run.room.roomId });
+        this.#diagnostic("info", "room-context-reset", {
+          roomId: run.room.roomId,
+        });
         const resetParts = renderMatrixResponse({
           roomId: run.room.roomId,
           inboundEventId: run.entry.event.eventId,
@@ -1134,8 +1141,10 @@ export class BridgeCoordinator {
 
       const resolution = await this.#sessionForRoom(run.room);
       if (resolution.session === undefined) {
-        if (resolution.creationFailure === true &&
-            (resolution.failureCode === "acp_transport" || resolution.failureCode === "acp_protocol")) {
+        if (
+          resolution.creationFailure === true &&
+          (resolution.failureCode === "acp_transport" || resolution.failureCode === "acp_protocol")
+        ) {
           await this.#sessionCreationFailure(run, resolution.failureCode);
         }
         return;
@@ -1196,7 +1205,10 @@ export class BridgeCoordinator {
       }
       const rawOutcome = prompt.outcome;
       if (rawOutcome === undefined) {
-        this.#triggerFatal({ code: "acp_transport", message: "ACP prompt failed" });
+        this.#triggerFatal({
+          code: "acp_transport",
+          message: "ACP prompt failed",
+        });
         return;
       }
       const outcome = normalizeStopReason(rawOutcome);
@@ -1209,12 +1221,22 @@ export class BridgeCoordinator {
       }
 
       let text = "";
-      if (isRecord(outcome) && typeof outcome.text === "string" && joinedGroups(turn.groups).length === 0 && outcome.text.length > 0) {
-          turn.groups.push({ messageId: undefined, text: outcome.text, closed: false, sentLength: 0 });
-          turn.lastTextGroup = turn.groups.at(-1);
-          turn.hasText = true;
-          turn.lastTextChangeAt = this.#clock.now();
-        }
+      if (
+        isRecord(outcome) &&
+        typeof outcome.text === "string" &&
+        joinedGroups(turn.groups).length === 0 &&
+        outcome.text.length > 0
+      ) {
+        turn.groups.push({
+          messageId: undefined,
+          text: outcome.text,
+          closed: false,
+          sentLength: 0,
+        });
+        turn.lastTextGroup = turn.groups.at(-1);
+        turn.hasText = true;
+        turn.lastTextChangeAt = this.#clock.now();
+      }
 
       const skipDrain = prompt.timedOut || outcome.kind === "method_error";
       if (!skipDrain && outcome.kind === "turn") {
@@ -1237,15 +1259,26 @@ export class BridgeCoordinator {
       await turn.outboundTail;
       if (this.#stopping || this.#fatal !== undefined) return;
 
-      const unsent = this.#matrix.sendHtmlMessage === undefined
-        ? text : joinedGroups(turn.groups.map((group) => ({ ...group, text: group.text.slice(group.sentLength) })));
+      const unsent =
+        this.#matrix.sendHtmlMessage === undefined
+          ? text
+          : joinedGroups(
+              turn.groups.map((group) => ({
+                ...group,
+                text: group.text.slice(group.sentLength),
+              })),
+            );
       const streamed = this.#matrix.sendHtmlMessage !== undefined && text.length > 0 && unsent.length === 0;
 
       const response: RenderableResponse = prompt.timedOut
         ? { kind: "timeout", ...(unsent.length > 0 ? { text: unsent } : {}) }
-        : (outcome.kind === "method_error"
+        : outcome.kind === "method_error"
           ? { kind: "error", ...(unsent.length > 0 ? { text: unsent } : {}) }
-          : { ...outcome, ...(unsent.length > 0 ? { text: unsent } : {}), ...(streamed ? { text: "" } : {}) });
+          : {
+              ...outcome,
+              ...(unsent.length > 0 ? { text: unsent } : {}),
+              ...(streamed ? { text: "" } : {}),
+            };
       if (streamed && outcome.kind === "turn" && outcome.stopReason === "end_turn") {
         this.#stopTyping(run);
         await this.#completeTerminal(run.entry.terminalCompletion);
@@ -1324,9 +1357,14 @@ export class BridgeCoordinator {
             return { failureCode: "acp_protocol" };
           }
           room.sessionId = session.sessionId;
-          this.#sessionStore.set({ roomId: room.roomId, sessionId: session.sessionId });
+          this.#sessionStore.set({
+            roomId: room.roomId,
+            sessionId: session.sessionId,
+          });
           this.#loadingSessions.delete(sessionId);
-          this.#diagnostic("info", "acp-session-loaded", { roomId: room.roomId });
+          this.#diagnostic("info", "acp-session-loaded", {
+            roomId: room.roomId,
+          });
           return { session: { sessionId: session.sessionId } };
         } catch (error) {
           this.#loadingSessions.delete(sessionId);
@@ -1339,11 +1377,18 @@ export class BridgeCoordinator {
               // looking usable after restart.
               await this.#stateStore?.removeSessionMapping(room.roomId);
             } catch {
-              this.#triggerFatal({ code: "state", message: "Private bridge state failure" });
+              this.#triggerFatal({
+                code: "state",
+                message: "Private bridge state failure",
+              });
               return { failureCode: "state" };
             }
-            this.#diagnostic("warn", "stale-session-mapping-discarded", { roomId: room.roomId });
-            this.#diagnostic("warn", "room-context-reset", { roomId: room.roomId });
+            this.#diagnostic("warn", "stale-session-mapping-discarded", {
+              roomId: room.roomId,
+            });
+            this.#diagnostic("warn", "room-context-reset", {
+              roomId: room.roomId,
+            });
           } else {
             this.#triggerFatal({
               code: isRecord(error) && error.kind === "protocol_error" ? "acp_protocol" : "acp_transport",
@@ -1360,12 +1405,18 @@ export class BridgeCoordinator {
         throw new Error("invalid ACP session");
       }
       room.sessionId = session.sessionId;
-      this.#sessionStore.set({ roomId: room.roomId, sessionId: session.sessionId });
+      this.#sessionStore.set({
+        roomId: room.roomId,
+        sessionId: session.sessionId,
+      });
       if (this.#loadSession && this.#stateStore !== undefined) {
         try {
           await this.#stateStore.setSessionMapping(room.roomId, session.sessionId);
         } catch {
-          this.#triggerFatal({ code: "state", message: "Private bridge state failure" });
+          this.#triggerFatal({
+            code: "state",
+            message: "Private bridge state failure",
+          });
           return { failureCode: "state" };
         }
       }
@@ -1381,12 +1432,16 @@ export class BridgeCoordinator {
     }
     if (this.#sessionStatePreparation === undefined) {
       try {
-        this.#sessionStatePreparation = (this.#loadSession
-          ? this.#stateStore.pruneSessionMappings(this.#config.matrix.allowedRooms)
-          : this.#stateStore.discardSessionMappings()
+        this.#sessionStatePreparation = (
+          this.#loadSession
+            ? this.#stateStore.pruneSessionMappings(this.#config.matrix.allowedRooms)
+            : this.#stateStore.discardSessionMappings()
         ).then(() => {});
       } catch {
-        this.#triggerFatal({ code: "state", message: "Private bridge state failure" });
+        this.#triggerFatal({
+          code: "state",
+          message: "Private bridge state failure",
+        });
         return false;
       }
     }
@@ -1394,15 +1449,15 @@ export class BridgeCoordinator {
       await this.#sessionStatePreparation;
       return true;
     } catch {
-      this.#triggerFatal({ code: "state", message: "Private bridge state failure" });
+      this.#triggerFatal({
+        code: "state",
+        message: "Private bridge state failure",
+      });
       return false;
     }
   }
 
-  async #sessionCreationFailure(
-    run: ActiveRun,
-    failureCode: "acp_transport" | "acp_protocol",
-  ): Promise<void> {
+  async #sessionCreationFailure(run: ActiveRun, failureCode: "acp_transport" | "acp_protocol"): Promise<void> {
     if (this.#stopping && this.#fatal === undefined) {
       return;
     }
@@ -1415,8 +1470,14 @@ export class BridgeCoordinator {
       maxOutputBytes: this.#config.limits.maxOutputBytes,
       maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
     });
-    await this.#deliverParts(run.room, parts, { allowDuringStop: true, retry: false });
-    this.#triggerFatal({ code: failureCode, message: "ACP session creation failed" });
+    await this.#deliverParts(run.room, parts, {
+      allowDuringStop: true,
+      retry: false,
+    });
+    this.#triggerFatal({
+      code: failureCode,
+      message: "ACP session creation failed",
+    });
   }
 
   #startTyping(run: ActiveRun): void {
@@ -1460,18 +1521,12 @@ export class BridgeCoordinator {
     this.#sendTyping(run, false, "stop");
   }
 
-  #sendTyping(
-    run: ActiveRun,
-    isTyping: boolean,
-    operation: "start" | "refresh" | "stop",
-  ): void {
+  #sendTyping(run: ActiveRun, isTyping: boolean, operation: "start" | "refresh" | "stop"): void {
     if (this.#matrix.sendTyping === undefined) {
       return;
     }
     try {
-      void Promise.resolve(
-        this.#matrix.sendTyping(run.room.roomId, isTyping, TYPING_TIMEOUT_MS),
-      ).catch(() => {
+      void Promise.resolve(this.#matrix.sendTyping(run.room.roomId, isTyping, TYPING_TIMEOUT_MS)).catch(() => {
         this.#diagnostic("warn", "typing-operation-failed", {
           roomId: run.room.roomId,
           operation,
@@ -1595,13 +1650,13 @@ export class BridgeCoordinator {
   }
 
   #handleCancelFailure(error: unknown): void {
-      if (isMethodError(error)) {
-        return;
-      }
-      this.#triggerFatal({
-        code: isRecord(error) && error.kind === "protocol_error" ? "acp_protocol" : "acp_transport",
-        message: "ACP cancellation failed",
-      });
+    if (isMethodError(error)) {
+      return;
+    }
+    this.#triggerFatal({
+      code: isRecord(error) && error.kind === "protocol_error" ? "acp_protocol" : "acp_transport",
+      message: "ACP cancellation failed",
+    });
   }
 
   async #drainTurn(turn: TurnCollector): Promise<DrainResult> {
@@ -1628,7 +1683,10 @@ export class BridgeCoordinator {
           });
           return;
         }
-        this.#finishDrain(turn, { text: joinedGroups(turn.groups), fatal: false });
+        this.#finishDrain(turn, {
+          text: joinedGroups(turn.groups),
+          fatal: false,
+        });
       }, STREAMING_DRAIN_CAP_MS);
     });
   }
@@ -1648,7 +1706,10 @@ export class BridgeCoordinator {
         return;
       }
       if (this.#clock.now() - turn.lastTextChangeAt >= QUIET_DRAIN_MS) {
-        this.#finishDrain(turn, { text: joinedGroups(turn.groups), fatal: false });
+        this.#finishDrain(turn, {
+          text: joinedGroups(turn.groups),
+          fatal: false,
+        });
       } else {
         this.#scheduleQuietDrain(turn);
       }
@@ -1688,7 +1749,10 @@ export class BridgeCoordinator {
     if (this.#turnsBySession.get(turn.sessionId) === turn) {
       this.#turnsBySession.delete(turn.sessionId);
     }
-    const closed = this.#closedMessageIds.get(turn.sessionId) ?? { set: new Set<string>(), order: [] };
+    const closed = this.#closedMessageIds.get(turn.sessionId) ?? {
+      set: new Set<string>(),
+      order: [],
+    };
     for (const messageId of turn.messageOrder) {
       if (closed.set.has(messageId)) {
         continue;
@@ -1706,10 +1770,7 @@ export class BridgeCoordinator {
   }
 
   #handleAcpUpdate(update: AcpUpdate): void {
-    if (
-      !isRecord(update) ||
-      typeof update.sessionId !== "string"
-    ) {
+    if (!isRecord(update) || typeof update.sessionId !== "string") {
       return;
     }
     if (this.#loadingSessions.has(update.sessionId)) {
@@ -1724,7 +1785,7 @@ export class BridgeCoordinator {
         if (this.#matrix.sendHtmlMessage === undefined) return;
         const activity = turn.activity.accept(update);
         if (activity !== undefined) {
-          if (update.kind === "tool_call" || update.kind === "agent_thought_chunk" && update.text?.trim()) {
+          if (update.kind === "tool_call" || (update.kind === "agent_thought_chunk" && update.text?.trim())) {
             this.#closeTextGroup(turn);
           }
           this.#acceptActivity(turn, activity);
@@ -1734,17 +1795,17 @@ export class BridgeCoordinator {
     }
     if (typeof update.text !== "string" || update.text.length === 0) return;
     const messageId = update.messageId;
-    if (
-      messageId !== undefined &&
-      this.#closedMessageIds.get(update.sessionId)?.set.has(messageId)
-    ) {
+    if (messageId !== undefined && this.#closedMessageIds.get(update.sessionId)?.set.has(messageId)) {
       return;
     }
     if (messageId !== undefined && !turn.messageIds.has(messageId)) {
       turn.messageIds.add(messageId);
       turn.messageOrder.push(messageId);
-    } else if (messageId !== undefined && turn.lastTextGroup?.messageId !== messageId &&
-      turn.groups.some((group) => group.messageId === messageId && group.closed)) {
+    } else if (
+      messageId !== undefined &&
+      turn.lastTextGroup?.messageId !== messageId &&
+      turn.groups.some((group) => group.messageId === messageId && group.closed)
+    ) {
       return;
     }
     if (update.text.trim()) {
@@ -1791,7 +1852,10 @@ export class BridgeCoordinator {
           break;
         }
         const id = await this.#deliverLive(turn, `text-${turn.groups.indexOf(group)}`, offset, chunk.rendered);
-        if (id === undefined) { turn.liveFailed = true; break; }
+        if (id === undefined) {
+          turn.liveFailed = true;
+          break;
+        }
         offset = chunk.nextOffset;
         group.sentLength += chunk.rendered.body.length;
       }
@@ -1837,40 +1901,62 @@ export class BridgeCoordinator {
             this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
             break;
           }
-          const id = await this.#deliverLive(turn, `activity-${batch.index}`, state.revision++, rendered, state.eventId);
-          if (id === undefined) { turn.liveFailed = true; break; }
+          const id = await this.#deliverLive(
+            turn,
+            `activity-${batch.index}`,
+            state.revision++,
+            rendered,
+            state.eventId,
+          );
+          if (id === undefined) {
+            turn.liveFailed = true;
+            break;
+          }
           state.eventId = id;
           if (rendered === initial) {
             const current = turn.activityBatches.render(batch);
             if (current.body !== rendered.body || current.formattedBody !== rendered.formattedBody) state.dirty = true;
           }
         }
-      } finally { state.pending = false; }
+      } finally {
+        state.pending = false;
+      }
     });
   }
 
-  async #deliverLive(turn: TurnCollector, kind: string, revision: number, rendered: MatrixHtmlBody,
-    targetEventId?: MatrixEventId): Promise<MatrixEventId | undefined> {
+  async #deliverLive(
+    turn: TurnCollector,
+    kind: string,
+    revision: number,
+    rendered: MatrixHtmlBody,
+    targetEventId?: MatrixEventId,
+  ): Promise<MatrixEventId | undefined> {
     if (this.#matrix.sendHtmlMessage === undefined || this.#stopping || this.#fatal !== undefined) return;
     if (matrixHtmlContentBytes(rendered, targetEventId) > this.#config.limits.maxMatrixMessageBytes) {
       this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
       return;
     }
-    const message: MatrixHtmlMessage = { roomId: turn.room.roomId,
-      transactionId: liveTransactionId(turn, kind, 0, revision), body: rendered.body,
+    const message: MatrixHtmlMessage = {
+      roomId: turn.room.roomId,
+      transactionId: liveTransactionId(turn, kind, 0, revision),
+      body: rendered.body,
       formattedBody: rendered.formattedBody as MatrixSafeHtml,
-      ...(targetEventId === undefined ? {} : { targetEventId }) };
+      ...(targetEventId === undefined ? {} : { targetEventId }),
+    };
     this.#outboundOperations += 1;
     try {
       return await turn.room.outbound.run(async () => {
         let attempt = 0;
         for (;;) {
           if (this.#stopping || this.#fatal !== undefined) return;
-          try { return await this.#matrix.sendHtmlMessage!(message); }
-          catch (error) {
+          try {
+            return await this.#matrix.sendHtmlMessage!(message);
+          } catch (error) {
             const failure = matrixFailureFor(error);
             if (!failure.retryable) {
-              this.#diagnostic("warn", "matrix-live-abandoned", { kind: "delivery" });
+              this.#diagnostic("warn", "matrix-live-abandoned", {
+                kind: "delivery",
+              });
               return;
             }
             const delay = retryDelay(failure, attempt++, this.#random);
@@ -1909,8 +1995,8 @@ export class BridgeCoordinator {
     options: DeliveryOptions = {},
   ): Promise<boolean> {
     if (
-      this.#stopping && options.allowDuringStop !== true ||
-      this.#fatal !== undefined && options.allowDuringStop !== true
+      (this.#stopping && options.allowDuringStop !== true) ||
+      (this.#fatal !== undefined && options.allowDuringStop !== true)
     ) {
       return false;
     }
@@ -1926,12 +2012,7 @@ export class BridgeCoordinator {
               sent = true;
             } catch (error) {
               const failure = matrixFailureFor(error);
-              if (
-                options.retry === false ||
-                !failure.retryable ||
-                this.#stopping ||
-                this.#fatal !== undefined
-              ) {
+              if (options.retry === false || !failure.retryable || this.#stopping || this.#fatal !== undefined) {
                 this.#diagnostic("warn", "matrix-response-abandoned", {
                   roomId: room.roomId,
                   eventId: part.inboundEventId,
@@ -2127,8 +2208,12 @@ export class BridgeCoordinator {
       // Resources are acquired in ACP -> Matrix order. Release them in the
       // reverse order on the normal path so a partial startup cannot leave a
       // lower-level transport alive after its coordinator is gone.
-      await Promise.resolve().then(() => this.#matrix.stop()).catch(() => {});
-      await Promise.resolve().then(() => this.#acp.close()).catch(() => {});
+      await Promise.resolve()
+        .then(() => this.#matrix.stop())
+        .catch(() => {});
+      await Promise.resolve()
+        .then(() => this.#acp.close())
+        .catch(() => {});
     };
     void closeAdapters().then(() => {
       this.#stopped = true;

@@ -18,9 +18,7 @@ const ALICE = "@alice:example.org";
 const BOB = "@bob:example.org";
 const BRIDGE = "@bridge:example.org";
 
-function makeEvent(
-  overrides: Partial<InboundMatrixEvent> = {},
-): InboundMatrixEvent {
+function makeEvent(overrides: Partial<InboundMatrixEvent> = {}): InboundMatrixEvent {
   return {
     roomId: ROOM_ID,
     eventId: "$event:example.org",
@@ -33,9 +31,7 @@ function makeEvent(
   };
 }
 
-function options(
-  overrides: Partial<Parameters<typeof createInboundAuthorizer>[0]> = {},
-) {
+function options(overrides: Partial<Parameters<typeof createInboundAuthorizer>[0]> = {}) {
   return {
     allowedRooms: [ROOM_ID],
     allowedSenders: [ALICE, BOB],
@@ -59,10 +55,7 @@ function reasonOf(decision: InboundAuthorizationDecision): string {
 
 void test("accepts exact room/sender text and preserves the body exactly", () => {
   const body = "  hello\nworld  ";
-  const decision = authorizeInboundEvent(
-    makeEvent({ content: { msgtype: "m.text", body } }),
-    options(),
-  );
+  const decision = authorizeInboundEvent(makeEvent({ content: { msgtype: "m.text", body } }), options());
 
   assert.equal(decision.accepted, true);
   assert.deepEqual(decision.event, {
@@ -75,30 +68,15 @@ void test("accepts exact room/sender text and preserves the body exactly", () =>
 
 void test("uses one global sender allowlist and excludes the bridge identity", () => {
   assert.equal(
-    reasonOf(
-      authorizeInboundEvent(
-        makeEvent({ roomId: OTHER_ROOM_ID }),
-        options(),
-      ),
-    ),
+    reasonOf(authorizeInboundEvent(makeEvent({ roomId: OTHER_ROOM_ID }), options())),
     INBOUND_REJECTION_REASONS.roomNotAllowed,
   );
   assert.equal(
-    reasonOf(
-      authorizeInboundEvent(
-        makeEvent({ sender: "@mallory:example.org" }),
-        options(),
-      ),
-    ),
+    reasonOf(authorizeInboundEvent(makeEvent({ sender: "@mallory:example.org" }), options())),
     INBOUND_REJECTION_REASONS.senderNotAllowed,
   );
   assert.equal(
-    reasonOf(
-      authorizeInboundEvent(
-        makeEvent({ sender: BRIDGE }),
-        options({ allowedSenders: [ALICE, BRIDGE] }),
-      ),
-    ),
+    reasonOf(authorizeInboundEvent(makeEvent({ sender: BRIDGE }), options({ allowedSenders: [ALICE, BRIDGE] }))),
     INBOUND_REJECTION_REASONS.selfEvent,
   );
 });
@@ -171,17 +149,15 @@ void test("rejects malformed event IDs and accepts historical and modern opaque 
     `$${"x".repeat(255)}`,
   ];
   for (const eventId of invalidIds) {
-    const event = eventId === undefined
-      ? (() => {
-          const missingEventId = makeEvent();
-          delete (missingEventId as { eventId?: string }).eventId;
-          return missingEventId;
-        })()
-      : makeEvent({ eventId });
-    assert.equal(
-      reasonOf(authorizeInboundEvent(event, options())),
-      INBOUND_REJECTION_REASONS.invalidEventId,
-    );
+    const event =
+      eventId === undefined
+        ? (() => {
+            const missingEventId = makeEvent();
+            delete (missingEventId as { eventId?: string }).eventId;
+            return missingEventId;
+          })()
+        : makeEvent({ eventId });
+    assert.equal(reasonOf(authorizeInboundEvent(event, options())), INBOUND_REJECTION_REASONS.invalidEventId);
   }
 
   for (const eventId of ["$opaque:example.org", "$base64/_-opaque"]) {
@@ -226,7 +202,13 @@ void test("accepts only the exact in-reply-to relation shape", () => {
     assert.equal(
       reasonOf(
         authorizeInboundEvent(
-          makeEvent({ content: { msgtype: "m.text", body: "hello", "m.relates_to": relation } }),
+          makeEvent({
+            content: {
+              msgtype: "m.text",
+              body: "hello",
+              "m.relates_to": relation,
+            },
+          }),
           options(),
         ),
       ),
@@ -236,10 +218,7 @@ void test("accepts only the exact in-reply-to relation shape", () => {
 });
 
 void test("strips only the leading plain-text reply fallback", () => {
-  assert.equal(
-    stripReplyFallback("> quoted\n> second\n\nreply"),
-    "reply",
-  );
+  assert.equal(stripReplyFallback("> quoted\n> second\n\nreply"), "reply");
   assert.equal(stripReplyFallback("> quoted\nreply"), "reply");
   assert.equal(stripReplyFallback("> quoted\n\n\nreply"), "\nreply");
   assert.equal(stripReplyFallback("  > not a fallback\nreply"), "  > not a fallback\nreply");
@@ -284,7 +263,9 @@ void test("rejects empty normalized text and measures UTF-8 bytes after strippin
   assert.equal(twoBytes.accepted, true);
 
   const oversized = authorizeInboundEvent(
-    makeEvent({ content: { msgtype: "m.text", body: "> very long quote\n\né" } }),
+    makeEvent({
+      content: { msgtype: "m.text", body: "> very long quote\n\né" },
+    }),
     options({ maxInputBytes: 1 }),
   );
   assert.equal(oversized.accepted, false);
