@@ -48,7 +48,10 @@ The plaintext restart scenario now verifies that only the requested session load
 and that its prompt reuses the original session ID. Unknown-thread checks also
 verify no session creation or loading. The encrypted scenario verifies that its
 follow-up reuses the first ACP session and that both exchanges stay encrypted on
-the wire.
+the wire. Its sender exits successfully only after assertions and adapter cleanup,
+matching the existing activity runner's handling of residual SDK handles. The M2
+loaded-context regression now waits for durable terminal completion before test
+shutdown, avoiding a filesystem cleanup race without changing production checks.
 
 ## External validation and operational limits
 
@@ -81,8 +84,13 @@ They inspect thoughts, tools, eager text, archived edits, replacement content an
 thread relations; encrypted output must remain encrypted on the wire. The
 observer scopes reused encrypted histories by the current test prompt's server
 timestamp rather than by expected routing, so misrouted new output still fails.
-The PR records the final live results. Temporary sessions/devices are cleaned up
-by the approved harnesses. No production daemon was stopped or restarted.
+Both live activity scenarios passed on 2026-09-30 using the approved setup,
+`activity-wire.mjs` runners and cleanup. Plaintext used the standalone
+`E2E_RESPONSE_MODE=thread agent_tests/unencrypted-e2e/test-activity.sh` entry point;
+encrypted used the provisioned private environment with the scripted ACP peer.
+The peer waits one second between updates so intermediate status backgrounds can
+be observed over live Matrix delivery. All original assertions remain enabled.
+Temporary sessions were deleted, devices revoked and private state removed. No production daemon was stopped or restarted.
 
 Thread display and follow-ups in the deployment client remain unverified because
 that client is not available in this environment.
