@@ -137,8 +137,11 @@ Room mode must continue using `max_queued_turns_per_room`. The new setting must
 use the same default and validation rules as the existing room queue setting.
 
 Thread mode has no aggregate room-wide waiting-work limit; total queued work can
-grow with the number of threads. The global active-prompt limit remains unchanged.
-An aggregate backlog cap is deferred until needed.
+grow with the number of threads. `max_concurrent_prompts` retains its existing
+name and semantics: it bounds unresolved ACP prompt requests only. Session
+creation and loading do not consume prompt slots and may run concurrently across
+threads without a separate limit. Session unloading, a setup-concurrency limit,
+and an aggregate backlog cap are outside this feature's scope.
 
 Typing state is room-scoped in Matrix. The bridge must not clear room typing
 while another thread still has active work requiring the indicator. Existing
@@ -196,7 +199,8 @@ A downgrade/export tool is not required.
 - Thread follow-ups reuse the correct session, including fallback replies that
   reference another event within the same thread.
 - Same-thread prompts serialize; different threads run concurrently within the
-  global limit. Each thread independently enforces `max_queued_turns_per_thread`;
+  global prompt limit. Session creation/loading does not consume prompt slots.
+  Each thread independently enforces `max_queued_turns_per_thread`;
   filling one thread's queue does not block admission to another thread.
 - Room mode retains `max_queued_turns_per_room`; the thread queue setting uses
   the same default and validation rules.
@@ -232,8 +236,6 @@ A downgrade/export tool is not required.
 
 ## Open questions
 
-- Define `max_active_sessions`, including which session lifecycle stages count
-  and how it replaces or coexists with `max_concurrent_prompts`.
 - Decide how future unsolicited MCP messages interact with threaded rooms;
   they remain outside this feature's initial routing scope.
 
