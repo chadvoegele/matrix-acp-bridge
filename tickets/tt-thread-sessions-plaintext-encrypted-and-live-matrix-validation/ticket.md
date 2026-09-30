@@ -1,7 +1,7 @@
 +++
 name = "Thread sessions plaintext encrypted and live Matrix validation"
 creation_date = 2026-09-30T19:04:33Z
-status = "in-progress"
+status = "completed"
 depends_on = ["tt-thread-sessions-integrated-regression-and-operator-documen-8d5b"]
 +++
 
