@@ -25,32 +25,21 @@ import type {
   CryptoStatePaths,
 } from "./crypto-contracts.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
-import { MATRIX_HTML_FORMAT, markdownToMatrixHtml } from "./matrix-markdown.js";
+import { renderMatrixText } from "./matrix-text-rendering.js";
 import { matrixHtmlContent } from "./matrix-message-content.js";
-import { escapeHtml } from "./html.js";
+import type { MatrixSafeHtml } from "./matrix-html.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
 export type { BridgeConfig, MatrixConfig } from "./config.js";
 export type { FatalError, FatalErrorListener } from "./diagnostics.js";
 export type { Unsubscribe } from "./cancellation.js";
+export { matrixHtml } from "./matrix-html.js";
+export type { MatrixSafeHtml } from "./matrix-html.js";
 
 export type MatrixRoomId = string;
 export type MatrixUserId = string;
 export type MatrixEventId = string;
 export type MatrixDeviceId = string;
-
-declare const safeMatrixHtml: unique symbol;
-/** HTML assembled from static markup and escaped dynamic values. */
-export type MatrixSafeHtml = string & { readonly [safeMatrixHtml]: true };
-
-export function matrixHtml(strings: TemplateStringsArray, ...values: readonly (string | number)[]): MatrixSafeHtml {
-  let result = strings[0] ?? "";
-  for (const [index, value] of values.entries()) {
-    result += escapeHtml(String(value));
-    result += strings[index + 1] ?? "";
-  }
-  return result as MatrixSafeHtml;
-}
 
 export interface MatrixHtmlMessage {
   readonly roomId: MatrixRoomId;
@@ -1567,12 +1556,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       );
     }
 
-    const content = {
-      msgtype: "m.text",
-      body: part.content.body,
-      format: MATRIX_HTML_FORMAT,
-      formatted_body: markdownToMatrixHtml(part.content.body),
-    } as const;
+    const content = matrixHtmlContent(renderMatrixText(part.content.body));
     await this.#sendTextContent(part.roomId, content, part.transactionId);
   }
 

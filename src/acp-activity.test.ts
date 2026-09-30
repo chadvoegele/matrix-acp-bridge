@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { AcpToolCallUpdate } from "./acp-client.js";
-import { AcpActivityModel, renderAcpActivity } from "./acp-activity.js";
+import { AcpActivityModel } from "./acp-activity.js";
+import { renderAcpActivity } from "./acp-activity-rendering.js";
 
 function tool(overrides: Partial<AcpToolCallUpdate> = {}): AcpToolCallUpdate {
   return { sessionId: "session", kind: "tool_call", toolCallId: "call", title: "read", toolKind: "read", status: "pending", ...overrides };

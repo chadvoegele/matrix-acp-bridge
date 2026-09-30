@@ -1,6 +1,6 @@
 import { MATRIX_HTML_FORMAT } from "./matrix-markdown.js";
 
-interface MatrixHtmlBody {
+export interface MatrixHtmlBody {
   readonly body: string;
   readonly formattedBody: string;
 }
@@ -24,4 +24,9 @@ export function matrixHtmlContent(message: MatrixHtmlBody, targetEventId?: strin
 
 export function matrixHtmlContentBytes(message: MatrixHtmlBody, targetEventId?: string): number {
   return Buffer.byteLength(JSON.stringify(matrixHtmlContent(message, targetEventId)), "utf8");
+}
+
+/** Reserve the edit envelope before its target event ID is known. */
+export function matrixHtmlEditContentBytes(message: MatrixHtmlBody): number {
+  return matrixHtmlContentBytes(message, `$${"x".repeat(254)}`);
 }

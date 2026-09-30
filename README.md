@@ -31,6 +31,11 @@ npm test                       # builds dist/ and dist-test/ before running test
 npm run check                  # final typecheck and test gate
 ```
 
+## Code structure
+
+See [ACP activity module responsibilities](docs/acp-activity-architecture.md) for
+the boundaries between ingestion, retained state, presentation, and delivery.
+
 ## ACP Connection
 
 The bridge must have a full-duplex ACP stdio connection:

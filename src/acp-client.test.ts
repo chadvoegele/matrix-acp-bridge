@@ -8,7 +8,8 @@ import {
   type AcpToolCallUpdate,
   type AcpAgentThoughtChunk,
 } from "./acp-client.js";
-import { AcpActivityModel, renderAcpActivity } from "./acp-activity.js";
+import { AcpActivityModel } from "./acp-activity.js";
+import { renderAcpActivity } from "./acp-activity-rendering.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 
 const CWD = "/srv/agent-workspace";
