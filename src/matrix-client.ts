@@ -26,6 +26,7 @@ import type {
 } from "./crypto-contracts.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 import { MATRIX_HTML_FORMAT, markdownToMatrixHtml } from "./matrix-markdown.js";
+import { matrixHtmlContent } from "./matrix-message-content.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
 export type { BridgeConfig, MatrixConfig } from "./config.js";
@@ -1584,19 +1585,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         (typeof message.targetEventId !== "string" || !isValidMatrixEventId(message.targetEventId)))) {
       throw new MatrixAdapterError("send_message", "The Matrix HTML message is invalid", permanentFailure());
     }
-    const newContent = {
-      msgtype: "m.text",
-      body: message.body,
-      format: MATRIX_HTML_FORMAT,
-      formatted_body: message.formattedBody,
-    } as const;
-    const content = message.targetEventId === undefined ? newContent : {
-      ...newContent,
-      body: `* ${message.body}`,
-      formatted_body: `* ${message.formattedBody}`,
-      "m.new_content": newContent,
-      "m.relates_to": { rel_type: "m.replace", event_id: message.targetEventId },
-    };
+    const content = matrixHtmlContent(message, message.targetEventId);
     const response = await this.#sendTextContent(message.roomId, content, message.transactionId);
     if (message.targetEventId !== undefined) return message.targetEventId;
     if (!isRecord(response) || !isValidMatrixEventId(response.event_id)) {

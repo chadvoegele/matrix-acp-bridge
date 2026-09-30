@@ -544,24 +544,8 @@ const ACP_FIELD_LIMIT = 8192;
 function boundedTerminalData(value: string): { data: string; originalBytes?: number } {
   const originalBytes = Buffer.byteLength(value, "utf8");
   if (originalBytes <= ACP_FIELD_LIMIT) return { data: value };
-  const headLimit = 6142;
-  const tailLimit = 2048;
-  let head = "";
-  let headBytes = 0;
-  for (const character of value) {
-    const bytes = Buffer.byteLength(character, "utf8");
-    if (headBytes + bytes > headLimit) break;
-    head += character;
-    headBytes += bytes;
-  }
-  let tail = "";
-  let tailBytes = 0;
-  for (const character of [...value].reverse()) {
-    const bytes = Buffer.byteLength(character, "utf8");
-    if (tailBytes + bytes > tailLimit) break;
-    tail = character + tail;
-    tailBytes += bytes;
-  }
+  const head = takeBytes(value, 6142).text;
+  const tail = takeBytes(value, 2048, true).text;
   return { data: `${head}\n\n${tail}`, originalBytes };
 }
 

@@ -19,6 +19,7 @@ import {
   type MatrixSdkRoomLike,
 } from "./matrix-client.js";
 import { DEFAULT_LIMITS, type BridgeConfig, type MatrixConfig } from "./config.js";
+import { matrixHtmlContentBytes } from "./matrix-message-content.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
 import type {
@@ -1461,6 +1462,26 @@ void test("sends escaped HTML and edits the returned event with stable transacti
       formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>" },
     "m.relates_to": { rel_type: "m.replace", event_id: eventId },
   });
+});
+
+void test("HTML edit byte accounting matches the wire payload at the message-size limit", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const targetEventId = `$${"x".repeat(254)}`;
+  const formattedBody = matrixHtml`<p>😀 &amp; result</p>`;
+  const limit = DEFAULT_LIMITS.maxMatrixMessageBytes;
+  const overhead = matrixHtmlContentBytes({ body: "", formattedBody }, targetEventId);
+  const body = "x".repeat(Math.floor((limit - overhead) / 2));
+  const message = { roomId: ROOM_ID, transactionId: "limit-edit", body, formattedBody, targetEventId };
+
+  await adapter.sendHtmlMessage(message);
+  const content = fake.sent[0]?.content;
+  const wireBytes = Buffer.byteLength(JSON.stringify(content), "utf8");
+  assert.equal(matrixHtmlContentBytes(message, targetEventId), wireBytes);
+  assert(wireBytes <= limit && wireBytes >= limit - 1);
+  assert.equal(content?.formatted_body, `* ${formattedBody}`);
+  // One extra ASCII character occurs in both the outer and replacement body.
+  assert(matrixHtmlContentBytes({ ...message, body: `${body}x` }, targetEventId) > limit);
 });
 
 void test("Matrix HTML wire content preserves an indented result disclosure on send and edit", async () => {

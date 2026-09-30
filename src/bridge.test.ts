@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { BridgeCoordinator } from "./bridge.js";
+import { matrixHtmlContentBytes } from "./matrix-message-content.js";
 import { openBridgeStateStore } from "./bridge-state.js";
 import type { BridgeConfig } from "./config.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
@@ -1790,8 +1791,7 @@ void test("long live text splits at the Matrix limit without a duplicate final r
   assert.equal(matrix.html.length > 1, true);
   assert.equal(matrix.html.map((message) => message.body).join(""), answer);
   for (const message of matrix.html) {
-    const bytes = Buffer.byteLength(JSON.stringify({ msgtype: "m.text", body: message.body,
-      format: "org.matrix.custom.html", formatted_body: message.formattedBody }), "utf8");
+    const bytes = matrixHtmlContentBytes(message, message.targetEventId);
     assert.equal(bytes <= 800, true);
     assert.equal(message.targetEventId, undefined);
   }
@@ -1813,16 +1813,17 @@ void test("oversized activity truncates detail and rolls over before the encoded
   acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "two", text: "second thought" });
   await waitFor(() => matrix.html.some((message) => message.body.includes("second thought")));
   assert.equal(matrix.html.some((message) => message.body.includes("(truncated)")), true);
-  for (const message of matrix.html) {
-    const bytes = Buffer.byteLength(JSON.stringify({ msgtype: "m.text", body: `* ${message.body}`,
-      formatted_body: message.formattedBody, "m.new_content": { body: message.body, formatted_body: message.formattedBody },
-      "m.relates_to": { event_id: message.targetEventId ?? "$example:example.org" } }), "utf8");
-    assert.equal(bytes <= 800, true);
-  }
   resolvePrompt({ kind: "turn", stopReason: "end_turn", text: "done" });
   await flush();
   clock.advanceBy(300);
   await completion;
+  for (const message of matrix.html) {
+    assert.equal(matrixHtmlContentBytes(message, message.targetEventId) <= 800, true);
+    // Activity also reserves enough space for a later edit with a long event ID.
+    if (message.body !== "done") {
+      assert.equal(matrixHtmlContentBytes(message, `$${"x".repeat(254)}`) <= 800, true);
+    }
+  }
   await bridge.stop();
 });
 

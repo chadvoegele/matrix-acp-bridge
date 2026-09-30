@@ -82,8 +82,8 @@ function thoughtParagraphs(value: string): string[] {
     return heading ? heading[2]!.trim() : trimmed;
   }).filter(Boolean);
 }
-function previewSegments(segments: readonly Segment[], fromEnd: boolean): { segments: Segment[]; cut: boolean } {
-  const bounded = clipSegments(segments, ACTIVITY_RESULT_PREVIEW_BYTES, fromEnd);
+function previewSegments(segments: readonly Segment[], limit: number, fromEnd: boolean): { segments: Segment[]; cut: boolean } {
+  const bounded = clipSegments(segments, limit, fromEnd);
   const text = plain(bounded.segments);
   const trailingNewline = text.endsWith("\n");
   const lines = (trailingNewline ? text.slice(0, -1) : text).split("\n");
@@ -373,9 +373,7 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
       const tail = takeBytes(event.terminalTail, detailBytes - Buffer.byteLength(head.text, "utf8"), true);
       detail = { segments: [{ text: `${head.text}\n\n${tail.text}` }], cut: true };
     }
-    const bytePreview = clipSegments(output.segments, previewBytes, output.terminal);
-    const linePreview = previewSegments(bytePreview.segments, output.terminal);
-    const preview = { segments: linePreview.segments, cut: bytePreview.cut || linePreview.cut };
+    const preview = previewSegments(output.segments, previewBytes, output.terminal);
     const truncated = output.cut || detail.cut;
     const detailDiffers = preview.cut || truncated;
     const body = `[${palette.label}] 🔧 ${titleSummary}${scriptBody}\n${plain(preview.segments)}${truncated ? " (truncated)" : ""}`;

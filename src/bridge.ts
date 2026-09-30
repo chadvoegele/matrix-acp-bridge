@@ -24,6 +24,7 @@ import {
 } from "./authorization.js";
 import { InMemorySessionStore } from "./session-store.js";
 import { markdownToMatrixHtml } from "./matrix-markdown.js";
+import { matrixHtmlContentBytes } from "./matrix-message-content.js";
 import type { SessionStore } from "./session-store.js";
 import type {
   AcpClient,
@@ -347,16 +348,12 @@ function renderLiveText(body: string): RenderedAcpActivity {
 }
 
 function textContentBytes(rendered: RenderedAcpActivity): number {
-  return Buffer.byteLength(JSON.stringify({ msgtype: "m.text", body: rendered.body,
-    format: "org.matrix.custom.html", formatted_body: rendered.formattedBody }), "utf8");
+  return matrixHtmlContentBytes(rendered);
 }
 
 function liveContentBytes(rendered: RenderedAcpActivity): number {
-  return Buffer.byteLength(JSON.stringify({ msgtype: "m.text", body: `* ${rendered.body}`,
-    format: "org.matrix.custom.html", formatted_body: rendered.formattedBody,
-    "m.new_content": { msgtype: "m.text", body: rendered.body,
-      format: "org.matrix.custom.html", formatted_body: rendered.formattedBody },
-    "m.relates_to": { rel_type: "m.replace", event_id: `$${"x".repeat(255)}` } }), "utf8");
+  // Budget before sending with a maximum-length Matrix event ID.
+  return matrixHtmlContentBytes(rendered, `$${"x".repeat(254)}`);
 }
 
 function liveTransactionId(turn: TurnCollector, kind: string, index: number, revision: number): string {
@@ -1786,9 +1783,7 @@ export class BridgeCoordinator {
     }
     if (update.text.trim()) {
       for (const batch of turn.batches) {
-        if (batch.archived) continue;
-        batch.archived = true;
-        this.#scheduleBatch(turn, batch);
+        this.#archiveBatch(turn, batch);
       }
       turn.currentBatch = undefined;
     }
@@ -1860,31 +1855,43 @@ export class BridgeCoordinator {
     }
     let batch = turn.currentBatch;
     if (batch !== undefined && batch.events.length >= this.#config.limits.maxActivityEventsPerMessage) {
-      batch.archived = true;
-      this.#scheduleBatch(turn, batch);
+      this.#archiveBatch(turn, batch);
       batch = undefined;
     }
     if (batch === undefined) {
-      const previous = turn.batches.at(-1);
-      if (previous !== undefined && !previous.archived) {
-        previous.archived = true;
-        this.#scheduleBatch(turn, previous);
-      }
-      batch = { index: turn.batches.length, events: [], archived: false, revision: 0, pending: false, dirty: false };
-      turn.batches.push(batch);
-      turn.currentBatch = batch;
+      batch = this.#startBatch(turn);
     }
     batch.events.push(activity);
     if (batch.events.length > 1 && !batchFits(batch, this.#config.limits.maxMatrixMessageBytes)) {
       batch.events.pop();
-      batch.archived = true;
-      this.#scheduleBatch(turn, batch);
-      batch = { index: turn.batches.length, events: [activity], archived: false, revision: 0, pending: false, dirty: false };
-      turn.batches.push(batch);
-      turn.currentBatch = batch;
+      this.#archiveBatch(turn, batch);
+      batch = this.#startBatch(turn);
+      batch.events.push(activity);
     }
     turn.eventBatches.set(activity, batch);
     this.#scheduleBatch(turn, batch);
+  }
+
+  #archiveBatch(turn: TurnCollector, batch: ActivityBatch): void {
+    if (batch.archived) return;
+    batch.archived = true;
+    this.#scheduleBatch(turn, batch);
+  }
+
+  #startBatch(turn: TurnCollector): ActivityBatch {
+    const previous = turn.batches.at(-1);
+    if (previous !== undefined) this.#archiveBatch(turn, previous);
+    const batch: ActivityBatch = {
+      index: turn.batches.length,
+      events: [],
+      archived: false,
+      revision: 0,
+      pending: false,
+      dirty: false,
+    };
+    turn.batches.push(batch);
+    turn.currentBatch = batch;
+    return batch;
   }
 
   #enqueueLive(turn: TurnCollector, operation: () => Promise<void>): void {
@@ -1931,7 +1938,7 @@ export class BridgeCoordinator {
   async #deliverLive(turn: TurnCollector, kind: string, revision: number, rendered: RenderedAcpActivity,
     targetEventId?: MatrixEventId): Promise<MatrixEventId | undefined> {
     if (this.#matrix.sendHtmlMessage === undefined || this.#stopping || this.#fatal !== undefined) return;
-    if ((targetEventId === undefined ? textContentBytes(rendered) : liveContentBytes(rendered)) > this.#config.limits.maxMatrixMessageBytes) {
+    if (matrixHtmlContentBytes(rendered, targetEventId) > this.#config.limits.maxMatrixMessageBytes) {
       this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
       return;
     }
