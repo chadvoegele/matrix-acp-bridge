@@ -29,3 +29,15 @@
 - Existing full check includes automated Matrix/encryption and E2E-support tests. No live homeserver/manual deployment-client pass claimed: live harness extension/validation is assigned to the later validation ticket, not this coordinator scope.
 - Source diff review: only src/bridge.ts, src/sync-coordinator.ts and their bridge/sync/main tests. No private state, secrets, transcripts, dependency edits or WAAP files in source. git diff --check passed.
 - Integration checkout investigation: only untracked worktrees/ contains this launcher-registered aa-049c1c02 worktree; tracked/staged diffs clean. No unrelated files discarded or changed.
+
+## Final integration and completion
+- Added the last acceptance-focused regression for timeout cancellation scoped to its thread, unchanged other-thread typing, and stable retry transaction/root/fallback; the full check then passed 348 tests (0 failures/skips).
+- Implementation commit: 37061f241a64f8553e54b47271be237ef36433a9. Commit subject contains agent aa-049c1c02 and ticket tt-thread-sessions-coordinator-queues-reset-and-lifecycle.
+- Held fd9 flock /tmp/matrix-acp-bridge-thread-sessions-integration.lock continuously for integration branch/clean tracked-state verification, git rebase feat/thread-scoped-sessions (already current), all final checks, fast-forward merge and ancestry verification.
+- Latest rebased npm run check: passed Prettier, lint, typecheck, build and 348 tests, no failures/skips. Exact log: /tmp/matrix-acp-bridge-aa-049c1c02-final-check.log.
+- Latest rebased node --test dist-test/bridge.test.js dist-test/main.test.js dist-test/sync-coordinator.test.js: passed 84 tests, no failures/skips. Exact log: /tmp/matrix-acp-bridge-aa-049c1c02-final-focused.log.
+- git diff --check and clean isolated worktree verification passed.
+- git -C /home/chad/code/github.com/chadvoegele/matrix-acp-bridge/thread-sessions-implementation merge --ff-only "$(git branch --show-current)": passed, feature a0e63df -> 37061f2.
+- git merge-base --is-ancestor "$(git rev-parse HEAD)" feat/thread-scoped-sessions passed before lock release. Isolated HEAD and feature HEAD both 37061f241a64f8553e54b47271be237ef36433a9. Reverified exact commit ancestry before ticket completion.
+- All coordinator acceptance criteria implemented; storage/output contracts reused without unrelated feature changes. No main integration, push/PR, other agent/worktree/status changes or production operations. Launcher owns terminal status. Live Matrix/manual-client validation remains assigned to its later ticket; no live result fabricated.
+- Work log remains only on waap state branch, serialized under separate fd8 state flock with explicit --only own work_log.md commits.
