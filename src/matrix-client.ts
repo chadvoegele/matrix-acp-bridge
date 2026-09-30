@@ -27,6 +27,7 @@ import type {
 import type { RenderedMatrixPart } from "./response-rendering.js";
 import { MATRIX_HTML_FORMAT, markdownToMatrixHtml } from "./matrix-markdown.js";
 import { matrixHtmlContent } from "./matrix-message-content.js";
+import { escapeHtml } from "./html.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
 export type { BridgeConfig, MatrixConfig } from "./config.js";
@@ -45,8 +46,7 @@ export type MatrixSafeHtml = string & { readonly [safeMatrixHtml]: true };
 export function matrixHtml(strings: TemplateStringsArray, ...values: readonly (string | number)[]): MatrixSafeHtml {
   let result = strings[0] ?? "";
   for (const [index, value] of values.entries()) {
-    result += String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+    result += escapeHtml(String(value));
     result += strings[index + 1] ?? "";
   }
   return result as MatrixSafeHtml;

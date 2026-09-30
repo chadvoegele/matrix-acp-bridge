@@ -1,6 +1,7 @@
 import type { AcpToolCallUpdate, AcpToolContent, AcpUpdate } from "./acp-client.js";
 import { isRecord, stringProperty } from "./object-validation.js";
 import { takeBytes } from "./bounded-text.js";
+import { escapeHtml } from "./html.js";
 
 export const ACTIVITY_RESULT_PREVIEW_BYTES = 256;
 export const ACTIVITY_RESULT_DETAIL_BYTES = 8192;
@@ -48,8 +49,7 @@ function clean(value: string): string {
 }
 
 function html(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;").replaceAll("'", "&#39;").replaceAll("\n", "&#10;");
+  return escapeHtml(value).replaceAll("\n", "&#10;");
 }
 function span(value: string, color: Color): string {
   return `<span data-mx-color="${color}">${html(value)}</span>`;
