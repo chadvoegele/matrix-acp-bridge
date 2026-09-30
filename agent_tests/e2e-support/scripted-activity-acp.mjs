@@ -4,7 +4,8 @@ import { createInterface } from "node:readline";
 
 const sessionId = "scripted-activity-session";
 const send = (frame) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...frame })}\n`);
-const pause = (ms = 250) => new Promise((resolve) => setTimeout(resolve, ms));
+// Allow Matrix delivery to expose intermediate statuses before the next update.
+const pause = (ms = 1000) => new Promise((resolve) => setTimeout(resolve, ms));
 const update = async (value) => {
   send({ method: "session/update", params: { sessionId, update: value } });
   await pause();
