@@ -66,9 +66,12 @@ without removing ordinary quoted text. Edits, malformed relations, unsupported
 relations, redactions, self-authored messages, and unauthorized senders remain
 rejected. Authorization must occur before session creation or loading.
 
-The policy for a thread whose root has no bridge mapping is an open question
-below. Missing mappings alone must not authorize replaying or prompting from
-historical root content.
+An authorized follow-up in an unknown thread must receive the exact error
+`Unknown thread agent session. Please start a new thread.` inside that thread.
+The bridge must not create or load an ACP session, forward the follow-up to ACP,
+or replay historical root content. This also applies to `/reset` in an unknown
+thread. A known thread awaiting session creation after admission or reset is
+not an unknown thread; its routing identity must remain recorded.
 
 ### Outbound messages
 
@@ -95,7 +98,9 @@ load the session lazily when its thread next receives work, and suppress ACP
 history replay during loading as in the persistence milestone.
 
 Without `session/load`, old conversation context cannot survive bridge restarts;
-the first subsequent prompt must create a fresh session. Healthy-transport
+follow-ups in those old threads must receive the unknown-thread error rather
+than silently start a fresh conversation. New top-level messages remain supported.
+Healthy-transport
 stale-session errors must retain the existing fresh-session recovery policy,
 but apply only to the affected thread. Protocol or transport failures must not
 be disguised as successful session recovery.
@@ -132,7 +137,8 @@ remain applicable; they must not cause cross-thread output or state changes.
 In thread mode, an exact normalized body of `/reset` inside a thread must reset
 only that thread's session. It must enter the same ordered queue as prompts,
 without cancelling active work. When it reaches the front, atomically remove
-the existing mapping and discard the current session reference. Send
+the existing session mapping and discard the current session reference, while
+retaining the thread's known routing identity. Send
 `Agent session reset.` inside that thread only after the state change succeeds.
 The next ordinary prompt must lazily create a fresh session; reset must not
 reuse the old session. No agent-owned history is deleted.
@@ -169,7 +175,12 @@ policy before changing the durable state schema.
   a no-op. Failed state writes cannot produce successful reset acknowledgements.
 - Restart loads only requested thread sessions, suppresses history replay, and
   recovers stale mappings without affecting other threads.
-- Missing `session/load` support follows the documented fresh-session behavior.
+- Unknown-thread follow-ups, including `/reset`, return the specified error in
+  that thread without ACP calls or historical replay.
+- Missing `session/load` support causes old threads to return the unknown-thread
+  error after restart; new top-level messages still create sessions.
+- Follow-ups after a known thread's reset create a fresh session rather than
+  incorrectly returning the unknown-thread error.
 - No inactivity or age-based cleanup removes persisted mappings.
 - Existing state migration and mode switching never cross-associate sessions.
 - Concurrent turns preserve room typing state until the last relevant turn ends.
@@ -178,9 +189,6 @@ policy before changing the durable state schema.
 ## Open questions
 
 - Confirm the configuration spelling and aggregate room queue policy above.
-- Should a valid follow-up in an unmapped thread create a fresh session, or only
-  threads rooted at previously admitted top-level messages be supported? The
-  answer also governs existing threads and roots absent from local history.
 - Define durable-state rollback support and retention across mode changes.
 - Decide how future unsolicited MCP messages interact with threaded rooms;
   they remain outside this feature's initial routing scope.
