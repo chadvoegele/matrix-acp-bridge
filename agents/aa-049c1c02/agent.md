@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-30T20:24:35Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer agent: tt-thread-sessions-coordinator-queues-reset-and-lifecycle
