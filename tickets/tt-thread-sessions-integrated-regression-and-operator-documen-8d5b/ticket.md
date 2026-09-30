@@ -1,7 +1,7 @@
 +++
 name = "Thread sessions integrated regression and operator documentation"
 creation_date = 2026-09-30T19:04:33Z
-status = "in-progress"
+status = "completed"
 depends_on = ["tt-thread-sessions-coordinator-queues-reset-and-lifecycle"]
 +++
 
