@@ -1,7 +1,7 @@
 +++
 name = "Thread sessions coordinator queues reset and lifecycle"
 creation_date = 2026-09-30T19:04:32Z
-status = "in-progress"
+status = "completed"
 depends_on = ["tt-thread-sessions-durable-identities-and-migration", "tt-thread-sessions-matrix-output-and-edit-routing"]
 +++
 
