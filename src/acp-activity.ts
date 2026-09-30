@@ -3,9 +3,8 @@ import { isRecord, stringProperty } from "./object-validation.js";
 import { takeBytes } from "./bounded-text.js";
 
 export const ACTIVITY_RESULT_PREVIEW_BYTES = 256;
-export const ACTIVITY_RESULT_PREVIEW_LINES = 3;
 export const ACTIVITY_RESULT_DETAIL_BYTES = 8192;
-export const ACTIVITY_TITLE_PREVIEW_CHARACTERS = 160;
+export const ACTIVITY_TITLE_PREVIEW_BYTES = 160;
 export const ACTIVITY_TITLE_DETAIL_BYTES = 2048;
 
 // eslint-disable-next-line no-control-regex
@@ -81,17 +80,6 @@ function thoughtParagraphs(value: string): string[] {
     const heading = /^(\*\*|__)([\s\S]+)\1$/u.exec(trimmed);
     return heading ? heading[2]!.trim() : trimmed;
   }).filter(Boolean);
-}
-function previewSegments(segments: readonly Segment[], limit: number, fromEnd: boolean): { segments: Segment[]; cut: boolean } {
-  const bounded = clipSegments(segments, limit, fromEnd);
-  const text = plain(bounded.segments);
-  const trailingNewline = text.endsWith("\n");
-  const lines = (trailingNewline ? text.slice(0, -1) : text).split("\n");
-  if (lines.length <= ACTIVITY_RESULT_PREVIEW_LINES) return bounded;
-  const selected = fromEnd ? lines.slice(-ACTIVITY_RESULT_PREVIEW_LINES) : lines.slice(0, ACTIVITY_RESULT_PREVIEW_LINES);
-  const excerpt = `${selected.join("\n")}${fromEnd && trailingNewline ? "\n" : ""}`;
-  const clipped = clipSegments(bounded.segments, Buffer.byteLength(excerpt, "utf8"), fromEnd);
-  return { segments: clipped.segments, cut: true };
 }
 function mcpOperation(value: AcpToolCallUpdate["rawInput"]): string | undefined {
   if (!isRecord(value)) return undefined;
@@ -346,9 +334,10 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
   const isScript = event.title === "mcpScript" && event.script !== undefined;
   const command = isScript ? event.script!.text : (toolName(event) === "Execute" ? clean(event.title ?? "") : fullTitle);
   const previewSource = isScript ? command.replaceAll(/\s+/gu, " ").trim() : command;
-  const commandCharacters = [...previewSource];
-  const previewCommand = commandCharacters.length > ACTIVITY_TITLE_PREVIEW_CHARACTERS
-    ? `${commandCharacters.slice(0, ACTIVITY_TITLE_PREVIEW_CHARACTERS - 1).join("")}…` : previewSource;
+  const boundedPreview = takeBytes(previewSource, ACTIVITY_TITLE_PREVIEW_BYTES);
+  const previewCommand = boundedPreview.cut
+    ? `${takeBytes(previewSource, ACTIVITY_TITLE_PREVIEW_BYTES - Buffer.byteLength("…", "utf8")).text}…`
+    : boundedPreview.text;
   const title = isScript ? `MCP Script(${previewCommand})`
     : (toolName(event) === "Execute" ? `Execute(${previewCommand})` : previewCommand);
   const titleDetail = takeBytes(command, Math.min(ACTIVITY_TITLE_DETAIL_BYTES, Math.max(128, Math.floor(maxHtmlBytes / 3))));
@@ -373,7 +362,7 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
       const tail = takeBytes(event.terminalTail, detailBytes - Buffer.byteLength(head.text, "utf8"), true);
       detail = { segments: [{ text: `${head.text}\n\n${tail.text}` }], cut: true };
     }
-    const preview = previewSegments(output.segments, previewBytes, output.terminal);
+    const preview = clipSegments(output.segments, previewBytes, output.terminal);
     const truncated = output.cut || detail.cut;
     const detailDiffers = preview.cut || truncated;
     const body = `[${palette.label}] 🔧 ${titleSummary}${scriptBody}\n${plain(preview.segments)}${truncated ? " (truncated)" : ""}`;

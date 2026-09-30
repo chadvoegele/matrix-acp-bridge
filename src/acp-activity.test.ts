@@ -74,7 +74,7 @@ void test("mcpScript shows bounded source like an Execute command alongside its 
   assert.ok(Buffer.byteLength(bounded.formattedBody, "utf8") <= 4096);
 });
 
-void test("short and long tool results indent the entire result outside escaped code", () => {
+void test("multiline tool results indent the entire result outside escaped code", () => {
   const model = new AcpActivityModel();
   model.accept(tool({ rawInput: { path: "/tmp/example" } }));
   model.accept(update({ status: "completed", content: [{ type: "content", text: "<&\nsecond" }] }));
@@ -85,21 +85,21 @@ void test("short and long tool results indent the entire result outside escaped 
 
   model.accept(update({ content: [{ type: "content", text: "<&\nsecond\nthird\nfourth" }] }));
   const long = renderAcpActivity(firstTool(model));
-  assert.match(long.formattedBody, /<\/p>\n<blockquote><details><summary><code>&lt;&amp;&#10;second&#10;third<\/code><\/summary><pre><code>&lt;&amp;&#10;second&#10;third&#10;fourth<\/code><\/pre><\/details><\/blockquote>$/);
-  assert.equal(long.body, "[completed] 🔧 Read(/tmp/example)\n<&\nsecond\nthird");
+  assert.match(long.formattedBody, /<\/p>\n<blockquote><pre><code>&lt;&amp;&#10;second&#10;third&#10;fourth<\/code><\/pre><\/blockquote>$/);
+  assert.equal(long.body, "[completed] 🔧 Read(/tmp/example)\n<&\nsecond\nthird\nfourth");
   assert.doesNotMatch(long.formattedBody, /Result · completed|→/);
 });
 
-void test("mcpScript keeps source disclosure separate from an indented long result", () => {
+void test("mcpScript keeps source disclosure separate from an indented result", () => {
   const model = new AcpActivityModel();
   model.accept(tool({ title: "mcpScript", toolKind: "other", rawInput: { code: "return '<source>';" } }));
   model.accept(update({ status: "completed", content: [{ type: "content", text: "<result>\n2\n3\n4" }] }));
   const rendered = renderAcpActivity(firstTool(model));
-  assert.match(rendered.formattedBody, /<details><summary>.*MCP Script\(return &#39;&lt;source&gt;&#39;;\).*<\/summary><pre><code>return &#39;&lt;source&gt;&#39;;<\/code><\/pre><\/details>\n<blockquote><details><summary><code>&lt;result&gt;&#10;2&#10;3<\/code><\/summary><pre><code>&lt;result&gt;&#10;2&#10;3&#10;4<\/code><\/pre><\/details><\/blockquote>$/s);
-  assert.equal(rendered.body, "[completed] 🔧 MCP Script(return '<source>';)\nScript:\nreturn '<source>';\n<result>\n2\n3");
+  assert.match(rendered.formattedBody, /<details><summary>.*MCP Script\(return &#39;&lt;source&gt;&#39;;\).*<\/summary><pre><code>return &#39;&lt;source&gt;&#39;;<\/code><\/pre><\/details>\n<blockquote><pre><code>&lt;result&gt;&#10;2&#10;3&#10;4<\/code><\/pre><\/blockquote>$/s);
+  assert.equal(rendered.body, "[completed] 🔧 MCP Script(return '<source>';)\nScript:\nreturn '<source>';\n<result>\n2\n3\n4");
   const budgeted = renderAcpActivity(firstTool(model), 512);
   assert.ok(Buffer.byteLength(budgeted.formattedBody, "utf8") <= 512);
-  assert.match(budgeted.formattedBody, /<blockquote><details>/);
+  assert.match(budgeted.formattedBody, /<blockquote><pre><code>/);
   assert.match(budgeted.body, /Script:\nreturn '<source>';\n<result>/);
 });
 
@@ -135,8 +135,8 @@ void test("write and edit show returned full-file text with colored absolute lin
   edit.accept(update({ status: "in_progress", locations: [{ path: "/tmp/a", line: 99 }] }));
   edit.accept(update({ status: "completed", content: [{ type: "diff", path: "/tmp/a", oldText: "2\n3\n5\n7\n", newText: "2\n3\n5\n11\n" }] }));
   const renderedEdit = renderAcpActivity(firstTool(edit));
-  assert.match(renderedEdit.body, /-1 2\n-2 3\n-3 5$/);
-  assert.match(renderedEdit.formattedBody, /<details><summary>/);
+  assert.match(renderedEdit.body, /-1 2\n-2 3\n-3 5\n-4 7\n\n\+1 2\n\+2 3\n\+3 5\n\+4 11\n$/);
+  assert.doesNotMatch(renderedEdit.formattedBody, /<details>/);
   assert.match(renderedEdit.formattedBody, /#C00000">7<\/span>/);
   assert.match(renderedEdit.formattedBody, /#008000">11<\/span>/);
   assert.doesNotMatch(renderedEdit.body, /99|@@/);
@@ -213,22 +213,40 @@ void test("long command and output have separate clickable summaries, exact caps
   assert.match(renderAcpActivity(firstTool(exact)).body, /\(truncated\)$/);
 });
 
-void test("previews use at most three lines, retaining the newest terminal lines", () => {
+void test("short multiline results need no disclosure", () => {
   const read = new AcpActivityModel();
   read.accept(tool());
   read.accept(update({ content: [{ type: "content", text: "one\ntwo\nthree\nfour" }] }));
   const renderedRead = renderAcpActivity(firstTool(read));
-  assert.match(renderedRead.body, /one\ntwo\nthree$/);
-  assert.doesNotMatch(renderedRead.body, /four/);
-  assert.match(renderedRead.formattedBody, /four<\/code><\/pre>/);
+  assert.match(renderedRead.body, /one\ntwo\nthree\nfour$/);
+  assert.doesNotMatch(renderedRead.formattedBody, /<details>/);
 
   const terminal = new AcpActivityModel();
   terminal.accept(tool({ title: "run", toolKind: "execute" }));
   terminal.accept(update({ terminalOutput: { data: "one\ntwo\nthree\nfour\nfive\n" } }));
   const renderedTerminal = renderAcpActivity(firstTool(terminal));
-  assert.match(renderedTerminal.body, /three\nfour\nfive\n$/);
-  assert.doesNotMatch(renderedTerminal.body, /one/);
-  assert.match(renderedTerminal.formattedBody, /one&#10;two&#10;three/);
+  assert.match(renderedTerminal.body, /one\ntwo\nthree\nfour\nfive\n$/);
+  assert.doesNotMatch(renderedTerminal.formattedBody, /<details>/);
+});
+
+void test("result previews use a byte cap and retain the newest terminal bytes", () => {
+  const text = `${"😀\n".repeat(60)}LATEST\n`;
+  const read = new AcpActivityModel();
+  read.accept(tool());
+  read.accept(update({ content: [{ type: "content", text }] }));
+  const readPreview = renderAcpActivity(firstTool(read)).body.split("\n").slice(1).join("\n");
+  assert.equal(readPreview, "😀\n".repeat(51));
+  assert.equal(Buffer.byteLength(readPreview, "utf8"), 255);
+
+  const terminal = new AcpActivityModel();
+  terminal.accept(tool({ title: "run", toolKind: "execute" }));
+  terminal.accept(update({ terminalOutput: { data: text } }));
+  const rendered = renderAcpActivity(firstTool(terminal));
+  const terminalPreview = rendered.body.split("\n").slice(1).join("\n");
+  assert.ok(Buffer.byteLength(terminalPreview, "utf8") <= 256);
+  assert.match(terminalPreview, /LATEST\n$/);
+  assert.doesNotMatch(terminalPreview, /�/);
+  assert.match(rendered.formattedBody, /<details><summary><code>/);
 });
 
 void test("unknown shapes and malformed updates keep a safe readable fallback", () => {
@@ -245,12 +263,16 @@ void test("unknown shapes and malformed updates keep a safe readable fallback", 
 
 void test("Unicode command cutoffs and UTF-8 output boundaries are exact", () => {
   const model = new AcpActivityModel();
-  model.accept(tool({ title: "😀".repeat(160), toolKind: "execute" }));
+  model.accept(tool({ title: "😀".repeat(40), toolKind: "execute" }));
   const event = firstTool(model);
   assert.doesNotMatch(renderAcpActivity(event).formattedBody, /<details>/);
-  model.accept(update({ title: "😀".repeat(161) }));
-  assert.match(renderAcpActivity(event).formattedBody, /<details><summary>/);
-  assert.doesNotMatch(renderAcpActivity(event).body, /truncated/);
+  model.accept(update({ title: "😀".repeat(41) }));
+  const titlePreview = renderAcpActivity(event);
+  assert.match(titlePreview.formattedBody, /<details><summary>/);
+  assert.doesNotMatch(titlePreview.body, /truncated|�/);
+  assert.match(titlePreview.body, /Execute\(😀+…\)/u);
+  const commandPreview = /Execute\((.*?)\)/u.exec(titlePreview.body)![1]!;
+  assert.ok(Buffer.byteLength(commandPreview, "utf8") <= 160);
   model.accept(update({ title: "😀".repeat(512) }));
   assert.doesNotMatch(renderAcpActivity(event).body, /truncated/);
   model.accept(update({ title: "😀".repeat(513) }));

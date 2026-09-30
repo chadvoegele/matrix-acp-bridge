@@ -1616,8 +1616,8 @@ void test("live mcpScript activity includes its ACP code input on send and resul
     content: [{ type: "content", text: "<result>\nline 2\nline 3\nline 4" }] });
   await waitFor(() => matrix.html.some((message) => message.body.includes("line 3")));
   const longResult = matrix.html.at(-1);
-  assert.match(longResult?.formattedBody ?? "", /<\/details>\n<blockquote><details><summary><code>&lt;result&gt;&#10;line 2&#10;line 3<\/code><\/summary><pre><code>&lt;result&gt;&#10;line 2&#10;line 3&#10;line 4<\/code><\/pre><\/details><\/blockquote>$/);
-  assert.match(longResult?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};\n<result>\nline 2\nline 3$/);
+  assert.match(longResult?.formattedBody ?? "", /<\/details>\n<blockquote><pre><code>&lt;result&gt;&#10;line 2&#10;line 3&#10;line 4<\/code><\/pre><\/blockquote>$/);
+  assert.match(longResult?.body ?? "", /Script:\nreturn \{ probe: '<sample>', sum: 2 \+ 3 \};\n<result>\nline 2\nline 3\nline 4$/);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
   clock.advanceBy(30_000); // Tool-only turns drain at the cap, not the text quiet period.
