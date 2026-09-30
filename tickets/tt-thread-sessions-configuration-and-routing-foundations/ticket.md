@@ -1,7 +1,7 @@
 +++
 name = "Thread sessions configuration and routing foundations"
 creation_date = 2026-09-30T19:04:32Z
-status = "pending"
+status = "in-progress"
 +++
 
 # Thread-scoped agent sessions implementation
