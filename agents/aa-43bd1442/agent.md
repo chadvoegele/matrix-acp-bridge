@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-30T20:41:24Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer agent: tt-thread-sessions-integrated-regression-and-operator-documen-8d5b
