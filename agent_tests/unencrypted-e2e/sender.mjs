@@ -20,6 +20,8 @@ const mode = optionalArgument("--mode") ?? "exchange";
 if (!["exchange", "send-only", "watch"].includes(mode)) throw new Error(`unsupported sender mode: ${mode}`);
 const expected = mode === "send-only" ? undefined : argument("--expect");
 const expectedFormattedBody = optionalArgument("--expect-formatted-body");
+const threadRootEventId = optionalArgument("--thread-root");
+const expectThread = process.argv.includes("--expect-thread");
 const token = await readToken(environment.sender.tokenFile);
 const roomPath = encodeURIComponent(environment.roomId);
 
@@ -68,7 +70,20 @@ if (mode === "watch") {
   process.stderr.write("Sender is ready; sending plaintext prompt.\n");
   const sent = await matrixRequest(`/rooms/${roomPath}/send/m.room.message/${transactionId}`, {
     method: "PUT",
-    body: JSON.stringify({ msgtype: "m.text", body: prompt }),
+    body: JSON.stringify({
+      msgtype: "m.text",
+      body: prompt,
+      ...(threadRootEventId === undefined
+        ? {}
+        : {
+            "m.relates_to": {
+              rel_type: "m.thread",
+              event_id: threadRootEventId,
+              "m.in_reply_to": { event_id: threadRootEventId },
+              is_falling_back: true,
+            },
+          }),
+    }),
   });
   if (typeof sent.event_id !== "string") throw new Error("Matrix send did not return an event ID");
   promptEventId = sent.event_id;
@@ -131,6 +146,27 @@ for (const [label, event, body] of [
 ]) {
   if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text" || event.content.body !== body) {
     throw new Error(`${label} was not a plaintext m.room.message event`);
+  }
+}
+if (threadRootEventId !== undefined) {
+  const relation = promptEvent.content?.["m.relates_to"];
+  if (
+    relation?.rel_type !== "m.thread" ||
+    relation.event_id !== threadRootEventId ||
+    relation["m.in_reply_to"]?.event_id !== threadRootEventId
+  ) {
+    throw new Error("prompt did not retain its Matrix thread relation");
+  }
+}
+if (expectThread) {
+  const expectedRoot = threadRootEventId ?? promptEventId;
+  const relation = responseEvent.content?.["m.relates_to"];
+  if (
+    relation?.rel_type !== "m.thread" ||
+    relation.event_id !== expectedRoot ||
+    relation["m.in_reply_to"]?.event_id !== expectedRoot
+  ) {
+    throw new Error("response was not placed in the expected Matrix thread");
   }
 }
 if (

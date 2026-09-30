@@ -28,6 +28,7 @@ access_token_file = ${string(environment.bridge.tokenFile)}
 allowed_rooms = [${string(environment.roomId)}]
 allowed_senders = [${string(environment.sender.userId)}]
 encryption = "disabled"
+response_mode = ${string(process.env.E2E_RESPONSE_MODE ?? "room")}
 
 [acp]
 cwd = ${string(environment.acpCwd)}

@@ -10,7 +10,14 @@ export async function savedAcpSessionIds(environment, additionalFiles = []) {
   for (const path of stateFiles) {
     try {
       const value = JSON.parse(await readFile(path, "utf8"));
-      const ids = Array.isArray(value) ? value : Object.values(value.sessions ?? {});
+      const ids = Array.isArray(value)
+        ? value
+        : [
+            ...Object.values(value.sessions ?? {}),
+            ...(Array.isArray(value.threads)
+              ? value.threads.flatMap((record) => (typeof record?.sessionId === "string" ? [record.sessionId] : []))
+              : []),
+          ];
       if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string" && id.length > 0)) {
         throw new Error("retained session-ID list is invalid");
       }

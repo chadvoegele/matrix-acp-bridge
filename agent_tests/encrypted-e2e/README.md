@@ -104,3 +104,17 @@ the normal SAS-verified test devices, checks decrypted Matrix edits and raw
 plaintext activity test has the detailed HTML, fallback and event-count
 assertions. The existing `test.sh` entry point still uses the configured ACP
 command.
+
+## Thread-scoped sessions
+
+Run the thread-mode live scenario with the existing encrypted test room:
+
+```sh
+agent_tests/encrypted-e2e/thread-sessions-test.sh
+```
+
+It sends an encrypted top-level root and an encrypted follow-up. The sender
+authenticates and decrypts both prompts and replies, checks each raw wire event
+is `m.room.encrypted`, and verifies that prompt and response relations point to
+the expected Matrix thread root. The shared cleanup removes persisted thread
+session mappings through ACP as well as revoking test devices.

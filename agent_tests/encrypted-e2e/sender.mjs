@@ -13,6 +13,10 @@ function argument(name) {
 const environment = await readEnvironment(argument("--environment"));
 const prompt = argument("--prompt");
 const expected = argument("--expect");
+const threadRootEventId = process.argv.includes("--thread-root")
+  ? process.argv[process.argv.indexOf("--thread-root") + 1]
+  : undefined;
+const expectThread = process.argv.includes("--expect-thread");
 const adapter = await createAdapter(environment, "sender");
 const token = await readToken(environment.sender.tokenFile);
 const timeoutMs = 180_000;
@@ -81,6 +85,7 @@ try {
     partCount: 1,
     transactionId: `mabe2e_${randomBytes(16).toString("hex")}`,
     content: { msgtype: "m.text", body: prompt },
+    ...(threadRootEventId === undefined ? {} : { threadRootEventId, threadFallbackEventId: threadRootEventId }),
   });
   process.stderr.write("Encrypted prompt sent; waiting for response.\n");
   await exchange;
@@ -91,6 +96,27 @@ try {
   const responseEvent = responseEvents[0];
   assertEncrypted(promptEvent, "prompt");
   assertEncrypted(responseEvent, "response");
+  if (threadRootEventId !== undefined) {
+    const relation = promptEvent.content?.["m.relates_to"];
+    if (
+      relation?.rel_type !== "m.thread" ||
+      relation.event_id !== threadRootEventId ||
+      relation["m.in_reply_to"]?.event_id !== threadRootEventId
+    ) {
+      throw new Error("encrypted prompt did not retain its Matrix thread relation");
+    }
+  }
+  if (expectThread) {
+    const expectedRoot = threadRootEventId ?? promptEvent.eventId;
+    const relation = responseEvent.content?.["m.relates_to"];
+    if (
+      relation?.rel_type !== "m.thread" ||
+      relation.event_id !== expectedRoot ||
+      relation["m.in_reply_to"]?.event_id !== expectedRoot
+    ) {
+      throw new Error("decrypted encrypted response was not placed in the expected Matrix thread");
+    }
+  }
   const [promptWireType, responseWireType] = await Promise.all([
     rawEventType(promptEvent.eventId),
     rawEventType(responseEvent.eventId),

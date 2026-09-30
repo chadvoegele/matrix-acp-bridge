@@ -148,3 +148,21 @@ and bash activity, checks exact ACP fields and Matrix activity/edit events,
 then runs the cleanup command even on failure. Agent tool choices vary, so it
 prints `INCOMPLETE` with missing field names when a turn did not provide full
 coverage. Device and session cleanup still run through the usual harness.
+
+## Thread-scoped sessions
+
+Run the thread-mode live scenario with the same two test accounts and an
+unencrypted room:
+
+```sh
+agent_tests/unencrypted-e2e/thread-sessions-test.sh
+```
+
+It sends two roots concurrently, verifies independent ACP sessions and actual
+Matrix thread relations on plaintext prompts and responses, then restarts the
+bridge and checks lazy thread resume when ACP advertises `loadSession`. Without
+that capability it checks that old thread follow-ups receive the unknown
+session response. When loading is supported, it also verifies thread-local
+reset and fresh-session creation. An unknown-root follow-up must not reach ACP.
+Every observed ACP session ID, including sessions detached by reset, is saved
+under the ignored private state so normal cleanup can delete them.
