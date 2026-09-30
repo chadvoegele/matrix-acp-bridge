@@ -1,7 +1,7 @@
 +++
 name = "Thread sessions Matrix output and edit routing"
 creation_date = 2026-09-30T19:04:32Z
-status = "pending"
+status = "in-progress"
 depends_on = ["tt-thread-sessions-configuration-and-routing-foundations"]
 +++
 
