@@ -41,3 +41,5 @@
 - git merge-base --is-ancestor "$(git rev-parse HEAD)" feat/thread-scoped-sessions passed before lock release. Isolated HEAD and feature HEAD both 37061f241a64f8553e54b47271be237ef36433a9. Reverified exact commit ancestry before ticket completion.
 - All coordinator acceptance criteria implemented; storage/output contracts reused without unrelated feature changes. No main integration, push/PR, other agent/worktree/status changes or production operations. Launcher owns terminal status. Live Matrix/manual-client validation remains assigned to its later ticket; no live result fabricated.
 - Work log remains only on waap state branch, serialized under separate fd8 state flock with explicit --only own work_log.md commits.
+
+- After verified integration, waap ticket update --ticket-id tt-thread-sessions-coordinator-queues-reset-and-lifecycle --set-status completed succeeded; waap check passed. Agent lifecycle status was not manually changed.
