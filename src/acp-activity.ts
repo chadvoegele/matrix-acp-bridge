@@ -7,11 +7,6 @@ export const ACTIVITY_RESULT_DETAIL_BYTES = 8192;
 export const ACTIVITY_TITLE_PREVIEW_BYTES = 160;
 export const ACTIVITY_TITLE_DETAIL_BYTES = 2048;
 
-// eslint-disable-next-line no-control-regex
-const ANSI_SEQUENCE = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001B]*(?:\u0007|\u001B\\))/g;
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARACTER = /[\u0000-\u0008\u000B-\u001F\u007F]/g;
-
 type Color = "#000000" | "#008000" | "#C00000";
 interface Segment { readonly text: string; readonly color?: Color }
 interface BoundedText { readonly text: string; readonly cut: boolean }
@@ -45,7 +40,11 @@ export type AcpActivity = AcpThoughtActivity | AcpToolActivity;
 export interface RenderedAcpActivity { readonly body: string; readonly formattedBody: string }
 
 function clean(value: string): string {
-  return value.replaceAll(ANSI_SEQUENCE, "").replaceAll(CONTROL_CHARACTER, "");
+  // eslint-disable-next-line no-control-regex
+  const ansiSequence = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001B]*(?:\u0007|\u001B\\))/g;
+  // eslint-disable-next-line no-control-regex
+  const controlCharacter = /[\u0000-\u0008\u000B-\u001F\u007F]/g;
+  return value.replaceAll(ansiSequence, "").replaceAll(controlCharacter, "");
 }
 
 function html(value: string): string {
