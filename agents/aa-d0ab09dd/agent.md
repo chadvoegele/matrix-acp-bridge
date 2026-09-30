@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-30T19:19:42Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer agent: tt-thread-sessions-configuration-and-routing-foundations
