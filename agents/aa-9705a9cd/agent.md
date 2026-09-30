@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-30T19:38:12Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer agent: tt-thread-sessions-durable-identities-and-migration
