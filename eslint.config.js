@@ -16,7 +16,6 @@ export default defineConfig([
       "**/dist/**",
       "**/dist-test/**",
       "**/node_modules/**",
-      "**/worktrees/**",
     ],
   },
   js.configs.recommended,
