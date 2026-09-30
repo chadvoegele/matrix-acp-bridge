@@ -107,7 +107,10 @@ be disguised as successful session recovery.
 
 There must be no automatic expiry or eviction of valid persisted thread/session
 mappings based on age, inactivity, or count. Existing removal of mappings for
-rooms no longer allowed remains applicable. Reset replaces a mapping but does
+rooms removed from `allowed_rooms` remains applicable, including all thread
+mappings for those rooms. Removing a sender from `allowed_senders` must not
+remove mappings; authorization still gates every inbound message.
+Reset replaces a mapping but does
 not request deletion of agent-owned history. Sessions and histories can therefore
 accumulate; retention controls are deferred until needed.
 
@@ -122,10 +125,15 @@ threads, including threads in the same room, must be eligible to run concurrentl
 bounded by `max_concurrent_prompts`. Starting or resetting one thread must not
 cancel another thread's active work.
 
-The proposed queue policy applies `max_queued_turns_per_room` as an aggregate
-waiting-work limit across a room's threads, preserving its current room-wide
-resource bound rather than multiplying it by the number of threads. This policy
-needs confirmation before implementation.
+In thread mode, `max_queued_turns_per_thread` must limit waiting work separately
+for each thread. A full thread queue must reject additional work with the existing
+busy response inside that thread without affecting admission to other threads.
+Room mode must continue using `max_queued_turns_per_room`. The new setting must
+use the same default and validation rules as the existing room queue setting.
+
+Thread mode has no aggregate room-wide waiting-work limit; total queued work can
+grow with the number of threads. The global active-prompt limit remains unchanged.
+An aggregate backlog cap is deferred until needed.
 
 Typing state is room-scoped in Matrix. The bridge must not clear room typing
 while another thread still has active work requiring the indicator. Existing
@@ -167,7 +175,10 @@ policy before changing the durable state schema.
 - Thread follow-ups reuse the correct session, including fallback replies that
   reference another event within the same thread.
 - Same-thread prompts serialize; different threads run concurrently within the
-  global limit and enforce the selected queue bound.
+  global limit. Each thread independently enforces `max_queued_turns_per_thread`;
+  filling one thread's queue does not block admission to another thread.
+- Room mode retains `max_queued_turns_per_room`; the thread queue setting uses
+  the same default and validation rules.
 - Unauthorized, malformed, edited, and duplicate events create no extra sessions.
 - Agent text, activity, edits, split output, errors, and retries retain correct
   thread placement in plaintext and encrypted end-to-end tests.
@@ -181,14 +192,16 @@ policy before changing the durable state schema.
   error after restart; new top-level messages still create sessions.
 - Follow-ups after a known thread's reset create a fresh session rather than
   incorrectly returning the unknown-thread error.
-- No inactivity or age-based cleanup removes persisted mappings.
+- No inactivity or age-based cleanup removes persisted mappings. Removing a
+  room from `allowed_rooms` prunes its mappings; removing a sender rejects their
+  messages without removing mappings.
 - Existing state migration and mode switching never cross-associate sessions.
 - Concurrent turns preserve room typing state until the last relevant turn ends.
 - Verify thread display and follow-ups in the Matrix client used for deployment.
 
 ## Open questions
 
-- Confirm the configuration spelling and aggregate room queue policy above.
+- Confirm the `response_mode` configuration spelling.
 - Define durable-state rollback support and retention across mode changes.
 - Decide how future unsolicited MCP messages interact with threaded rooms;
   they remain outside this feature's initial routing scope.
