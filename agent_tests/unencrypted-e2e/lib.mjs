@@ -38,8 +38,4 @@ shutdown_grace_seconds = 30
 `;
 }
 
-export {
-  readToken,
-  repoRoot,
-  writePrivateFile,
-} from "../e2e-support/common.mjs";
+export { readToken, repoRoot, writePrivateFile } from "../e2e-support/common.mjs";

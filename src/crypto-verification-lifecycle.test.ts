@@ -4,17 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  ensureCryptoDatabaseDirectory,
-  openCryptoStateStore,
-} from "./crypto-state.js";
+import { ensureCryptoDatabaseDirectory, openCryptoStateStore } from "./crypto-state.js";
 import { CryptoVerificationLifecycle } from "./main.js";
 import type { DaemonProcessLike } from "./main.js";
-import type {
-  BridgeConfig,
-  LoadedConfiguration,
-  StateLockLike,
-} from "./config.js";
+import type { BridgeConfig, LoadedConfiguration, StateLockLike } from "./config.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 import type { Unsubscribe } from "./cancellation.js";
 import type {
@@ -219,10 +212,7 @@ class Crypto implements MatrixCryptoVerificationAdapter {
 
   readonly refreshAction: () => Promise<boolean>;
 
-  constructor(
-    request: Request,
-    refreshAction: () => Promise<boolean> = async () => true,
-  ) {
+  constructor(request: Request, refreshAction: () => Promise<boolean> = async () => true) {
     this.request = request;
     this.refreshAction = refreshAction;
   }
@@ -243,9 +233,7 @@ class Crypto implements MatrixCryptoVerificationAdapter {
     return this.refreshAction();
   }
 
-  onVerificationRequest(
-    _listener: (request: CryptoVerificationRequestHandle) => void,
-  ): Unsubscribe {
+  onVerificationRequest(_listener: (request: CryptoVerificationRequestHandle) => void): Unsubscribe {
     return () => {};
   }
 
@@ -296,9 +284,7 @@ class Matrix implements MatrixClientAdapter {
     return () => {};
   }
 
-  onSyncBatch(
-    _listener: (batch: MatrixSyncBatch) => void | Promise<void>,
-  ): Unsubscribe {
+  onSyncBatch(_listener: (batch: MatrixSyncBatch) => void | Promise<void>): Unsubscribe {
     return () => {};
   }
 
@@ -346,9 +332,7 @@ async function state(): Promise<{
   readonly lock: Lock;
   readonly cleanup: () => Promise<void>;
 }> {
-  const stateDir = await mkdtemp(
-    join(tmpdir(), "matrix-acp-verification-lifecycle-"),
-  );
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-verification-lifecycle-"));
   await ensureCryptoDatabaseDirectory(stateDir);
   const store = await openCryptoStateStore({ stateDir, identity: IDENTITY });
   await store.recordBootstrap(KEYS);
@@ -402,9 +386,7 @@ void test("verification lifecycle starts Matrix intake closed, never constructs 
     assert.equal(matrix.stopped, true);
     assert.equal(fixture.lock.released, true);
     assert.deepEqual(tty.paths, ["/dev/tty"]);
-    const manifest = JSON.parse(
-      await readFile(join(fixture.stateDir, "crypto-state.json"), "utf8"),
-    ) as {
+    const manifest = JSON.parse(await readFile(join(fixture.stateDir, "crypto-state.json"), "utf8")) as {
       readonly sasVerified: boolean;
     };
     assert.equal(manifest.sasVerified, true);
@@ -414,9 +396,7 @@ void test("verification lifecycle starts Matrix intake closed, never constructs 
 });
 
 void test("verification rejects missing established crypto state before Rust initialization", async () => {
-  const stateDir = await mkdtemp(
-    join(tmpdir(), "matrix-acp-verification-missing-crypto-"),
-  );
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-verification-missing-crypto-"));
   try {
     const lock = new Lock(stateDir);
     let matrixCreated = false;
@@ -428,9 +408,7 @@ void test("verification rejects missing established crypto state before Rust ini
         diagnostics: SILENT_DIAGNOSTICS,
         createMatrixClient: () => {
           matrixCreated = true;
-          throw new Error(
-            "Matrix must not be created for missing crypto state",
-          );
+          throw new Error("Matrix must not be created for missing crypto state");
         },
       },
     }).run();
@@ -476,9 +454,7 @@ void test("verification failure diagnostics emit only the safe reason enum", asy
     }).run();
 
     assert.equal(result, 1);
-    const failure = records.find(
-      (record) => record.event === "crypto-verification-failed",
-    );
+    const failure = records.find((record) => record.event === "crypto-verification-failed");
     assert.deepEqual(failure?.fields, { reason: "protocol" });
     assert.equal(JSON.stringify(records).includes("raw SDK failure"), false);
   } finally {
@@ -503,11 +479,7 @@ void test("first signal cancels verification and second signal uses the conventi
       },
     });
     const pending = lifecycle.run();
-    for (
-      let attempt = 0;
-      attempt < 20 && verifier.show.size === 0;
-      attempt += 1
-    ) {
+    for (let attempt = 0; attempt < 20 && verifier.show.size === 0; attempt += 1) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     lifecycle.receiveSignal("SIGTERM");

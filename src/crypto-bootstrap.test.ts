@@ -5,11 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { CryptoBootstrapLifecycle } from "./main.js";
-import type {
-  BridgeConfig,
-  LoadedConfiguration,
-  StateLockLike,
-} from "./config.js";
+import type { BridgeConfig, LoadedConfiguration, StateLockLike } from "./config.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 import type { Unsubscribe } from "./cancellation.js";
 import type { CryptoDeviceKeyFingerprints } from "./crypto-contracts.js";
@@ -162,9 +158,7 @@ class TestMatrix implements MatrixClientAdapter {
     return () => {};
   }
 
-  onSyncBatch(
-    _listener: (batch: MatrixSyncBatch) => void | Promise<void>,
-  ): Unsubscribe {
+  onSyncBatch(_listener: (batch: MatrixSyncBatch) => void | Promise<void>): Unsubscribe {
     return () => {};
   }
 
@@ -201,9 +195,7 @@ function loaded(stateDir: string, lock: TestLock): LoadedConfiguration {
   };
 }
 
-async function withState(
-  run: (stateDir: string) => Promise<void>,
-): Promise<void> {
+async function withState(run: (stateDir: string) => Promise<void>): Promise<void> {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-bootstrap-"));
   try {
     await run(stateDir);
@@ -240,9 +232,7 @@ void test("crypto bootstrap creates private state, publishes keys before the man
       "crypto.close",
     ]);
     assert.deepEqual(matrix.startOptions, { intakeEnabled: false });
-    const manifest = JSON.parse(
-      await readFile(join(stateDir, "crypto-state.json"), "utf8"),
-    ) as Record<string, unknown>;
+    const manifest = JSON.parse(await readFile(join(stateDir, "crypto-state.json"), "utf8")) as Record<string, unknown>;
     assert.equal(manifest.bootstrapCompleted, true);
     assert.equal(manifest.sasVerified, false);
     assert.equal("token-is-never-persisted" in manifest, false);
@@ -326,26 +316,19 @@ void test("bootstrap rejects wrong whoami, changed fingerprints, and SDK initial
     );
     assert.equal(changed.stopCalls, 1);
 
-    const sdkFailureState = await mkdtemp(
-      join(tmpdir(), "matrix-acp-bootstrap-sdk-"),
-    );
+    const sdkFailureState = await mkdtemp(join(tmpdir(), "matrix-acp-bootstrap-sdk-"));
     try {
       const sdkFailure = new TestMatrix({
         initializeError: new Error("private SDK error"),
       });
       assert.equal(
         await new CryptoBootstrapLifecycle({
-          loadedConfiguration: loaded(
-            sdkFailureState,
-            new TestLock(sdkFailureState),
-          ),
+          loadedConfiguration: loaded(sdkFailureState, new TestLock(sdkFailureState)),
           dependencies: dependencies(sdkFailure),
         }).run(),
         1,
       );
-      await assert.rejects(
-        readFile(join(sdkFailureState, "crypto-state.json")),
-      );
+      await assert.rejects(readFile(join(sdkFailureState, "crypto-state.json")));
     } finally {
       await rm(sdkFailureState, { recursive: true, force: true });
     }

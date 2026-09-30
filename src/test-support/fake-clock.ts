@@ -25,9 +25,7 @@ export class FakeClock implements Clock {
 
   setTimeout(callback: () => void, delayMs: number): TimerHandle {
     if (!Number.isFinite(delayMs) || delayMs < 0) {
-      throw new RangeError(
-        "fake timer delay must be a finite non-negative number",
-      );
+      throw new RangeError("fake timer delay must be a finite non-negative number");
     }
 
     const timer: FakeTimer = {
@@ -50,9 +48,7 @@ export class FakeClock implements Clock {
 
   advanceBy(milliseconds: number): void {
     if (!Number.isFinite(milliseconds) || milliseconds < 0) {
-      throw new RangeError(
-        "fake clock advance must be a finite non-negative number",
-      );
+      throw new RangeError("fake clock advance must be a finite non-negative number");
     }
 
     const target = this.#now + milliseconds;
@@ -92,11 +88,7 @@ export class FakeClock implements Clock {
   #nextTimer(): FakeTimer | undefined {
     let next: FakeTimer | undefined;
     for (const timer of this.#timers) {
-      if (
-        next === undefined ||
-        timer.dueAt < next.dueAt ||
-        (timer.dueAt === next.dueAt && timer.id < next.id)
-      ) {
+      if (next === undefined || timer.dueAt < next.dueAt || (timer.dueAt === next.dueAt && timer.id < next.id)) {
         next = timer;
       }
     }

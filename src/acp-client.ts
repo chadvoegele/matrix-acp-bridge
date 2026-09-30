@@ -15,22 +15,11 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import { createCancellationController } from "./cancellation.js";
-import {
-  isAcpUpdateNotification,
-  normalizeAcpUpdateNotification,
-} from "./acp-activity-update.js";
-import type {
-  AcpSessionId,
-  AcpUpdate,
-  AcpUpdateListener,
-} from "./acp-activity-update.js";
+import { isAcpUpdateNotification, normalizeAcpUpdateNotification } from "./acp-activity-update.js";
+import type { AcpSessionId, AcpUpdate, AcpUpdateListener } from "./acp-activity-update.js";
 import { createStderrDiagnosticSink } from "./diagnostics.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
-import type {
-  DiagnosticSink,
-  FatalError,
-  FatalErrorListener,
-} from "./diagnostics.js";
+import type { DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
 import { hasOwn, isRecord } from "./object-validation.js";
 import type { AcpConfig, BridgeConfig } from "./config.js";
 
@@ -50,21 +39,10 @@ export type {
   AcpUpdateListener,
 } from "./acp-activity-update.js";
 
-export type AcpStopReason =
-  | "end_turn"
-  | "max_tokens"
-  | "max_turn_requests"
-  | "refusal"
-  | "cancelled"
-  | "unknown";
+export type AcpStopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled" | "unknown";
 
 export type AcpMethodErrorKind =
-  | "session_new"
-  | "session_load"
-  | "session_prompt"
-  | "session_cancel"
-  | "permission"
-  | "other";
+  "session_new" | "session_load" | "session_prompt" | "session_cancel" | "permission" | "other";
 
 /** A method error is safe to surface to the coordinator, not to the user. */
 export interface AcpMethodError {
@@ -75,25 +53,13 @@ export interface AcpMethodError {
 
 export interface AcpTransportError {
   readonly kind: "transport_error";
-  readonly operation:
-    | "initialize"
-    | "session_new"
-    | "session_load"
-    | "session_prompt"
-    | "session_cancel"
-    | "close";
+  readonly operation: "initialize" | "session_new" | "session_load" | "session_prompt" | "session_cancel" | "close";
   readonly fatal: true;
 }
 
 export interface AcpProtocolError {
   readonly kind: "protocol_error";
-  readonly operation:
-    | "initialize"
-    | "session_new"
-    | "session_load"
-    | "session_prompt"
-    | "session_cancel"
-    | "close";
+  readonly operation: "initialize" | "session_new" | "session_load" | "session_prompt" | "session_cancel" | "close";
   readonly fatal: true;
 }
 
@@ -103,8 +69,7 @@ export interface AcpTurnOutcome {
   readonly text?: string;
 }
 
-export type AcpOutcome =
-  AcpTurnOutcome | AcpMethodError | AcpTransportError | AcpProtocolError;
+export type AcpOutcome = AcpTurnOutcome | AcpMethodError | AcpTransportError | AcpProtocolError;
 
 export interface AcpInitializeOptions {
   readonly protocolVersion: 1;
@@ -175,11 +140,7 @@ export interface AcpClient {
   loadSession?(options: AcpSessionLoadOptions): Promise<AcpSession>;
   /** Session loading is a phase, not an update kind or user-visible output. */
   onSessionPhase?(listener: AcpSessionPhaseListener): Unsubscribe;
-  prompt(
-    sessionId: AcpSessionId,
-    text: string,
-    cancellation: CancellationSignal,
-  ): Promise<AcpOutcome>;
+  prompt(sessionId: AcpSessionId, text: string, cancellation: CancellationSignal): Promise<AcpOutcome>;
   cancel(sessionId: AcpSessionId): Promise<void>;
   onUpdate(listener: AcpUpdateListener): Unsubscribe;
   onFatalError(listener: FatalErrorListener): Unsubscribe;
@@ -205,13 +166,9 @@ export interface AcpClientOptions extends AcpTransportOptions {
 }
 
 type FailureKind = "transport" | "protocol";
-type FailureOperation =
-  "eof" | "read" | "write" | "ndjson" | "json-rpc" | "connection";
+type FailureOperation = "eof" | "read" | "write" | "ndjson" | "json-rpc" | "connection";
 type RequestOperation = Exclude<AcpTransportError["operation"], "close">;
-type WireMessageObserver = (
-  message: AnyMessage,
-  direction: "inbound" | "outbound",
-) => boolean;
+type WireMessageObserver = (message: AnyMessage, direction: "inbound" | "outbound") => boolean;
 
 interface FailureNotice {
   readonly kind: FailureKind;
@@ -246,11 +203,7 @@ function noop(): void {
 }
 
 function isJsonRpcId(value: unknown): boolean {
-  return (
-    value === null ||
-    typeof value === "string" ||
-    (typeof value === "number" && Number.isFinite(value))
-  );
+  return value === null || typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
 /**
@@ -319,9 +272,7 @@ function toWebWritable(output: AcpOutput): WritableStream<Uint8Array> {
 }
 
 function decodeLine(bytes: readonly number[]): string {
-  return new TextDecoder("utf8", { fatal: true })
-    .decode(Uint8Array.from(bytes))
-    .trim();
+  return new TextDecoder("utf8", { fatal: true }).decode(Uint8Array.from(bytes)).trim();
 }
 
 function createStrictNdjsonStream(
@@ -346,9 +297,7 @@ function createStrictNdjsonStream(
       text = decodeLine(line);
     } catch {
       onFailure({ kind: "protocol", operation: "ndjson" });
-      controller.error(
-        new WireFailure({ kind: "protocol", operation: "ndjson" }),
-      );
+      controller.error(new WireFailure({ kind: "protocol", operation: "ndjson" }));
       return false;
     }
 
@@ -361,24 +310,18 @@ function createStrictNdjsonStream(
       value = JSON.parse(text) as unknown;
     } catch {
       onFailure({ kind: "protocol", operation: "ndjson" });
-      controller.error(
-        new WireFailure({ kind: "protocol", operation: "ndjson" }),
-      );
+      controller.error(new WireFailure({ kind: "protocol", operation: "ndjson" }));
       return false;
     }
 
     if (!isJsonRpcMessage(value)) {
       onFailure({ kind: "protocol", operation: "json-rpc" });
-      controller.error(
-        new WireFailure({ kind: "protocol", operation: "json-rpc" }),
-      );
+      controller.error(new WireFailure({ kind: "protocol", operation: "json-rpc" }));
       return false;
     }
 
     if (observeMessage !== undefined && !observeMessage(value, "inbound")) {
-      controller.error(
-        new WireFailure({ kind: "protocol", operation: "json-rpc" }),
-      );
+      controller.error(new WireFailure({ kind: "protocol", operation: "json-rpc" }));
       return false;
     }
 
@@ -412,9 +355,7 @@ function createStrictNdjsonStream(
           const chunk = result.value;
           if (!(chunk instanceof Uint8Array)) {
             onFailure({ kind: "transport", operation: "read" });
-            controller.error(
-              new WireFailure({ kind: "transport", operation: "read" }),
-            );
+            controller.error(new WireFailure({ kind: "transport", operation: "read" }));
             return;
           }
 
@@ -434,9 +375,7 @@ function createStrictNdjsonStream(
           return;
         }
         onFailure({ kind: "transport", operation: "read" });
-        controller.error(
-          new WireFailure({ kind: "transport", operation: "read" }),
-        );
+        controller.error(new WireFailure({ kind: "transport", operation: "read" }));
       } finally {
         if (inputReader === reader) {
           inputReader = undefined;
@@ -456,10 +395,7 @@ function createStrictNdjsonStream(
 
   const writable = new WritableStream<AnyMessage>({
     async write(message) {
-      if (
-        observeMessage !== undefined &&
-        !observeMessage(message, "outbound")
-      ) {
+      if (observeMessage !== undefined && !observeMessage(message, "outbound")) {
         throw new WireFailure({ kind: "protocol", operation: "json-rpc" });
       }
 
@@ -498,22 +434,14 @@ function requestError(value: unknown): value is RequestError {
   if (value instanceof RequestError) {
     return true;
   }
-  return (
-    isRecord(value) &&
-    typeof value.code === "number" &&
-    typeof value.message === "string"
-  );
+  return isRecord(value) && typeof value.code === "number" && typeof value.message === "string";
 }
 
 function isNormalizedOutcome(value: unknown): value is AcpOutcome {
   if (!isRecord(value) || typeof value.kind !== "string") {
     return false;
   }
-  return (
-    value.kind === "method_error" ||
-    value.kind === "transport_error" ||
-    value.kind === "protocol_error"
-  );
+  return value.kind === "method_error" || value.kind === "transport_error" || value.kind === "protocol_error";
 }
 
 function methodError(operation: AcpMethodError["operation"]): AcpMethodError {
@@ -529,11 +457,7 @@ function protocolError(operation: RequestOperation): AcpProtocolError {
 }
 
 function stopReason(value: unknown): AcpStopReason | undefined {
-  if (
-    value === "end_turn" ||
-    value === "max_tokens" ||
-    value === "max_turn_requests"
-  ) {
+  if (value === "end_turn" || value === "max_tokens" || value === "max_turn_requests") {
     return value;
   }
   if (value === "refusal" || value === "cancelled") {
@@ -546,20 +470,14 @@ function stopReason(value: unknown): AcpStopReason | undefined {
 }
 
 function startupInfo(value: unknown): string | undefined {
-  if (
-    !isRecord(value) ||
-    !isRecord(value._meta) ||
-    !isRecord(value._meta.piAcp)
-  ) {
+  if (!isRecord(value) || !isRecord(value._meta) || !isRecord(value._meta.piAcp)) {
     return undefined;
   }
   const text = value._meta.piAcp.startupInfo;
   return typeof text === "string" && text.length > 0 ? text : undefined;
 }
 
-function isAllowPermissionKind(
-  value: string,
-): value is AcpPermissionOption["kind"] {
+function isAllowPermissionKind(value: string): value is AcpPermissionOption["kind"] {
   return value === "allow_always" || value === "allow_once";
 }
 
@@ -572,15 +490,11 @@ function wireId(value: unknown): string {
 }
 
 const DEFAULT_PERMISSION_HANDLER: AcpPermissionHandler = (request) => {
-  const allowAlways = request.options.find(
-    (option) => option.kind === "allow_always",
-  );
+  const allowAlways = request.options.find((option) => option.kind === "allow_always");
   if (allowAlways !== undefined) {
     return Promise.resolve("allow_always");
   }
-  const allowOnce = request.options.find(
-    (option) => option.kind === "allow_once",
-  );
+  const allowOnce = request.options.find((option) => option.kind === "allow_once");
   return Promise.resolve(allowOnce === undefined ? "cancelled" : "allow_once");
 };
 
@@ -601,12 +515,8 @@ function resolvedOptions(
     cwd,
     ...(input === undefined ? {} : { input }),
     ...(output === undefined ? {} : { output }),
-    ...(candidate.permissionHandler === undefined
-      ? {}
-      : { permissionHandler: candidate.permissionHandler }),
-    ...(candidate.diagnostics === undefined
-      ? {}
-      : { diagnostics: candidate.diagnostics }),
+    ...(candidate.permissionHandler === undefined ? {} : { permissionHandler: candidate.permissionHandler }),
+    ...(candidate.diagnostics === undefined ? {} : { diagnostics: candidate.diagnostics }),
   };
 }
 
@@ -659,8 +569,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     const resolved = resolvedOptions(options, {});
     this.#cwd = resolved.cwd;
     this.#diagnostics = resolved.diagnostics ?? createStderrDiagnosticSink();
-    this.#permissionHandler =
-      resolved.permissionHandler ?? DEFAULT_PERMISSION_HANDLER;
+    this.#permissionHandler = resolved.permissionHandler ?? DEFAULT_PERMISSION_HANDLER;
 
     const input = toWebReadable(resolved.input ?? processStdin);
     const output = toWebWritable(resolved.output ?? processStdout);
@@ -674,9 +583,8 @@ export class InheritedStdioAcpClient implements AcpClient {
     );
 
     const app = createSdkClient({ name: "matrix-acp-bridge" })
-      .onRequest(
-        CLIENT_METHODS.session_request_permission,
-        ({ params, requestId }) => this.#handlePermission(params, requestId),
+      .onRequest(CLIENT_METHODS.session_request_permission, ({ params, requestId }) =>
+        this.#handlePermission(params, requestId),
       )
       .onNotification(CLIENT_METHODS.session_update, ({ params }) => {
         this.#handleUpdate(params);
@@ -699,9 +607,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     return this.#initialize(options);
   }
 
-  async #initialize(
-    options: AcpInitializeOptions,
-  ): Promise<AcpInitializeResult> {
+  async #initialize(options: AcpInitializeOptions): Promise<AcpInitializeResult> {
     if (
       options.protocolVersion !== 1 ||
       options.capabilities.filesystem !== false ||
@@ -719,13 +625,10 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
 
     try {
-      const response = await this.#connection.agent.request(
-        AGENT_METHODS.initialize,
-        {
-          protocolVersion: 1,
-          clientCapabilities: {},
-        },
-      );
+      const response = await this.#connection.agent.request(AGENT_METHODS.initialize, {
+        protocolVersion: 1,
+        clientCapabilities: {},
+      });
       if (!isRecord(response) || response.protocolVersion !== 1) {
         const error = protocolError("initialize");
         this.#reportFatal("protocol", "initialize");
@@ -734,8 +637,7 @@ export class InheritedStdioAcpClient implements AcpClient {
         throw error;
       }
       const advertisedCapabilities =
-        isRecord(response.agentCapabilities) &&
-        typeof response.agentCapabilities.loadSession === "boolean"
+        isRecord(response.agentCapabilities) && typeof response.agentCapabilities.loadSession === "boolean"
           ? { loadSession: response.agentCapabilities.loadSession }
           : {};
       this.#agentCapabilities = advertisedCapabilities;
@@ -761,13 +663,10 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
 
     try {
-      const response = await this.#connection.agent.request(
-        AGENT_METHODS.session_new,
-        {
-          cwd: this.#cwd,
-          mcpServers: [],
-        },
-      );
+      const response = await this.#connection.agent.request(AGENT_METHODS.session_new, {
+        cwd: this.#cwd,
+        mcpServers: [],
+      });
       if (!isRecord(response) || typeof response.sessionId !== "string") {
         const error = protocolError("session_new");
         this.#reportFatal("protocol", "session_new");
@@ -777,16 +676,11 @@ export class InheritedStdioAcpClient implements AcpClient {
       }
       const advertisedStartupInfo = startupInfo(response);
       if (advertisedStartupInfo !== undefined) {
-        this.#startupInfoBySession.set(
-          response.sessionId,
-          advertisedStartupInfo,
-        );
+        this.#startupInfoBySession.set(response.sessionId, advertisedStartupInfo);
       }
       return {
         sessionId: response.sessionId,
-        ...(advertisedStartupInfo === undefined
-          ? {}
-          : { startupInfo: advertisedStartupInfo }),
+        ...(advertisedStartupInfo === undefined ? {} : { startupInfo: advertisedStartupInfo }),
       };
     } catch (error) {
       if (isNormalizedOutcome(error)) {
@@ -809,14 +703,11 @@ export class InheritedStdioAcpClient implements AcpClient {
 
     this.#emitSessionPhase({ sessionId: options.sessionId, phase: "loading" });
     try {
-      const response = await this.#connection.agent.request(
-        AGENT_METHODS.session_load,
-        {
-          sessionId: options.sessionId,
-          cwd: this.#cwd,
-          mcpServers: [],
-        },
-      );
+      const response = await this.#connection.agent.request(AGENT_METHODS.session_load, {
+        sessionId: options.sessionId,
+        cwd: this.#cwd,
+        mcpServers: [],
+      });
       if (!isRecord(response)) {
         const error = protocolError("session_load");
         this.#reportFatal("protocol", "session_load");
@@ -837,11 +728,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
   }
 
-  async prompt(
-    sessionId: string,
-    text: string,
-    cancellation: CancellationSignal,
-  ): Promise<AcpOutcome> {
+  async prompt(sessionId: string, text: string, cancellation: CancellationSignal): Promise<AcpOutcome> {
     if (!this.#initialized) {
       const error = protocolError("session_prompt");
       this.#reportFatal("protocol", "session_prompt");
@@ -855,13 +742,10 @@ export class InheritedStdioAcpClient implements AcpClient {
     });
 
     try {
-      const response = await this.#connection.agent.request(
-        AGENT_METHODS.session_prompt,
-        {
-          sessionId,
-          prompt: [{ type: "text", text }],
-        },
-      );
+      const response = await this.#connection.agent.request(AGENT_METHODS.session_prompt, {
+        sessionId,
+        prompt: [{ type: "text", text }],
+      });
       if (!isRecord(response)) {
         const error = protocolError("session_prompt");
         this.#reportFatal("protocol", "session_prompt");
@@ -965,11 +849,7 @@ export class InheritedStdioAcpClient implements AcpClient {
       for (const pending of this.#pendingPermissions.values()) {
         pending.controller.cancel("transport closing");
       }
-      await Promise.allSettled(
-        [...this.#pendingPermissions.values()].map(
-          (pending) => pending.completion,
-        ),
-      );
+      await Promise.allSettled([...this.#pendingPermissions.values()].map((pending) => pending.completion));
 
       // Let the SDK's request responder flush cancellation responses before
       // aborting its connection and rejecting the remaining requests.
@@ -996,10 +876,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
   }
 
-  #observeWireMessage(
-    message: AnyMessage,
-    direction: "inbound" | "outbound",
-  ): boolean {
+  #observeWireMessage(message: AnyMessage, direction: "inbound" | "outbound"): boolean {
     if (!isRecord(message)) {
       this.#reportFatal("protocol", "json-rpc");
       return false;
@@ -1008,11 +885,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     const record = message as Record<string, unknown>;
     const hasMethod = hasOwn(message, "method");
     const hasId = hasOwn(message, "id");
-    if (
-      direction === "inbound" &&
-      hasMethod &&
-      !this.#validInboundParams(record)
-    ) {
+    if (direction === "inbound" && hasMethod && !this.#validInboundParams(record)) {
       this.#reportFatal("protocol", "json-rpc");
       return false;
     }
@@ -1060,16 +933,10 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
 
     if (message.method === CLIENT_METHODS.session_request_permission) {
-      if (
-        !isRecord(message.params) ||
-        typeof message.params.sessionId !== "string"
-      ) {
+      if (!isRecord(message.params) || typeof message.params.sessionId !== "string") {
         return false;
       }
-      if (
-        !isRecord(message.params.toolCall) ||
-        typeof message.params.toolCall.toolCallId !== "string"
-      ) {
+      if (!isRecord(message.params.toolCall) || typeof message.params.toolCall.toolCallId !== "string") {
         return false;
       }
       return Array.isArray(message.params.options);
@@ -1090,8 +957,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     const code = kind === "protocol" ? "acp_protocol" : "acp_transport";
     const error: FatalError = {
       code,
-      message:
-        kind === "protocol" ? "ACP protocol failure" : "ACP transport failure",
+      message: kind === "protocol" ? "ACP protocol failure" : "ACP transport failure",
     };
     this.#fatalError = error;
     this.#diagnostic("error", "acp-fatal", { code, operation });
@@ -1109,11 +975,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
   }
 
-  #classifyFailure(
-    operation: RequestOperation,
-    error: unknown,
-    fatalMethodError: boolean,
-  ): AcpOutcome {
+  #classifyFailure(operation: RequestOperation, error: unknown, fatalMethodError: boolean): AcpOutcome {
     if (isNormalizedOutcome(error)) {
       return error;
     }
@@ -1121,9 +983,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     if (requestError(error)) {
       if (!fatalMethodError) {
         return methodError(
-          operation === "session_prompt" ||
-            operation === "session_cancel" ||
-            operation === "session_load"
+          operation === "session_prompt" || operation === "session_cancel" || operation === "session_load"
             ? operation
             : "other",
         );
@@ -1190,9 +1050,7 @@ export class InheritedStdioAcpClient implements AcpClient {
         return { outcome: { outcome: "cancelled" } };
       }
 
-      const selected = rawRequest.options.find(
-        (option) => option.kind === decision,
-      );
+      const selected = rawRequest.options.find((option) => option.kind === decision);
       if (selected === undefined) {
         return { outcome: { outcome: "cancelled" } };
       }
@@ -1228,22 +1086,14 @@ export class InheritedStdioAcpClient implements AcpClient {
     this.#notifyUpdate(update);
   }
 
-  #collectText(
-    groups: TextGroup[],
-    text: string,
-    id: string | undefined,
-  ): void {
+  #collectText(groups: TextGroup[], text: string, id: string | undefined): void {
     const last = groups.at(-1);
     if (last === undefined) {
       groups.push(id === undefined ? { text } : { messageId: id, text });
       return;
     }
 
-    if (
-      id !== undefined &&
-      last.messageId !== undefined &&
-      last.messageId !== id
-    ) {
+    if (id !== undefined && last.messageId !== undefined && last.messageId !== id) {
       groups.push({ messageId: id, text });
       return;
     }
@@ -1261,11 +1111,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
   }
 
-  #diagnostic(
-    level: "debug" | "info" | "warn" | "error",
-    event: string,
-    fields: Record<string, string>,
-  ): void {
+  #diagnostic(level: "debug" | "info" | "warn" | "error", event: string, fields: Record<string, string>): void {
     try {
       this.#diagnostics.emit(level, event, fields);
     } catch {
@@ -1276,15 +1122,9 @@ export class InheritedStdioAcpClient implements AcpClient {
 
 export function createAcpClient(options: AcpClientOptions): AcpClient;
 
-export function createAcpClient(
-  config: BridgeConfig,
-  transport?: AcpTransportOptions,
-): AcpClient;
+export function createAcpClient(config: BridgeConfig, transport?: AcpTransportOptions): AcpClient;
 
-export function createAcpClient(
-  config: AcpConfig,
-  transport?: AcpTransportOptions,
-): AcpClient;
+export function createAcpClient(config: AcpConfig, transport?: AcpTransportOptions): AcpClient;
 
 export function createAcpClient(
   value: AcpConfig | BridgeConfig | AcpClientOptions,

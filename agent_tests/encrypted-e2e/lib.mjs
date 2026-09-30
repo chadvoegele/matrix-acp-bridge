@@ -1,10 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  readEnvironment as readSharedEnvironment,
-  readToken,
-} from "../e2e-support/common.mjs";
+import { readEnvironment as readSharedEnvironment, readToken } from "../e2e-support/common.mjs";
 
 export const testDir = dirname(fileURLToPath(import.meta.url));
 
@@ -28,8 +25,7 @@ export function cryptoPaths(stateDir) {
 
 export function matrixConfig(environment, role) {
   const identity = environment[role];
-  const otherUser =
-    role === "sender" ? environment.bridge.userId : environment.sender.userId;
+  const otherUser = role === "sender" ? environment.bridge.userId : environment.sender.userId;
   return {
     homeserver: environment.homeserver,
     userId: identity.userId,
@@ -46,10 +42,7 @@ export async function createAdapter(environment, role) {
     import("../../dist/matrix-client.js"),
     readToken(environment[role].tokenFile),
   ]);
-  const adapter = createMatrixClientAdapter(
-    matrixConfig(environment, role),
-    token,
-  );
+  const adapter = createMatrixClientAdapter(matrixConfig(environment, role), token);
   await adapter.validateIdentity();
   await adapter.initializeCrypto(cryptoPaths(environment[role].stateDir));
   return adapter;
@@ -61,8 +54,7 @@ export function tomlString(value) {
 
 export function makeConfig(environment, role) {
   const identity = environment[role];
-  const allowedSender =
-    role === "sender" ? environment.bridge.userId : environment.sender.userId;
+  const allowedSender = role === "sender" ? environment.bridge.userId : environment.sender.userId;
   return `state_dir = ${tomlString(identity.stateDir)}
 
 [matrix]
@@ -83,8 +75,4 @@ shutdown_grace_seconds = 30
 `;
 }
 
-export {
-  repoRoot,
-  writePrivateFile,
-  readToken,
-} from "../e2e-support/common.mjs";
+export { repoRoot, writePrivateFile, readToken } from "../e2e-support/common.mjs";

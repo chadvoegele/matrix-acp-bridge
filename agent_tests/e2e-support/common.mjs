@@ -11,24 +11,18 @@ export const repoRoot = resolve(supportDir, "../..");
 export async function readEnvironment(path, { roleKeys = {} } = {}) {
   const value = JSON.parse(await readFile(path, "utf8"));
   for (const key of ["homeserver", "roomId", "acpCwd", "acpCommand"]) {
-    if (value[key] === undefined)
-      throw new Error(`environment is missing ${key}`);
+    if (value[key] === undefined) throw new Error(`environment is missing ${key}`);
   }
   if (
     !Array.isArray(value.acpCommand) ||
     value.acpCommand.length === 0 ||
-    !value.acpCommand.every(
-      (part) => typeof part === "string" && part.length > 0,
-    )
+    !value.acpCommand.every((part) => typeof part === "string" && part.length > 0)
   ) {
     throw new Error("environment acpCommand must be a nonempty string array");
   }
   for (const [role, keys] of Object.entries(roleKeys)) {
     for (const key of keys) {
-      if (
-        typeof value[role]?.[key] !== "string" ||
-        value[role][key].length === 0
-      ) {
+      if (typeof value[role]?.[key] !== "string" || value[role][key].length === 0) {
         throw new Error(`environment ${role}.${key} is invalid`);
       }
     }
@@ -39,8 +33,7 @@ export async function readEnvironment(path, { roleKeys = {} } = {}) {
 export async function readToken(path) {
   const contents = await readFile(path, "utf8");
   const token = contents.replace(/\n$/u, "");
-  if (token.length === 0 || /\s/u.test(token))
-    throw new Error("token file is invalid");
+  if (token.length === 0 || /\s/u.test(token)) throw new Error("token file is invalid");
   return token;
 }
 
@@ -52,8 +45,7 @@ export async function writePrivateFile(path, content) {
 
 export function required(name) {
   const value = process.env[name];
-  if (value === undefined || value.length === 0)
-    throw new Error(`${name} is required`);
+  if (value === undefined || value.length === 0) throw new Error(`${name} is required`);
   return value;
 }
 
@@ -61,13 +53,7 @@ export function deviceId(prefix) {
   return `${prefix}${randomBytes(6).toString("hex").toUpperCase()}`;
 }
 
-export async function login(
-  homeserver,
-  userId,
-  passwordValue,
-  id,
-  displayName,
-) {
+export async function login(homeserver, userId, passwordValue, id, displayName) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const response = await fetch(`${homeserver}/_matrix/client/v3/login`, {
       method: "POST",
@@ -81,23 +67,14 @@ export async function login(
       }),
     });
     const body = await response.json().catch(() => ({}));
-    if (
-      response.ok &&
-      typeof body.access_token === "string" &&
-      body.device_id === id &&
-      body.user_id === userId
-    )
+    if (response.ok && typeof body.access_token === "string" && body.device_id === id && body.user_id === userId)
       return body.access_token;
     if (response.status === 429 && attempt < 4) {
-      const delay = Number.isFinite(body.retry_after_ms)
-        ? Math.max(1000, body.retry_after_ms)
-        : 30_000;
+      const delay = Number.isFinite(body.retry_after_ms) ? Math.max(1000, body.retry_after_ms) : 30_000;
       await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
       continue;
     }
-    throw new Error(
-      `Matrix login failed for ${displayName}: HTTP ${response.status}`,
-    );
+    throw new Error(`Matrix login failed for ${displayName}: HTTP ${response.status}`);
   }
   throw new Error(`Matrix login retries exhausted for ${displayName}`);
 }
@@ -135,13 +112,10 @@ export async function provisionEnvironment({
   ) {
     throw new Error("E2E_ACP_COMMAND must be a nonempty JSON string array");
   }
-  if (privateRoot === "/" || privateRoot.length < 8)
-    throw new Error("unsafe private root");
+  if (privateRoot === "/" || privateRoot.length < 8) throw new Error("unsafe private root");
   try {
     await stat(environmentPath);
-    throw new Error(
-      `environment already exists; revoke its devices before reprovisioning: ${environmentPath}`,
-    );
+    throw new Error(`environment already exists; revoke its devices before reprovisioning: ${environmentPath}`);
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
@@ -164,8 +138,7 @@ export async function provisionEnvironment({
   }
 
   for (const identity of Object.values(roles)) {
-    if (identity.stateDir !== undefined)
-      await mkdir(identity.stateDir, { recursive: true, mode: 0o700 });
+    if (identity.stateDir !== undefined) await mkdir(identity.stateDir, { recursive: true, mode: 0o700 });
   }
   const issuedTokens = [];
   try {
@@ -199,16 +172,10 @@ export async function provisionEnvironment({
   for (const definition of roleDefinitions) {
     const identity = environment[definition.name];
     if (identity.configFile !== undefined) {
-      await writePrivateFile(
-        identity.configFile,
-        makeConfig(environment, definition.name),
-      );
+      await writePrivateFile(identity.configFile, makeConfig(environment, definition.name));
     }
   }
-  await writePrivateFile(
-    environmentPath,
-    `${JSON.stringify(environment, null, 2)}\n`,
-  );
+  await writePrivateFile(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
   await afterProvision?.(environment);
   process.stdout.write(`${message}\nEnvironment: ${environmentPath}\n`);
 }

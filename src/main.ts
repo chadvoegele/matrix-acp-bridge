@@ -1,39 +1,22 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  loadConfiguration,
-  type LoadedConfiguration,
-  type StateLockLike,
-} from "./config.js";
+import { loadConfiguration, type LoadedConfiguration, type StateLockLike } from "./config.js";
 import type { BridgeConfig } from "./config.js";
-import {
-  BridgeStateError,
-  openBridgeStateStore,
-  type BridgeStateStore,
-} from "./bridge-state.js";
+import { BridgeStateError, openBridgeStateStore, type BridgeStateStore } from "./bridge-state.js";
 import { createAcpClient } from "./acp-client.js";
 import type { AcpClient } from "./acp-client.js";
-import {
-  createRateLimitedDiagnosticSink,
-  createStderrDiagnosticSink,
-} from "./diagnostics.js";
+import { createRateLimitedDiagnosticSink, createStderrDiagnosticSink } from "./diagnostics.js";
 import { BridgeCoordinator } from "./bridge.js";
 import type { BridgeTerminalCompletion } from "./bridge.js";
-import {
-  assertMatrixIdentity,
-  createMatrixClientAdapter,
-} from "./matrix-client.js";
+import { assertMatrixIdentity, createMatrixClientAdapter } from "./matrix-client.js";
 import { systemClock } from "./clock.js";
 import type { Clock } from "./clock.js";
 import type { Unsubscribe } from "./cancellation.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 import { MatrixSyncCoordinator } from "./sync-coordinator.js";
 import { defaultOperatorTtyFactory } from "./operator-tty.js";
-import {
-  CryptoVerificationError,
-  MatrixCryptoVerificationOperation,
-} from "./crypto-verification.js";
+import { CryptoVerificationError, MatrixCryptoVerificationOperation } from "./crypto-verification.js";
 import {
   CryptoStateError,
   openCryptoStateStore,
@@ -47,11 +30,7 @@ import type { CryptoVerificationOperation } from "./crypto-verification.js";
 import type { CryptoManifest } from "./crypto-state.js";
 import type { OperatorTtyFactory } from "./operator-tty.js";
 import { isValidMatrixDeviceId } from "./matrix-validation.js";
-import type {
-  InboundMatrixEvent,
-  MatrixClientAdapter,
-  MatrixIdentity,
-} from "./matrix-client.js";
+import type { InboundMatrixEvent, MatrixClientAdapter, MatrixIdentity } from "./matrix-client.js";
 
 const MAX_TIMER_MS = 2_147_483_647;
 
@@ -101,12 +80,7 @@ const CLI_USAGE = [
 ].join("\n");
 
 function validConfigPath(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    !value.startsWith("--") &&
-    !value.includes("\u0000")
-  );
+  return typeof value === "string" && value.length > 0 && !value.startsWith("--") && !value.includes("\u0000");
 }
 
 /** Parse the exact crypto command forms; no argument reordering is allowed. */
@@ -137,10 +111,7 @@ export function parseCommandLine(args: readonly string[]): CliOptions {
 }
 
 /** Validate the config-dependent part of a parsed one-shot crypto command. */
-export function validateCommandForConfig(
-  command: CryptoCommand,
-  config: BridgeConfig,
-): void {
+export function validateCommandForConfig(command: CryptoCommand, config: BridgeConfig): void {
   try {
     validateCryptoCommand(command, config.matrix);
   } catch (error) {
@@ -169,10 +140,7 @@ export interface DaemonBridge {
   openIntake(): void;
   /** Allow admitted startup-buffered events to reach ACP. */
   enableDispatch(): void;
-  handleTimelineEvent(
-    event: InboundMatrixEvent,
-    terminalCompletion?: BridgeTerminalCompletion,
-  ): Promise<void>;
+  handleTimelineEvent(event: InboundMatrixEvent, terminalCompletion?: BridgeTerminalCompletion): Promise<void>;
   onFatalError(listener: (error: FatalError) => void): Unsubscribe;
   stop(): Promise<void>;
 }
@@ -186,9 +154,7 @@ export interface DaemonFactoryContext {
 
 export interface DaemonFactories {
   readonly createAcpClient?: (context: DaemonFactoryContext) => AcpClient;
-  readonly createMatrixClient?: (
-    context: DaemonFactoryContext,
-  ) => MatrixClientAdapter;
+  readonly createMatrixClient?: (context: DaemonFactoryContext) => MatrixClientAdapter;
   readonly createBridge?: (context: {
     readonly config: BridgeConfig;
     readonly acp: AcpClient;
@@ -201,9 +167,7 @@ export interface DaemonFactories {
 }
 
 export interface DaemonDependencies extends DaemonFactories {
-  readonly loadConfiguration?: (
-    configPath: string,
-  ) => Promise<LoadedConfiguration>;
+  readonly loadConfiguration?: (configPath: string) => Promise<LoadedConfiguration>;
   readonly clock?: Clock;
   readonly diagnostics?: DiagnosticSink;
   readonly process?: DaemonProcessLike;
@@ -261,9 +225,7 @@ function defaultAcpFactory(context: DaemonFactoryContext): AcpClient {
   return createAcpClient(options);
 }
 
-function defaultMatrixFactory(
-  context: DaemonFactoryContext,
-): MatrixClientAdapter {
+function defaultMatrixFactory(context: DaemonFactoryContext): MatrixClientAdapter {
   return createMatrixClientAdapter(context.config, context.accessToken, {
     diagnostics: context.diagnostics,
     clock: context.clock,
@@ -292,11 +254,7 @@ function defaultBridgeFactory(context: {
   });
 }
 
-function removeSignalListener(
-  processLike: DaemonSignalSource,
-  signal: DaemonSignal,
-  listener: () => void,
-): void {
+function removeSignalListener(processLike: DaemonSignalSource, signal: DaemonSignal, listener: () => void): void {
   try {
     if (processLike.off === undefined) {
       processLike.removeListener?.(signal, listener);
@@ -339,12 +297,7 @@ function safeFailureReason(error: unknown): string {
   return "startup failure";
 }
 
-function emitCryptoFailure(
-  diagnostics: DiagnosticSink,
-  event: string,
-  error: unknown,
-  fallback: string,
-): void {
+function emitCryptoFailure(diagnostics: DiagnosticSink, event: string, error: unknown, fallback: string): void {
   if (error instanceof CryptoStateError) {
     emitDiagnostic(diagnostics, "error", event, {
       reason: error.category,
@@ -469,13 +422,8 @@ export class DaemonLifecycle {
       readonly dependencies?: DaemonDependencies;
     } = {},
   ) {
-    if (
-      options.configPath === undefined &&
-      options.loadedConfiguration === undefined
-    ) {
-      throw new TypeError(
-        "DaemonLifecycle requires a config path or loaded configuration",
-      );
+    if (options.configPath === undefined && options.loadedConfiguration === undefined) {
+      throw new TypeError("DaemonLifecycle requires a config path or loaded configuration");
     }
     this.#configPath = options.configPath;
     this.#preloaded = options.loadedConfiguration;
@@ -483,11 +431,9 @@ export class DaemonLifecycle {
     this.#clock = this.#dependencies.clock ?? systemClock;
     this.#diagnostics = this.#dependencies.diagnostics ?? defaultDiagnostics();
     this.#processLike = this.#dependencies.process ?? process;
-    this.#terminationPromise = new Promise<TerminationRequest>(
-      (resolveTermination) => {
-        this.#resolveTermination = resolveTermination;
-      },
-    );
+    this.#terminationPromise = new Promise<TerminationRequest>((resolveTermination) => {
+      this.#resolveTermination = resolveTermination;
+    });
   }
 
   get bridge(): DaemonBridge | undefined {
@@ -564,20 +510,14 @@ export class DaemonLifecycle {
     const cleanup = await this.#cleanup();
     this.#removeSignalHandlers();
     return {
-      exitCode:
-        cleanup.forced || this.#fatal !== undefined || this.#shutdownFailed
-          ? 1
-          : 0,
+      exitCode: cleanup.forced || this.#fatal !== undefined || this.#shutdownFailed ? 1 : 0,
       forcedShutdown: cleanup.forced,
     };
   }
 
   async #loadAndStart(): Promise<void> {
     this.#loaded =
-      this.#preloaded ??
-      (await (this.#dependencies.loadConfiguration ?? loadConfiguration)(
-        this.#configPath!,
-      ));
+      this.#preloaded ?? (await (this.#dependencies.loadConfiguration ?? loadConfiguration)(this.#configPath!));
     this.#stateLock = this.#loaded.stateLock;
     this.#checkShutdownRequest();
 
@@ -588,10 +528,8 @@ export class DaemonLifecycle {
       clock: this.#clock,
     };
     const createAcp = this.#dependencies.createAcpClient ?? defaultAcpFactory;
-    const createMatrix =
-      this.#dependencies.createMatrixClient ?? defaultMatrixFactory;
-    const createBridge =
-      this.#dependencies.createBridge ?? defaultBridgeFactory;
+    const createMatrix = this.#dependencies.createMatrixClient ?? defaultMatrixFactory;
+    const createBridge = this.#dependencies.createBridge ?? defaultBridgeFactory;
 
     await this.#raceStartup(
       () => this.#startAdapters(context, createAcp, createMatrix, createBridge),
@@ -651,8 +589,7 @@ export class DaemonLifecycle {
     }
     this.#checkShutdownRequest();
 
-    const loadSession =
-      initializeResult.agentCapabilities?.loadSession === true;
+    const loadSession = initializeResult.agentCapabilities?.loadSession === true;
     this.#stateStore = await openBridgeStateStore({
       stateDir: context.config.stateDir,
       identity: {
@@ -663,17 +600,11 @@ export class DaemonLifecycle {
       diagnostics: this.#diagnostics,
     });
     await (loadSession
-      ? this.#stateStore.pruneSessionMappings(
-          context.config.matrix.allowedRooms,
-        )
+      ? this.#stateStore.pruneSessionMappings(context.config.matrix.allowedRooms)
       : this.#stateStore.discardSessionMappings());
     const initialized = this.#stateStore.getSnapshot().initialized;
     if (initialized) {
-      emitDiagnostic(
-        this.#diagnostics,
-        "info",
-        "completed-event-ledger-loaded",
-      );
+      emitDiagnostic(this.#diagnostics, "info", "completed-event-ledger-loaded");
     }
 
     this.#bridge = createBridge({
@@ -698,8 +629,7 @@ export class DaemonLifecycle {
         openIntake: () => bridge.openIntake(),
         enableDispatch: () => bridge.enableDispatch(),
         consumesTerminalCompletion: true,
-        handleTimelineEvent: (event, terminalCompletion) =>
-          bridge.handleTimelineEvent(event, terminalCompletion),
+        handleTimelineEvent: (event, terminalCompletion) => bridge.handleTimelineEvent(event, terminalCompletion),
       },
       stateStore: this.#stateStore,
       diagnostics: this.#diagnostics,
@@ -707,9 +637,7 @@ export class DaemonLifecycle {
       onFatal: (error) => this.#handleFatal(error),
     });
     this.#syncCoordinator = coordinator;
-    this.#syncBatchUnsubscribe = matrix.onSyncBatch((batch) =>
-      coordinator.handleBatch(batch),
-    );
+    this.#syncBatchUnsubscribe = matrix.onSyncBatch((batch) => coordinator.handleBatch(batch));
     await matrix.start({});
     this.#checkShutdownRequest();
 
@@ -747,10 +675,7 @@ export class DaemonLifecycle {
     await withPrivateCryptoCreationMask(() => matrix.initializeCrypto!(paths));
   }
 
-  async #raceStartup(
-    start: () => Promise<void>,
-    timeoutSeconds: number,
-  ): Promise<void> {
+  async #raceStartup(start: () => Promise<void>, timeoutSeconds: number): Promise<void> {
     let settled = false;
     let rejectTimeout!: (error: unknown) => void;
     const timeout = new Promise<never>((_, reject) => {
@@ -830,9 +755,7 @@ export class DaemonLifecycle {
     if (this.#signalReceived) {
       const code = signalExitCode(signal);
       try {
-        const exit =
-          this.#dependencies.exit ??
-          this.#processLike.exit?.bind(this.#processLike);
+        const exit = this.#dependencies.exit ?? this.#processLike.exit?.bind(this.#processLike);
         if (exit !== undefined) {
           exit(code);
         }
@@ -867,11 +790,7 @@ export class DaemonLifecycle {
     // In that phase there is no resource to clean yet; the main run loop will
     // perform cleanup after loading either completes or fails. Once the lock
     // or an adapter exists, begin stopping immediately.
-    if (
-      this.#stateLock !== undefined ||
-      this.#acp !== undefined ||
-      this.#matrix !== undefined
-    ) {
+    if (this.#stateLock !== undefined || this.#acp !== undefined || this.#matrix !== undefined) {
       void this.#cleanup();
     }
   }
@@ -926,9 +845,7 @@ export class DaemonLifecycle {
 
     const stop = async (): Promise<void> => {
       try {
-        await (this.#bridge === undefined
-          ? this.#stopAdaptersDirectly()
-          : this.#bridge.stop());
+        await (this.#bridge === undefined ? this.#stopAdaptersDirectly() : this.#bridge.stop());
         await this.#closeCryptoOnce();
       } catch {
         this.#shutdownFailed = true;
@@ -1023,9 +940,7 @@ export class DaemonLifecycle {
   async #flushState(): Promise<void> {
     let failed = false;
     try {
-      await (this.#syncCoordinator === undefined
-        ? this.#stateStore?.flush?.()
-        : this.#syncCoordinator.flush());
+      await (this.#syncCoordinator === undefined ? this.#stateStore?.flush?.() : this.#syncCoordinator.flush());
     } catch {
       failed = true;
     }
@@ -1109,13 +1024,8 @@ export class CryptoBootstrapLifecycle {
   }> = [];
 
   constructor(options: CryptoBootstrapRunOptions) {
-    if (
-      options.configPath === undefined &&
-      options.loadedConfiguration === undefined
-    ) {
-      throw new TypeError(
-        "CryptoBootstrapLifecycle requires a config path or loaded configuration",
-      );
+    if (options.configPath === undefined && options.loadedConfiguration === undefined) {
+      throw new TypeError("CryptoBootstrapLifecycle requires a config path or loaded configuration");
     }
     this.#configPath = options.configPath;
     this.#preloaded = options.loadedConfiguration;
@@ -1123,11 +1033,9 @@ export class CryptoBootstrapLifecycle {
     this.#clock = this.#dependencies.clock ?? systemClock;
     this.#diagnostics = this.#dependencies.diagnostics ?? defaultDiagnostics();
     this.#processLike = this.#dependencies.process ?? process;
-    this.#terminationPromise = new Promise<TerminationRequest>(
-      (resolveTermination) => {
-        this.#resolveTermination = resolveTermination;
-      },
-    );
+    this.#terminationPromise = new Promise<TerminationRequest>((resolveTermination) => {
+      this.#resolveTermination = resolveTermination;
+    });
   }
 
   async run(): Promise<DaemonExitCode> {
@@ -1135,21 +1043,13 @@ export class CryptoBootstrapLifecycle {
     let exitCode: DaemonExitCode = 0;
     try {
       await this.#loadAndValidate();
-      await this.#raceStartup(
-        () => this.#bootstrapLoaded(),
-        this.#loaded!.config.limits.startupTimeoutSeconds,
-      );
+      await this.#raceStartup(() => this.#bootstrapLoaded(), this.#loaded!.config.limits.startupTimeoutSeconds);
       if (this.#termination !== undefined) {
         exitCode = 1;
       }
     } catch (error) {
       exitCode = 1;
-      emitCryptoFailure(
-        this.#diagnostics,
-        "crypto-bootstrap-failed",
-        error,
-        "crypto bootstrap failed",
-      );
+      emitCryptoFailure(this.#diagnostics, "crypto-bootstrap-failed", error, "crypto bootstrap failed");
     }
     await this.#cleanup();
     this.#removeSignalHandlers();
@@ -1158,9 +1058,7 @@ export class CryptoBootstrapLifecycle {
 
   receiveSignal(signal: DaemonSignal): void {
     if (this.#signalReceived) {
-      const exit =
-        this.#dependencies.exit ??
-        this.#processLike.exit?.bind(this.#processLike);
+      const exit = this.#dependencies.exit ?? this.#processLike.exit?.bind(this.#processLike);
       try {
         exit?.(signalExitCode(signal));
       } catch {
@@ -1174,10 +1072,7 @@ export class CryptoBootstrapLifecycle {
 
   async #loadAndValidate(): Promise<void> {
     this.#loaded =
-      this.#preloaded ??
-      (await (this.#dependencies.loadConfiguration ?? loadConfiguration)(
-        this.#configPath!,
-      ));
+      this.#preloaded ?? (await (this.#dependencies.loadConfiguration ?? loadConfiguration)(this.#configPath!));
     this.#stateLock = this.#loaded.stateLock;
     validateCommandForConfig({ kind: "bootstrap" }, this.#loaded.config);
     this.#checkShutdownRequest();
@@ -1198,10 +1093,7 @@ export class CryptoBootstrapLifecycle {
       diagnostics: this.#diagnostics,
     });
     if (this.#store.status === "first-use") {
-      await ensureCryptoDatabaseDirectory(
-        this.#loaded.config.stateDir,
-        this.#diagnostics,
-      );
+      await ensureCryptoDatabaseDirectory(this.#loaded.config.stateDir, this.#diagnostics);
     }
     this.#checkShutdownRequest();
 
@@ -1211,14 +1103,10 @@ export class CryptoBootstrapLifecycle {
       diagnostics: this.#diagnostics,
       clock: this.#clock,
     };
-    const createMatrix =
-      this.#dependencies.createMatrixClient ?? defaultMatrixFactory;
+    const createMatrix = this.#dependencies.createMatrixClient ?? defaultMatrixFactory;
     this.#matrix = createMatrix(context);
     const matrix = this.#matrix;
-    if (
-      matrix.initializeCrypto === undefined ||
-      matrix.getDeviceKeyFingerprints === undefined
-    ) {
+    if (matrix.initializeCrypto === undefined || matrix.getDeviceKeyFingerprints === undefined) {
       throw new Error("Required Matrix adapter cannot bootstrap Rust crypto");
     }
     await withPrivateCryptoCreationMask(() =>
@@ -1246,16 +1134,11 @@ export class CryptoBootstrapLifecycle {
     emitDiagnostic(
       this.#diagnostics,
       "info",
-      alreadyComplete
-        ? "crypto-bootstrap-already-complete"
-        : "crypto-bootstrap-complete",
+      alreadyComplete ? "crypto-bootstrap-already-complete" : "crypto-bootstrap-complete",
     );
   }
 
-  async #raceStartup(
-    start: () => Promise<void>,
-    configuredTimeout?: number,
-  ): Promise<void> {
+  async #raceStartup(start: () => Promise<void>, configuredTimeout?: number): Promise<void> {
     let settled = false;
     let rejectTimeout!: (error: unknown) => void;
     const timeout = new Promise<never>((_, reject) => {
@@ -1354,9 +1237,7 @@ export class CryptoBootstrapLifecycle {
   }
 }
 
-export async function runCryptoBootstrap(
-  options: CryptoBootstrapRunOptions,
-): Promise<DaemonExitCode> {
+export async function runCryptoBootstrap(options: CryptoBootstrapRunOptions): Promise<DaemonExitCode> {
   return new CryptoBootstrapLifecycle(options).run();
 }
 
@@ -1415,13 +1296,8 @@ export class CryptoVerificationLifecycle {
   }> = [];
 
   constructor(options: CryptoVerificationRunOptions) {
-    if (
-      options.configPath === undefined &&
-      options.loadedConfiguration === undefined
-    ) {
-      throw new TypeError(
-        "CryptoVerificationLifecycle requires a config path or loaded configuration",
-      );
+    if (options.configPath === undefined && options.loadedConfiguration === undefined) {
+      throw new TypeError("CryptoVerificationLifecycle requires a config path or loaded configuration");
     }
     this.#configPath = options.configPath;
     this.#preloaded = options.loadedConfiguration;
@@ -1430,11 +1306,9 @@ export class CryptoVerificationLifecycle {
     this.#diagnostics = this.#dependencies.diagnostics ?? defaultDiagnostics();
     this.#processLike = this.#dependencies.process ?? process;
     this.#targetDeviceId = options.targetDeviceId;
-    this.#terminationPromise = new Promise<TerminationRequest>(
-      (resolveTermination) => {
-        this.#resolveTermination = resolveTermination;
-      },
-    );
+    this.#terminationPromise = new Promise<TerminationRequest>((resolveTermination) => {
+      this.#resolveTermination = resolveTermination;
+    });
   }
 
   async run(): Promise<DaemonExitCode> {
@@ -1442,21 +1316,13 @@ export class CryptoVerificationLifecycle {
     let exitCode: DaemonExitCode = 0;
     try {
       await this.#loadAndValidate();
-      await this.#raceStartup(
-        () => this.#verifyLoaded(),
-        this.#loaded!.config.limits.startupTimeoutSeconds,
-      );
+      await this.#raceStartup(() => this.#verifyLoaded(), this.#loaded!.config.limits.startupTimeoutSeconds);
       if (this.#termination !== undefined) {
         exitCode = 1;
       }
     } catch (error) {
       exitCode = 1;
-      emitCryptoFailure(
-        this.#diagnostics,
-        "crypto-verification-failed",
-        error,
-        "crypto verification failed",
-      );
+      emitCryptoFailure(this.#diagnostics, "crypto-verification-failed", error, "crypto verification failed");
     }
     await this.#cleanup();
     this.#removeSignalHandlers();
@@ -1465,9 +1331,7 @@ export class CryptoVerificationLifecycle {
 
   receiveSignal(signal: DaemonSignal): void {
     if (this.#signalReceived) {
-      const exit =
-        this.#dependencies.exit ??
-        this.#processLike.exit?.bind(this.#processLike);
+      const exit = this.#dependencies.exit ?? this.#processLike.exit?.bind(this.#processLike);
       try {
         exit?.(signalExitCode(signal));
       } catch {
@@ -1481,15 +1345,9 @@ export class CryptoVerificationLifecycle {
 
   async #loadAndValidate(): Promise<void> {
     this.#loaded =
-      this.#preloaded ??
-      (await (this.#dependencies.loadConfiguration ?? loadConfiguration)(
-        this.#configPath!,
-      ));
+      this.#preloaded ?? (await (this.#dependencies.loadConfiguration ?? loadConfiguration)(this.#configPath!));
     this.#stateLock = this.#loaded.stateLock;
-    validateCommandForConfig(
-      { kind: "verify", deviceId: this.#targetDeviceId },
-      this.#loaded.config,
-    );
+    validateCommandForConfig({ kind: "verify", deviceId: this.#targetDeviceId }, this.#loaded.config);
     this.#checkShutdownRequest();
   }
 
@@ -1518,8 +1376,7 @@ export class CryptoVerificationLifecycle {
       diagnostics: this.#diagnostics,
       clock: this.#clock,
     };
-    const createMatrix =
-      this.#dependencies.createMatrixClient ?? defaultMatrixFactory;
+    const createMatrix = this.#dependencies.createMatrixClient ?? defaultMatrixFactory;
     this.#matrix = createMatrix(context);
     const matrix = this.#matrix;
     this.#fatalUnsubscribe = matrix.onFatalError(() => {
@@ -1532,9 +1389,7 @@ export class CryptoVerificationLifecycle {
     ) {
       throw new Error("Required Matrix adapter cannot verify SAS");
     }
-    await withPrivateCryptoCreationMask(() =>
-      matrix.initializeCrypto!(cryptoStatePaths(config.stateDir)),
-    );
+    await withPrivateCryptoCreationMask(() => matrix.initializeCrypto!(cryptoStatePaths(config.stateDir)));
     this.#checkShutdownRequest();
     const identity = await matrix.whoAmI();
     assertMatrixIdentity(identity, config.matrix);
@@ -1546,8 +1401,7 @@ export class CryptoVerificationLifecycle {
     this.#store.assertReadyForVerification(fingerprints);
     const operation = new MatrixCryptoVerificationOperation({
       crypto: matrix.getCryptoVerificationAdapter(),
-      ttyFactory:
-        this.#dependencies.operatorTtyFactory ?? defaultOperatorTtyFactory,
+      ttyFactory: this.#dependencies.operatorTtyFactory ?? defaultOperatorTtyFactory,
       timeoutMs: timerMilliseconds(config.limits.startupTimeoutSeconds),
       clock: this.#clock,
       diagnostics: this.#diagnostics,
@@ -1564,10 +1418,7 @@ export class CryptoVerificationLifecycle {
     });
   }
 
-  async #raceStartup(
-    start: () => Promise<void>,
-    timeoutSeconds: number,
-  ): Promise<void> {
+  async #raceStartup(start: () => Promise<void>, timeoutSeconds: number): Promise<void> {
     let settled = false;
     let rejectTimeout!: (error: unknown) => void;
     const timeout = new Promise<never>((_, reject) => {
@@ -1671,16 +1522,11 @@ export class CryptoVerificationLifecycle {
   }
 }
 
-export async function runCryptoVerification(
-  options: CryptoVerificationRunOptions,
-): Promise<DaemonExitCode> {
+export async function runCryptoVerification(options: CryptoVerificationRunOptions): Promise<DaemonExitCode> {
   return new CryptoVerificationLifecycle(options).run();
 }
 
-async function runCryptoCommand(
-  command: CryptoCommand,
-  options: CryptoBootstrapRunOptions,
-): Promise<DaemonExitCode> {
+async function runCryptoCommand(command: CryptoCommand, options: CryptoBootstrapRunOptions): Promise<DaemonExitCode> {
   if (command.kind === "verify") {
     return runCryptoVerification({
       ...options,
@@ -1702,18 +1548,11 @@ function dependenciesFrom(options: RunDaemonOptions): DaemonDependencies {
 }
 
 /** Run the daemon and return its documented process exit code. */
-export async function runDaemon(
-  options?: RunDaemonOptions,
-): Promise<DaemonExitCode>;
+export async function runDaemon(options?: RunDaemonOptions): Promise<DaemonExitCode>;
 
-export async function runDaemon(
-  options: RunDaemonOptions,
-): Promise<DaemonExitCode>;
+export async function runDaemon(options: RunDaemonOptions): Promise<DaemonExitCode>;
 
-export async function runDaemon(
-  argv: readonly string[],
-  dependencies?: DaemonDependencies,
-): Promise<DaemonExitCode>;
+export async function runDaemon(argv: readonly string[], dependencies?: DaemonDependencies): Promise<DaemonExitCode>;
 
 export async function runDaemon(
   optionsOrArgv: RunDaemonOptions | readonly string[] = {},
@@ -1736,9 +1575,7 @@ export async function runDaemon(
     if (command !== undefined) {
       return await runCryptoCommand(command, {
         ...(configPath === undefined ? {} : { configPath }),
-        ...(options.loadedConfiguration === undefined
-          ? {}
-          : { loadedConfiguration: options.loadedConfiguration }),
+        ...(options.loadedConfiguration === undefined ? {} : { loadedConfiguration: options.loadedConfiguration }),
         dependencies: {
           ...dependenciesFrom(options),
           diagnostics,
@@ -1747,9 +1584,7 @@ export async function runDaemon(
     }
     const lifecycle = new DaemonLifecycle({
       ...(configPath === undefined ? {} : { configPath }),
-      ...(options.loadedConfiguration === undefined
-        ? {}
-        : { loadedConfiguration: options.loadedConfiguration }),
+      ...(options.loadedConfiguration === undefined ? {} : { loadedConfiguration: options.loadedConfiguration }),
       dependencies: {
         ...dependenciesFrom(options),
         diagnostics,
@@ -1767,10 +1602,7 @@ export async function runDaemon(
 /** Main entry point used by the package start script. */
 export function main(options: RunDaemonOptions): Promise<DaemonExitCode>;
 
-export function main(
-  argv?: readonly string[],
-  dependencies?: DaemonDependencies,
-): Promise<DaemonExitCode>;
+export function main(argv?: readonly string[], dependencies?: DaemonDependencies): Promise<DaemonExitCode>;
 
 export async function main(
   argvOrOptions: readonly string[] | RunDaemonOptions = process.argv.slice(2),

@@ -1,11 +1,7 @@
 import { readFileSync } from "node:fs";
 
 function hasOwn(value, property) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    Object.hasOwn(value, property)
-  );
+  return value !== null && typeof value === "object" && Object.hasOwn(value, property);
 }
 
 function normalizeLoadOutcome(message) {
@@ -61,10 +57,7 @@ export function createRestartPersistenceObserver({ statePath } = {}) {
         loadSession = message.result?.agentCapabilities?.loadSession === true;
       } else if (request.method === "session/load") {
         loadOutcome = normalizeLoadOutcome(message);
-      } else if (
-        request.method === "session/new" &&
-        typeof message.result?.sessionId === "string"
-      ) {
+      } else if (request.method === "session/new" && typeof message.result?.sessionId === "string") {
         newSessionId = message.result.sessionId;
       }
     },

@@ -50,10 +50,7 @@ void test("text boundaries collapse once and later tool updates retain their ori
   assert.deepEqual(presentation.accept(event), [initial]);
   assert.equal(initial.events.length, 1);
   const collapsed = presentation.render(initial);
-  assert.match(
-    collapsed.formattedBody,
-    /<details><summary>Past agent events \(1\)<\/summary>/,
-  );
+  assert.match(collapsed.formattedBody, /<details><summary>Past agent events \(1\)<\/summary>/);
   assert.match(collapsed.formattedBody, /updated &lt;text&gt;/);
   const [next] = presentation.accept(thought("next"));
   assert.equal(next?.index, 1);

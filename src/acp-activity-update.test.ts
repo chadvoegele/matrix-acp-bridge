@@ -14,9 +14,7 @@ function normalize(update: Record<string, unknown>) {
 
 function tool(update: Record<string, unknown>): AcpToolCallUpdate {
   const result = normalize({ sessionUpdate: "tool_call_update", ...update });
-  assert.ok(
-    result?.kind === "tool_call" || result?.kind === "tool_call_update",
-  );
+  assert.ok(result?.kind === "tool_call" || result?.kind === "tool_call_update");
   return result;
 }
 
@@ -68,12 +66,7 @@ void test("preserves ignored-kind aliases and drops invalid message IDs", () => 
 
 void test("accepts only text chunks and leaves ordinary messages unbounded", () => {
   for (const sessionUpdate of ["agent_message_chunk", "agent_thought_chunk"]) {
-    for (const content of [
-      null,
-      {},
-      { type: "image", text: "image" },
-      { type: "text", text: 1 },
-    ]) {
+    for (const content of [null, {}, { type: "image", text: "image" }, { type: "text", text: 1 }]) {
       assert.equal(normalize({ sessionUpdate, content }), undefined);
     }
   }
@@ -101,10 +94,7 @@ void test("bounds thoughts with one Unicode-safe budget including the message ID
   });
   assert.equal(result?.kind, "agent_thought_chunk");
   if (result?.kind !== "agent_thought_chunk") return;
-  assert.equal(
-    Buffer.byteLength(result.text, "utf8"),
-    ACP_ACTIVITY_UPDATE_MAX_BYTES - 4,
-  );
+  assert.equal(Buffer.byteLength(result.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 4);
   assert.equal(result.messageId, "id");
   assert.equal(result.textCut, true);
   assert.doesNotMatch(result.text, /�/u);
@@ -121,8 +111,7 @@ void test("bounds thoughts with one Unicode-safe budget including the message ID
     content: { type: "text", text: "" },
   });
   assert.equal(idOnly?.kind, "agent_thought_chunk");
-  if (idOnly?.kind === "agent_thought_chunk")
-    assert.equal(idOnly.textCut, true);
+  if (idOnly?.kind === "agent_thought_chunk") assert.equal(idOnly.textCut, true);
 });
 
 void test("shares the tool budget across identifiers, locations, content, terminal metadata, and raw input", () => {
@@ -168,10 +157,7 @@ void test("shares the tool budget across identifiers, locations, content, termin
     result.terminalOutput.data,
   ];
   assert.equal(
-    retained.reduce(
-      (bytes, value) => bytes + Buffer.byteLength(value, "utf8"),
-      0,
-    ),
+    retained.reduce((bytes, value) => bytes + Buffer.byteLength(value, "utf8"), 0),
     ACP_ACTIVITY_UPDATE_MAX_BYTES,
   );
 });
@@ -181,22 +167,13 @@ void test("retains terminal head and tail with original byte count only on trunc
   const result = tool({ _meta: { terminal_output: { data } } });
   assert.equal(result.activityCut, true);
   assert.equal(result.contentCut, undefined);
-  assert.equal(
-    result.terminalOutput?.originalBytes,
-    Buffer.byteLength(data, "utf8"),
-  );
+  assert.equal(result.terminalOutput?.originalBytes, Buffer.byteLength(data, "utf8"));
   assert.ok(result.terminalOutput?.data.startsWith("HEAD"));
   assert.ok(result.terminalOutput?.data.endsWith("TAIL"));
   assert.ok(result.terminalOutput?.data.includes("\n\n"));
   assert.doesNotMatch(result.terminalOutput.data, /�/u);
-  assert.ok(
-    Buffer.byteLength(result.terminalOutput.data, "utf8") <=
-      ACP_ACTIVITY_UPDATE_MAX_BYTES,
-  );
-  assert.deepEqual(
-    tool({ _meta: { terminal_output: { data: "small" } } }).terminalOutput,
-    { data: "small" },
-  );
+  assert.ok(Buffer.byteLength(result.terminalOutput.data, "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
+  assert.deepEqual(tool({ _meta: { terminal_output: { data: "small" } } }).terminalOutput, { data: "small" });
 });
 
 void test("normalizes optional fields, nulls, and JSON input without retaining raw objects", () => {
@@ -211,11 +188,7 @@ void test("normalizes optional fields, nulls, and JSON input without retaining r
     title: 8,
     kind: false,
     status: null,
-    locations: [
-      { path: "file", line: -1 },
-      { path: "other", line: 2 },
-      { path: 9 },
-    ],
+    locations: [{ path: "file", line: -1 }, { path: "other", line: 2 }, { path: 9 }],
     content,
     rawInput,
     rawOutput: null,

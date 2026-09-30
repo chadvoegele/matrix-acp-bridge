@@ -10,9 +10,7 @@ import test from "node:test";
 const execFile = promisify(execFileCallback);
 
 function moduleUrl(): string {
-  return pathToFileURL(
-    join(dirname(fileURLToPath(import.meta.url)), "node-indexeddb.js"),
-  ).href;
+  return pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "node-indexeddb.js")).href;
 }
 
 void test("Node IndexedDB crypto state survives a fresh process", async () => {
@@ -43,13 +41,9 @@ void test("Node IndexedDB crypto state survives a fresh process", async () => {
       await Promise.all([flushNodeIndexedDb(), flushNodeIndexedDb()]);
       process.exit(0);
     `;
-    await execFile(
-      process.execPath,
-      ["--input-type=module", "-e", initializeScript, databasePath],
-      {
-        timeout: 30_000,
-      },
-    );
+    await execFile(process.execPath, ["--input-type=module", "-e", initializeScript, databasePath], {
+      timeout: 30_000,
+    });
     const snapshot = await stat(join(databasePath, ".indexeddb.snapshot"));
     assert.equal(snapshot.mode & 0o077, 0);
 
@@ -72,13 +66,9 @@ void test("Node IndexedDB crypto state survives a fresh process", async () => {
       database.close();
       process.exit(0);
     `;
-    await execFile(
-      process.execPath,
-      ["--input-type=module", "-e", restoreScript, databasePath],
-      {
-        timeout: 30_000,
-      },
-    );
+    await execFile(process.execPath, ["--input-type=module", "-e", restoreScript, databasePath], {
+      timeout: 30_000,
+    });
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

@@ -10,8 +10,7 @@ export interface Clock {
 /** The production clock boundary used by timers in later modules. */
 export const systemClock: Clock = {
   now: () => Date.now(),
-  setTimeout: (callback, delayMs): TimerHandle =>
-    globalThis.setTimeout(callback, delayMs),
+  setTimeout: (callback, delayMs): TimerHandle => globalThis.setTimeout(callback, delayMs),
   clearTimeout: (handle): void => {
     globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>);
   },

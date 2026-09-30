@@ -112,9 +112,7 @@ function collectedText(value: CollectedAgentText | undefined): string {
     return value;
   }
   if (!Array.isArray(value)) {
-    throw new TypeError(
-      "response text must be a string or an array of strings",
-    );
+    throw new TypeError("response text must be a string or an array of strings");
   }
   for (const chunk of value) {
     if (typeof chunk !== "string") {
@@ -157,16 +155,11 @@ function codePointPrefix(value: string, maxBytes: number): string {
  * Bound agent output by UTF-8 bytes while keeping a valid code-point prefix.
  * The truncation marker itself is included in the aggregate limit.
  */
-export function truncateAgentText(
-  value: string,
-  maxOutputBytes: number,
-): string {
+export function truncateAgentText(value: string, maxOutputBytes: number): string {
   assertPositiveInteger(maxOutputBytes, "maxOutputBytes");
   const markerBytes = utf8ByteLength(OUTPUT_TRUNCATION_MARKER);
   if (maxOutputBytes < markerBytes) {
-    throw new RangeError(
-      `maxOutputBytes must be at least ${markerBytes} bytes for the truncation marker`,
-    );
+    throw new RangeError(`maxOutputBytes must be at least ${markerBytes} bytes for the truncation marker`);
   }
   if (utf8ByteLength(value) <= maxOutputBytes) {
     return value;
@@ -174,11 +167,7 @@ export function truncateAgentText(
   return `${codePointPrefix(value, maxOutputBytes - markerBytes)}${OUTPUT_TRUNCATION_MARKER}`;
 }
 
-function lastParagraphBoundary(
-  value: string,
-  start: number,
-  maxEnd: number,
-): number | undefined {
+function lastParagraphBoundary(value: string, start: number, maxEnd: number): number | undefined {
   let last: number | undefined;
   let index = value.indexOf("\n\n", start);
   while (index >= 0) {
@@ -194,11 +183,7 @@ function lastParagraphBoundary(
   return last;
 }
 
-function lastLineBoundary(
-  value: string,
-  start: number,
-  maxEnd: number,
-): number | undefined {
+function lastLineBoundary(value: string, start: number, maxEnd: number): number | undefined {
   let last: number | undefined;
   let index = value.indexOf("\n", start);
   while (index >= 0) {
@@ -214,11 +199,7 @@ function lastLineBoundary(
   return last;
 }
 
-function lastGraphemeBoundary(
-  value: string,
-  start: number,
-  maxEnd: number,
-): number | undefined {
+function lastGraphemeBoundary(value: string, start: number, maxEnd: number): number | undefined {
   const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   const remainder = value.slice(start);
   let last: number | undefined;
@@ -248,16 +229,10 @@ function codePointEnd(value: string, start: number, maxBytes: number): number {
   return end;
 }
 
-function fittingChunkEnd(
-  value: string,
-  start: number,
-  maxBytes: number,
-): number {
+function fittingChunkEnd(value: string, start: number, maxBytes: number): number {
   const maxCodePointEnd = codePointEnd(value, start, maxBytes);
   if (maxCodePointEnd === start) {
-    throw new RangeError(
-      "maxMatrixMessageBytes cannot fit one Unicode code point",
-    );
+    throw new RangeError("maxMatrixMessageBytes cannot fit one Unicode code point");
   }
 
   // Delimiters belong to the preceding part.  Paragraph boundaries have
@@ -270,11 +245,7 @@ function fittingChunkEnd(
   );
 }
 
-function splitWithAssumedPartCount(
-  value: string,
-  maxMatrixMessageBytes: number,
-  assumedPartCount: number,
-): string[] {
+function splitWithAssumedPartCount(value: string, maxMatrixMessageBytes: number, assumedPartCount: number): string[] {
   const parts: string[] = [];
   let offset = 0;
   while (offset < value.length) {
@@ -283,9 +254,7 @@ function splitWithAssumedPartCount(
     const prefixBytes = utf8ByteLength(prefix);
     const chunkCapacity = maxMatrixMessageBytes - prefixBytes;
     if (chunkCapacity <= 0) {
-      throw new RangeError(
-        "maxMatrixMessageBytes cannot fit a multipart prefix",
-      );
+      throw new RangeError("maxMatrixMessageBytes cannot fit a multipart prefix");
     }
     const end = fittingChunkEnd(value, offset, chunkCapacity);
     if (end <= offset) {
@@ -301,19 +270,13 @@ function splitWithAssumedPartCount(
  * Split a rendered response into bounded Matrix bodies.  Multipart prefixes
  * are solved iteratively because their denominator contributes to capacity.
  */
-export function splitMatrixResponseText(
-  value: string,
-  maxMatrixMessageBytes: number,
-): string[] {
+export function splitMatrixResponseText(value: string, maxMatrixMessageBytes: number): string[] {
   assertPositiveInteger(maxMatrixMessageBytes, "maxMatrixMessageBytes");
   if (utf8ByteLength(value) <= maxMatrixMessageBytes) {
     return [value];
   }
 
-  let assumedPartCount = Math.max(
-    2,
-    Math.ceil(utf8ByteLength(value) / maxMatrixMessageBytes),
-  );
+  let assumedPartCount = Math.max(2, Math.ceil(utf8ByteLength(value) / maxMatrixMessageBytes));
   const seen = new Set<number>();
 
   // Prefix lengths change only when a part-count or part-number digit count
@@ -323,11 +286,7 @@ export function splitMatrixResponseText(
       break;
     }
     seen.add(assumedPartCount);
-    const parts = splitWithAssumedPartCount(
-      value,
-      maxMatrixMessageBytes,
-      assumedPartCount,
-    );
+    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, assumedPartCount);
     if (parts.length === assumedPartCount) {
       return parts;
     }
@@ -339,11 +298,7 @@ export function splitMatrixResponseText(
   // nonempty value when every prefix can fit at least one code point.
   const upperBound = Math.max(2, value.length);
   for (let candidate = 2; candidate <= upperBound; candidate += 1) {
-    const parts = splitWithAssumedPartCount(
-      value,
-      maxMatrixMessageBytes,
-      candidate,
-    );
+    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, candidate);
     if (parts.length === candidate) {
       return parts;
     }
@@ -387,10 +342,7 @@ export function computeMatrixTransactionId(
           oneBasedPartNumber: oneBasedPartNumber as number,
         }
       : inputOrRoomId;
-  if (
-    typeof input.roomId !== "string" ||
-    typeof input.inboundEventId !== "string"
-  ) {
+  if (typeof input.roomId !== "string" || typeof input.inboundEventId !== "string") {
     throw new TypeError("transaction IDs require string room and event IDs");
   }
   validateTransactionPartNumber(input.oneBasedPartNumber);
@@ -447,11 +399,7 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
     };
   }
 
-  if (
-    outcome.kind === "method_error" ||
-    outcome.kind === "transport_error" ||
-    outcome.kind === "protocol_error"
-  ) {
+  if (outcome.kind === "method_error" || outcome.kind === "transport_error" || outcome.kind === "protocol_error") {
     return { responseKind: "error", agentText: "" };
   }
 
@@ -472,10 +420,7 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
   };
 }
 
-function normalizeResponseText(
-  outcome: RenderableResponse,
-  maxOutputBytes: number,
-): NormalizedResponseText {
+function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: number): NormalizedResponseText {
   const descriptor = descriptorFromOutcome(outcome);
   const { responseKind, agentText } = descriptor;
 
@@ -509,26 +454,15 @@ function normalizeResponseText(
   };
 }
 
-function renderFromRequest(
-  request: RenderMatrixResponseRequest,
-): RenderedMatrixPart[] {
-  if (
-    typeof request.roomId !== "string" ||
-    typeof request.inboundEventId !== "string"
-  ) {
+function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrixPart[] {
+  if (typeof request.roomId !== "string" || typeof request.inboundEventId !== "string") {
     throw new TypeError("responses require string room and inbound event IDs");
   }
   assertPositiveInteger(request.maxOutputBytes, "maxOutputBytes");
   assertPositiveInteger(request.maxMatrixMessageBytes, "maxMatrixMessageBytes");
 
-  const normalized = normalizeResponseText(
-    request.outcome,
-    request.maxOutputBytes,
-  );
-  const bodies = splitMatrixResponseText(
-    normalized.text,
-    request.maxMatrixMessageBytes,
-  );
+  const normalized = normalizeResponseText(request.outcome, request.maxOutputBytes);
+  const bodies = splitMatrixResponseText(normalized.text, request.maxMatrixMessageBytes);
   const partCount = bodies.length;
 
   return bodies.map((body, index) => {
@@ -550,9 +484,7 @@ function renderFromRequest(
   });
 }
 
-export function renderMatrixResponse(
-  request: RenderMatrixResponseRequest,
-): RenderedMatrixPart[];
+export function renderMatrixResponse(request: RenderMatrixResponseRequest): RenderedMatrixPart[];
 
 export function renderMatrixResponse(
   roomId: MatrixRoomId,
@@ -562,24 +494,17 @@ export function renderMatrixResponse(
   maxMatrixMessageBytes: number,
 ): RenderedMatrixPart[];
 
-export function renderMatrixResponse(
-  outcome: RenderableResponse,
-  context: ResponseRenderContext,
-): RenderedMatrixPart[];
+export function renderMatrixResponse(outcome: RenderableResponse, context: ResponseRenderContext): RenderedMatrixPart[];
 
 export function renderMatrixResponse(
-  requestOrRoomId:
-    RenderMatrixResponseRequest | RenderableResponse | MatrixRoomId,
+  requestOrRoomId: RenderMatrixResponseRequest | RenderableResponse | MatrixRoomId,
   inboundEventIdOrContext?: MatrixEventId | ResponseRenderContext,
   outcome?: RenderableResponse,
   maxOutputBytes?: number,
   maxMatrixMessageBytes?: number,
 ): RenderedMatrixPart[] {
   if (typeof requestOrRoomId !== "string") {
-    if (
-      typeof inboundEventIdOrContext === "object" &&
-      inboundEventIdOrContext !== null
-    ) {
+    if (typeof inboundEventIdOrContext === "object" && inboundEventIdOrContext !== null) {
       return renderFromRequest({
         ...inboundEventIdOrContext,
         outcome: requestOrRoomId as RenderableResponse,
@@ -594,9 +519,7 @@ export function renderMatrixResponse(
     maxOutputBytes === undefined ||
     maxMatrixMessageBytes === undefined
   ) {
-    throw new TypeError(
-      "renderMatrixResponse requires room, event, outcome, and limits",
-    );
+    throw new TypeError("renderMatrixResponse requires room, event, outcome, and limits");
   }
   return renderFromRequest({
     roomId: requestOrRoomId,

@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  RateLimitedDiagnosticSink,
-  StderrDiagnosticSink,
-} from "./diagnostics.js";
+import { RateLimitedDiagnosticSink, StderrDiagnosticSink } from "./diagnostics.js";
 import { FakeClock } from "./test-support/fake-clock.js";
 
 void test("structured diagnostics are deterministic and use the injected stderr writer", () => {

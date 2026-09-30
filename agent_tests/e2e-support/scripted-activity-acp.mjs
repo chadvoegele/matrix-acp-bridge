@@ -3,8 +3,7 @@
 import { createInterface } from "node:readline";
 
 const sessionId = "scripted-activity-session";
-const send = (frame) =>
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...frame })}\n`);
+const send = (frame) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...frame })}\n`);
 const pause = (ms = 250) => new Promise((resolve) => setTimeout(resolve, ms));
 const update = async (value) => {
   send({ method: "session/update", params: { sessionId, update: value } });
@@ -31,8 +30,7 @@ const tool = (toolCallId, title, kind, rawInput) =>
     status: "pending",
     rawInput,
   });
-const change = (toolCallId, fields) =>
-  update({ sessionUpdate: "tool_call_update", toolCallId, ...fields });
+const change = (toolCallId, fields) => update({ sessionUpdate: "tool_call_update", toolCallId, ...fields });
 
 async function scenario(marker) {
   await thought("**A live thought**", "opening");
@@ -104,8 +102,7 @@ async function scenario(marker) {
       },
     },
   });
-  for (let index = 5; index <= 10; index += 1)
-    await thought(`batch thought ${index}`, `batch-${index}`);
+  for (let index = 5; index <= 10; index += 1) await thought(`batch thought ${index}`, `batch-${index}`);
   await thought("batch thought 11", "batch-11");
   // The wire runners assert this update targets an original archived batch.
   await change("read", {
@@ -148,9 +145,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       break;
     }
     case "session/prompt": {
-      const prompt =
-        frame.params?.prompt?.find?.((part) => part.type === "text")?.text ??
-        "";
+      const prompt = frame.params?.prompt?.find?.((part) => part.type === "text")?.text ?? "";
       const marker = /^ACTIVITY_WIRE_([A-F0-9]{12})$/u.exec(prompt)?.[1];
       if (!marker) {
         send({

@@ -1,8 +1,5 @@
 import { markdownToMatrixHtml } from "./matrix-markdown.js";
-import {
-  matrixHtmlContentBytes,
-  type MatrixHtmlBody,
-} from "./matrix-message-content.js";
+import { matrixHtmlContentBytes, type MatrixHtmlBody } from "./matrix-message-content.js";
 
 export interface MatrixTextChunk {
   readonly rendered: MatrixHtmlBody;
@@ -33,7 +30,5 @@ export function renderMatrixTextChunk(
       low = middle + 1;
     } else high = middle - 1;
   }
-  return rendered === undefined
-    ? undefined
-    : { rendered, nextOffset: offset + fitting };
+  return rendered === undefined ? undefined : { rendered, nextOffset: offset + fitting };
 }

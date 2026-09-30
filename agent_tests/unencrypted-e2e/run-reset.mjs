@@ -3,24 +3,12 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-  runSender as runSenderProcess,
-  startBridgePair,
-  stopBridgePair,
-} from "../e2e-support/acp.mjs";
-import {
-  defaultEnvironmentPath,
-  readEnvironment,
-  testDir,
-  writePrivateFile,
-} from "./lib.mjs";
+import { runSender as runSenderProcess, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
+import { defaultEnvironmentPath, readEnvironment, testDir, writePrivateFile } from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
-const sessionIdsPath = join(
-  environment.bridge.stateDir,
-  "e2e-session-ids.json",
-);
+const sessionIdsPath = join(environment.bridge.stateDir, "e2e-session-ids.json");
 const runId = randomBytes(6).toString("hex").toUpperCase();
 const initialPrompt = `Reply with exactly: RESET_E2E_BEFORE_${runId}`;
 const initialResponse = `RESET_E2E_BEFORE_${runId}`;
@@ -48,8 +36,7 @@ function startObserver() {
     if (message?.method === "session/prompt") {
       observed.prompts.push({
         sessionId: message.params?.sessionId,
-        text: message.params?.prompt?.find?.((part) => part?.type === "text")
-          ?.text,
+        text: message.params?.prompt?.find?.((part) => part?.type === "text")?.text,
       });
     }
   };
@@ -59,12 +46,8 @@ function startObserver() {
     pending.delete(message.id);
     if (message.error !== undefined) return;
     if (method === "initialize") {
-      observed.loadSessionSupported =
-        message.result?.agentCapabilities?.loadSession === true;
-    } else if (
-      method === "session/new" &&
-      typeof message.result?.sessionId === "string"
-    ) {
+      observed.loadSessionSupported = message.result?.agentCapabilities?.loadSession === true;
+    } else if (method === "session/new" && typeof message.result?.sessionId === "string") {
       observed.newSessionIds.push(message.result.sessionId);
     }
   };
@@ -74,10 +57,7 @@ function startObserver() {
 async function persistObservedSessionIds(observed) {
   const sessionIds = [...new Set(observed.newSessionIds)];
   if (sessionIds.length > 0) {
-    await writePrivateFile(
-      sessionIdsPath,
-      `${JSON.stringify(sessionIds, null, 2)}\n`,
-    );
+    await writePrivateFile(sessionIdsPath, `${JSON.stringify(sessionIds, null, 2)}\n`);
   }
 }
 
@@ -113,27 +93,15 @@ async function runSender(prompt, expected) {
 
 async function assertBridgeState(observed, expectedSessionId) {
   if (!observed.loadSessionSupported) return;
-  const state = JSON.parse(
-    await readFile(
-      join(environment.bridge.stateDir, "bridge-state.json"),
-      "utf8",
-    ),
-  );
+  const state = JSON.parse(await readFile(join(environment.bridge.stateDir, "bridge-state.json"), "utf8"));
   if (state.sessions?.[environment.roomId] !== expectedSessionId) {
-    throw new Error(
-      "bridge state does not map the room to the post-reset ACP session",
-    );
+    throw new Error("bridge state does not map the room to the post-reset ACP session");
   }
 }
 
 async function assertResetRemovedMapping(observed) {
   if (!observed.loadSessionSupported) return;
-  const state = JSON.parse(
-    await readFile(
-      join(environment.bridge.stateDir, "bridge-state.json"),
-      "utf8",
-    ),
-  );
+  const state = JSON.parse(await readFile(join(environment.bridge.stateDir, "bridge-state.json"), "utf8"));
   if (state.sessions?.[environment.roomId] !== undefined) {
     throw new Error("reset did not remove the room's bridge-state mapping");
   }
@@ -181,9 +149,7 @@ try {
   await assertBridgeState(pair.observed, pair.observed.newSessionIds[1]);
   await stopPair(pair);
   pair = undefined;
-  process.stdout.write(
-    "/reset E2E test passed with two isolated ACP sessions.\n",
-  );
+  process.stdout.write("/reset E2E test passed with two isolated ACP sessions.\n");
 } catch (error) {
   if (pair !== undefined) {
     process.stderr.write(pair.bridgeDiagnostics());

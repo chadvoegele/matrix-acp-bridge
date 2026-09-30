@@ -20,10 +20,7 @@ const LIMITS = {
   maxMatrixMessageBytes: 128,
 };
 
-function render(
-  outcome: RenderableResponse,
-  limits: typeof LIMITS = LIMITS,
-): RenderedMatrixPart[] {
+function render(outcome: RenderableResponse, limits: typeof LIMITS = LIMITS): RenderedMatrixPart[] {
   return renderMatrixResponse({
     roomId: ROOM_ID,
     inboundEventId: EVENT_ID,
@@ -39,11 +36,7 @@ void test("renders every response kind with exact fallback and status text", () 
     [{ kind: "oversized" }, "oversized", RESPONSE_TEXT.oversized],
     [{ kind: "timeout" }, "timeout", RESPONSE_TEXT.timeout],
     [{ kind: "max_tokens" }, "max_tokens", RESPONSE_TEXT.max_tokens],
-    [
-      { kind: "max_turn_requests" },
-      "max_turn_requests",
-      RESPONSE_TEXT.max_turn_requests,
-    ],
+    [{ kind: "max_turn_requests" }, "max_turn_requests", RESPONSE_TEXT.max_turn_requests],
     [{ kind: "refusal" }, "refusal", RESPONSE_TEXT.refusal],
     [{ kind: "cancelled" }, "cancelled", RESPONSE_TEXT.cancelled],
     [{ kind: "error" }, "error", RESPONSE_TEXT.error],
@@ -95,10 +88,7 @@ void test("joins non-end stop status after agent text and keeps status outside t
     stopReason: "max_tokens",
     text: partial,
   });
-  assert.equal(
-    response[0]?.content.body,
-    joinTextAndStatus(partial, RESPONSE_TEXT.max_tokens),
-  );
+  assert.equal(response[0]?.content.body, joinTextAndStatus(partial, RESPONSE_TEXT.max_tokens));
 
   const markerBytes = Buffer.byteLength(OUTPUT_TRUNCATION_MARKER, "utf8");
   const maxOutputBytes = markerBytes + 3;
@@ -110,14 +100,8 @@ void test("joins non-end stop status after agent text and keeps status outside t
     },
     { maxOutputBytes, maxMatrixMessageBytes: 128 },
   );
-  assert.equal(
-    truncated[0]?.content.body,
-    `aé${OUTPUT_TRUNCATION_MARKER}\n\n${RESPONSE_TEXT.max_turn_requests}`,
-  );
-  assert.equal(
-    Buffer.byteLength(`aé${OUTPUT_TRUNCATION_MARKER}`, "utf8"),
-    maxOutputBytes,
-  );
+  assert.equal(truncated[0]?.content.body, `aé${OUTPUT_TRUNCATION_MARKER}\n\n${RESPONSE_TEXT.max_turn_requests}`);
+  assert.equal(Buffer.byteLength(`aé${OUTPUT_TRUNCATION_MARKER}`, "utf8"), maxOutputBytes);
 });
 
 void test("truncates only at valid UTF-8 code-point boundaries", () => {
@@ -134,22 +118,13 @@ function removePrefix(body: string): string {
   return body.replace(/^\[\d+\/\d+\]\n/u, "");
 }
 
-function assertBoundedAndReconstruct(
-  parts: readonly RenderedMatrixPart[],
-  original: string,
-  maxBytes: number,
-): void {
+function assertBoundedAndReconstruct(parts: readonly RenderedMatrixPart[], original: string, maxBytes: number): void {
   assert.ok(parts.length > 1);
   assert.equal(
-    parts.every(
-      (part) => Buffer.byteLength(part.content.body, "utf8") <= maxBytes,
-    ),
+    parts.every((part) => Buffer.byteLength(part.content.body, "utf8") <= maxBytes),
     true,
   );
-  assert.equal(
-    parts.map((part) => removePrefix(part.content.body)).join(""),
-    original,
-  );
+  assert.equal(parts.map((part) => removePrefix(part.content.body)).join(""), original);
   assert.equal(new Set(parts.map((part) => part.partCount)).size, 1);
   assert.deepEqual(
     parts.map((part) => part.partNumber),
@@ -248,10 +223,7 @@ void test("uses extended grapheme boundaries and falls back to code points for a
 
 void test("iterates when prefixes change the part count and emits relation-free Matrix text", () => {
   const value = "x".repeat(11);
-  const parts = render(
-    { kind: "agent", text: value },
-    { maxOutputBytes: 64, maxMatrixMessageBytes: 10 },
-  );
+  const parts = render({ kind: "agent", text: value }, { maxOutputBytes: 64, maxMatrixMessageBytes: 10 });
   assert.equal(parts.length, 3);
   assertBoundedAndReconstruct(parts, value, 10);
   assert.equal(parts[0]?.content.msgtype, "m.text");

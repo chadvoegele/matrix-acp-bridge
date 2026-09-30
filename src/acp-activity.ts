@@ -1,8 +1,4 @@
-import type {
-  AcpToolCallUpdate,
-  AcpToolContent,
-  AcpUpdate,
-} from "./acp-activity-update.js";
+import type { AcpToolCallUpdate, AcpToolContent, AcpUpdate } from "./acp-activity-update.js";
 import { isRecord, stringProperty } from "./object-validation.js";
 import { takeBytes } from "./bounded-text.js";
 
@@ -53,9 +49,7 @@ export function cleanActivityText(value: string): string {
   return value.replaceAll(ansiSequence, "").replaceAll(controlCharacter, "");
 }
 
-function mcpOperation(
-  value: AcpToolCallUpdate["rawInput"],
-): string | undefined {
+function mcpOperation(value: AcpToolCallUpdate["rawInput"]): string | undefined {
   if (!isRecord(value)) return undefined;
   const nested = value.call;
   const candidate =
@@ -63,19 +57,12 @@ function mcpOperation(
       ? nested
       : (stringProperty(nested, "tool", "toolName", "name") ??
         stringProperty(value, "tool", "toolName", "name", "describe"));
-  if (candidate !== undefined && /^[\w.\-/:]{1,128}$/u.test(candidate))
-    return candidate;
+  if (candidate !== undefined && /^[\w.\-/:]{1,128}$/u.test(candidate)) return candidate;
   return typeof value.search === "string" ? "search" : undefined;
 }
 
 function inputPath(value: AcpToolCallUpdate["rawInput"]): string | undefined {
-  if (
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    "path" in value &&
-    typeof value.path === "string"
-  )
+  if (value && typeof value === "object" && !Array.isArray(value) && "path" in value && typeof value.path === "string")
     return value.path;
   return undefined;
 }
@@ -95,15 +82,9 @@ function boundedContent(content: readonly AcpToolContent[]): {
       left -= Buffer.byteLength(bounded.text, "utf8");
       cut ||= bounded.cut;
     } else {
-      const old =
-        typeof item.oldText === "string"
-          ? takeBytes(cleanActivityText(item.oldText), left)
-          : undefined;
+      const old = typeof item.oldText === "string" ? takeBytes(cleanActivityText(item.oldText), left) : undefined;
       if (old) left -= Buffer.byteLength(old.text, "utf8");
-      const next =
-        typeof item.newText === "string"
-          ? takeBytes(cleanActivityText(item.newText), left)
-          : undefined;
+      const next = typeof item.newText === "string" ? takeBytes(cleanActivityText(item.newText), left) : undefined;
       if (next) left -= Buffer.byteLength(next.text, "utf8");
       const oldField = item.oldText === null ? { oldText: null } : {};
       result.push({
@@ -121,9 +102,7 @@ function boundedContent(content: readonly AcpToolContent[]): {
   return { content: result, cut };
 }
 
-function rawFallback(
-  value: AcpToolCallUpdate["rawOutput"],
-): BoundedText | undefined {
+function rawFallback(value: AcpToolCallUpdate["rawOutput"]): BoundedText | undefined {
   if (
     !value ||
     typeof value !== "object" ||
@@ -136,13 +115,7 @@ function rawFallback(
   let cut = false;
   let found = false;
   for (const item of value.content as readonly unknown[]) {
-    if (
-      !item ||
-      typeof item !== "object" ||
-      Array.isArray(item) ||
-      !("text" in item) ||
-      typeof item.text !== "string"
-    )
+    if (!item || typeof item !== "object" || Array.isArray(item) || !("text" in item) || typeof item.text !== "string")
       continue;
     const separator = found ? "\n\n" : "";
     const bounded = takeBytes(
@@ -179,9 +152,7 @@ export class AcpActivityModel {
       return undefined;
     }
     if (update.kind === "agent_thought_chunk") {
-      let event = update.messageId
-        ? this.#thoughts.get(update.messageId)
-        : this.#lastThought;
+      let event = update.messageId ? this.#thoughts.get(update.messageId) : this.#lastThought;
       if (!update.text.trim() && !event) return undefined;
       if (!event) {
         event = {
@@ -193,23 +164,16 @@ export class AcpActivityModel {
         this.events.push(event);
         if (update.messageId) this.#thoughts.set(update.messageId, event);
       }
-      const capacity =
-        ACTIVITY_RESULT_DETAIL_BYTES - Buffer.byteLength(event.text, "utf8");
-      const bounded = takeBytes(
-        cleanActivityText(update.text),
-        Math.max(0, capacity),
-      );
+      const capacity = ACTIVITY_RESULT_DETAIL_BYTES - Buffer.byteLength(event.text, "utf8");
+      const bounded = takeBytes(cleanActivityText(update.text), Math.max(0, capacity));
       event.text += bounded.text;
       event.cut ||= bounded.cut || update.textCut === true;
       this.#lastThought = event;
       return event;
     }
-    if (update.kind !== "tool_call" && update.kind !== "tool_call_update")
-      return undefined;
+    if (update.kind !== "tool_call" && update.kind !== "tool_call_update") return undefined;
     this.#lastThought = undefined;
-    let event = update.toolCallId
-      ? this.#tools.get(update.toolCallId)
-      : undefined;
+    let event = update.toolCallId ? this.#tools.get(update.toolCallId) : undefined;
     if (!event) {
       if (update.kind !== "tool_call") return undefined;
       event = {
@@ -228,16 +192,12 @@ export class AcpActivityModel {
       if (update.toolCallId) this.#tools.set(update.toolCallId, event);
     }
     if (update.title !== undefined)
-      event.title = takeBytes(
-        cleanActivityText(update.title),
-        ACTIVITY_TITLE_DETAIL_BYTES + 16,
-      ).text;
+      event.title = takeBytes(cleanActivityText(update.title), ACTIVITY_TITLE_DETAIL_BYTES + 16).text;
     if (update.toolKind !== undefined) event.toolKind = update.toolKind;
     if (update.status !== undefined) event.status = update.status;
     if (update.rawInput !== undefined) {
       const path = inputPath(update.rawInput);
-      if (path !== undefined)
-        event.path = takeBytes(cleanActivityText(path), 1024).text;
+      if (path !== undefined) event.path = takeBytes(cleanActivityText(path), 1024).text;
       if (
         update.rawInput &&
         typeof update.rawInput === "object" &&
@@ -250,18 +210,11 @@ export class AcpActivityModel {
       if (operation !== undefined) event.mcpOperation = operation;
       if (event.title === "mcpScript") {
         const script = stringProperty(update.rawInput, "code");
-        if (script !== undefined)
-          event.script = takeBytes(
-            cleanActivityText(script),
-            ACTIVITY_RESULT_DETAIL_BYTES,
-          );
+        if (script !== undefined) event.script = takeBytes(cleanActivityText(script), ACTIVITY_RESULT_DETAIL_BYTES);
       }
     }
     if (update.locations?.[0]?.path && !event.path)
-      event.path = takeBytes(
-        cleanActivityText(update.locations[0].path),
-        1024,
-      ).text;
+      event.path = takeBytes(cleanActivityText(update.locations[0].path), 1024).text;
     if (update.content !== undefined) {
       const bounded = boundedContent(update.content);
       if (bounded.content.length > 0) {
@@ -269,11 +222,9 @@ export class AcpActivityModel {
         event.contentCut = bounded.cut || update.contentCut === true;
       }
     }
-    if (update.rawOutput !== undefined)
-      event.rawFallback = rawFallback(update.rawOutput);
+    if (update.rawOutput !== undefined) event.rawFallback = rawFallback(update.rawOutput);
     event.contentCut ||= update.activityCut === true;
-    if (event.script && update.activityCut)
-      event.script = { ...event.script, cut: true };
+    if (event.script && update.activityCut) event.script = { ...event.script, cut: true };
     if (update.terminalOutput?.data) {
       const chunk = cleanActivityText(update.terminalOutput.data);
       const bytes = Buffer.byteLength(chunk, "utf8");
@@ -281,21 +232,12 @@ export class AcpActivityModel {
         Number.MAX_SAFE_INTEGER,
         event.terminalBytes + (update.terminalOutput.originalBytes ?? bytes),
       );
-      if (event.terminalBytes <= ACTIVITY_RESULT_DETAIL_BYTES)
-        event.terminalSmall += chunk;
+      if (event.terminalBytes <= ACTIVITY_RESULT_DETAIL_BYTES) event.terminalSmall += chunk;
       else {
-        if (event.terminalHead === "")
-          event.terminalHead = takeBytes(
-            event.terminalSmall + chunk,
-            6142,
-          ).text;
+        if (event.terminalHead === "") event.terminalHead = takeBytes(event.terminalSmall + chunk, 6142).text;
         event.terminalSmall = "";
       }
-      event.terminalTail = takeBytes(
-        event.terminalTail + chunk,
-        2048,
-        true,
-      ).text;
+      event.terminalTail = takeBytes(event.terminalTail + chunk, 2048, true).text;
     }
     return event;
   }

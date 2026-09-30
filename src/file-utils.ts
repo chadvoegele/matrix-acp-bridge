@@ -1,9 +1,7 @@
 import { promises as fs } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
-export async function closeQuietly(
-  handle: FileHandle | undefined,
-): Promise<void> {
+export async function closeQuietly(handle: FileHandle | undefined): Promise<void> {
   if (handle === undefined) {
     return;
   }

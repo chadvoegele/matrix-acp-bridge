@@ -33,16 +33,11 @@ import type {
 } from "./matrix-client.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 import type { LoadedConfiguration, StateLockLike } from "./config.js";
-import {
-  ensureCryptoDatabaseDirectory,
-  openCryptoStateStore,
-} from "./crypto-state.js";
+import { ensureCryptoDatabaseDirectory, openCryptoStateStore } from "./crypto-state.js";
 
 const ROOM_ID = "!room:example.org";
 const USER_ID = "@bridge:example.org";
-const DEFAULT_STATE_DIR = await mkdtemp(
-  join(tmpdir(), "matrix-acp-lifecycle-default-"),
-);
+const DEFAULT_STATE_DIR = await mkdtemp(join(tmpdir(), "matrix-acp-lifecycle-default-"));
 
 const CONFIG: BridgeConfig = {
   stateDir: DEFAULT_STATE_DIR,
@@ -125,17 +120,12 @@ class FakeAcp implements AcpClient {
 
   readonly log: string[];
 
-  constructor(
-    log: string[],
-    initializeAction: () => Promise<void> = async () => {},
-  ) {
+  constructor(log: string[], initializeAction: () => Promise<void> = async () => {}) {
     this.log = log;
     this.initializeAction = initializeAction;
   }
 
-  async initialize(
-    _options: AcpInitializeOptions,
-  ): Promise<{ readonly protocolVersion: 1 }> {
+  async initialize(_options: AcpInitializeOptions): Promise<{ readonly protocolVersion: 1 }> {
     this.initializeCalls += 1;
     this.log.push("acp.initialize");
     await this.initializeAction();
@@ -146,11 +136,7 @@ class FakeAcp implements AcpClient {
     return { sessionId: "session-1" };
   }
 
-  async prompt(
-    _sessionId: string,
-    _text: string,
-    _cancellation: CancellationSignal,
-  ): Promise<AcpOutcome> {
+  async prompt(_sessionId: string, _text: string, _cancellation: CancellationSignal): Promise<AcpOutcome> {
     return { kind: "turn", stopReason: "end_turn" };
   }
 
@@ -179,9 +165,7 @@ class FakeMatrix implements MatrixClientAdapter {
 
   readonly syncListeners = new Set<(change: MatrixSyncStateChange) => void>();
 
-  readonly syncBatchListeners = new Set<
-    (batch: MatrixSyncBatch) => void | Promise<void>
-  >();
+  readonly syncBatchListeners = new Set<(batch: MatrixSyncBatch) => void | Promise<void>>();
 
   whoamiCalls = 0;
 
@@ -242,9 +226,7 @@ class FakeMatrix implements MatrixClientAdapter {
     return () => this.syncListeners.delete(listener);
   }
 
-  onSyncBatch(
-    listener: (batch: MatrixSyncBatch) => void | Promise<void>,
-  ): Unsubscribe {
+  onSyncBatch(listener: (batch: MatrixSyncBatch) => void | Promise<void>): Unsubscribe {
     this.syncBatchSubscriptionCalls += 1;
     this.syncBatchListeners.add(listener);
     return () => this.syncBatchListeners.delete(listener);
@@ -372,19 +354,12 @@ interface Rig {
   readonly log: string[];
 }
 
-function loadedConfiguration(
-  lock: FakeStateLock,
-  config: BridgeConfig = CONFIG,
-): LoadedConfiguration {
+function loadedConfiguration(lock: FakeStateLock, config: BridgeConfig = CONFIG): LoadedConfiguration {
   return { config, accessToken: "secret-token", stateLock: lock };
 }
 
-async function withRequiredCryptoState(
-  run: (stateDir: string) => Promise<void>,
-): Promise<void> {
-  const stateDir = await mkdtemp(
-    join(tmpdir(), "matrix-acp-required-lifecycle-"),
-  );
+async function withRequiredCryptoState(run: (stateDir: string) => Promise<void>): Promise<void> {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-required-lifecycle-"));
   try {
     await ensureCryptoDatabaseDirectory(stateDir);
     const store = await openCryptoStateStore({
@@ -421,12 +396,8 @@ function makeRig(
   const bridge =
     options.bridge ??
     new FakeBridge(log, acp, matrix, {
-      ...(options.initializeAction === undefined
-        ? {}
-        : { initializeAction: options.initializeAction }),
-      ...(options.stopAction === undefined
-        ? {}
-        : { stopAction: options.stopAction }),
+      ...(options.initializeAction === undefined ? {} : { initializeAction: options.initializeAction }),
+      ...(options.stopAction === undefined ? {} : { stopAction: options.stopAction }),
     });
   const dependencies: DaemonDependencies = {
     clock,
@@ -471,27 +442,14 @@ void test("parses exactly --config and rejects extra or alternate arguments", ()
 });
 
 void test("parses the exact crypto bootstrap and verification command forms", () => {
-  assert.deepEqual(
-    parseCommandLine(["--config", "bridge.toml", "crypto", "bootstrap"]),
-    {
-      configPath: "bridge.toml",
-      command: { kind: "bootstrap" },
-    },
-  );
-  assert.deepEqual(
-    parseCommandLine([
-      "--config",
-      "bridge.toml",
-      "crypto",
-      "verify",
-      "--device",
-      "TRUSTED01",
-    ]),
-    {
-      configPath: "bridge.toml",
-      command: { kind: "verify", deviceId: "TRUSTED01" },
-    },
-  );
+  assert.deepEqual(parseCommandLine(["--config", "bridge.toml", "crypto", "bootstrap"]), {
+    configPath: "bridge.toml",
+    command: { kind: "bootstrap" },
+  });
+  assert.deepEqual(parseCommandLine(["--config", "bridge.toml", "crypto", "verify", "--device", "TRUSTED01"]), {
+    configPath: "bridge.toml",
+    command: { kind: "verify", deviceId: "TRUSTED01" },
+  });
 
   for (const args of [
     ["--config", "bridge.toml", "crypto"],
@@ -499,23 +457,8 @@ void test("parses the exact crypto bootstrap and verification command forms", ()
     ["--config", "bridge.toml", "crypto", "verify", "--device"],
     ["--config", "bridge.toml", "crypto", "verify", "TRUSTED01", "--device"],
     ["--config", "bridge.toml", "crypto", "bootstrap", "extra"],
-    [
-      "--config",
-      "bridge.toml",
-      "crypto",
-      "verify",
-      "--device",
-      "BRIDGE DEVICE",
-    ],
-    [
-      "--config",
-      "bridge.toml",
-      "crypto",
-      "verify",
-      "--device",
-      "TRUSTED01",
-      "extra",
-    ],
+    ["--config", "bridge.toml", "crypto", "verify", "--device", "BRIDGE DEVICE"],
+    ["--config", "bridge.toml", "crypto", "verify", "--device", "TRUSTED01", "extra"],
   ] as const) {
     assert.throws(() => parseCommandLine(args), /config|Usage/u);
   }
@@ -531,16 +474,9 @@ void test("crypto commands require required mode and a different verification de
     matrix: { ...CONFIG.matrix, encryption: "required" },
   };
   validateCommandForConfig({ kind: "bootstrap" }, requiredConfig);
-  validateCommandForConfig(
-    { kind: "verify", deviceId: "TRUSTED01" },
-    requiredConfig,
-  );
+  validateCommandForConfig({ kind: "verify", deviceId: "TRUSTED01" }, requiredConfig);
   assert.throws(
-    () =>
-      validateCommandForConfig(
-        { kind: "verify", deviceId: requiredConfig.matrix.deviceId },
-        requiredConfig,
-      ),
+    () => validateCommandForConfig({ kind: "verify", deviceId: requiredConfig.matrix.deviceId }, requiredConfig),
     /differ from the bridge device/u,
   );
 });
@@ -565,12 +501,7 @@ void test("runs startup in order, opens intake at PREPARED, and gates dispatch u
   rig.lifecycle.receiveSignal("SIGTERM");
   assert.equal(await run, 0);
   assert.equal(rig.lock.released, true);
-  assert.deepEqual(rig.log.slice(-4), [
-    "bridge.stop",
-    "matrix.stop",
-    "acp.close",
-    "crypto.close",
-  ]);
+  assert.deepEqual(rig.log.slice(-4), ["bridge.stop", "matrix.stop", "acp.close", "crypto.close"]);
 });
 
 void test("daemon composition subscribes to sync batches", async () => {
@@ -748,14 +679,7 @@ void test("startup timeout remains authoritative while Matrix is reconnecting", 
 });
 
 void test("cleans up resources in reverse order for each partial startup failure", async () => {
-  const stages = [
-    "acp",
-    "matrix",
-    "bridge",
-    "initialize",
-    "whoami",
-    "start",
-  ] as const;
+  const stages = ["acp", "matrix", "bridge", "initialize", "whoami", "start"] as const;
   for (const stage of stages) {
     const log: string[] = [];
     const lock = new FakeStateLock();
@@ -807,11 +731,7 @@ void test("cleans up resources in reverse order for each partial startup failure
 
     assert.equal(await lifecycle.run(), 1, stage);
     assert.equal(lock.released, true, stage);
-    assert.equal(
-      log.includes("acp.close"),
-      !["acp", "matrix", "whoami"].includes(stage),
-      stage,
-    );
+    assert.equal(log.includes("acp.close"), !["acp", "matrix", "whoami"].includes(stage), stage);
     assert.equal(log.includes("matrix.stop"), stage !== "matrix", stage);
   }
 });

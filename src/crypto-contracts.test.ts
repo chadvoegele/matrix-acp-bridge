@@ -49,22 +49,12 @@ void test("derives stable crypto paths beneath state_dir", () => {
 
 void test("validates crypto command gating without persisting a target device", () => {
   assert.throws(
-    () =>
-      validateCryptoCommand(
-        { kind: "bootstrap" },
-        { ...MATRIX, encryption: "disabled" },
-      ),
-    (error: unknown) =>
-      error instanceof CryptoContractError &&
-      /require matrix\.encryption/u.test(error.message),
+    () => validateCryptoCommand({ kind: "bootstrap" }, { ...MATRIX, encryption: "disabled" }),
+    (error: unknown) => error instanceof CryptoContractError && /require matrix\.encryption/u.test(error.message),
   );
   validateCryptoCommand({ kind: "verify", deviceId: "TRUSTED01" }, MATRIX);
   assert.throws(
-    () =>
-      validateCryptoCommand(
-        { kind: "verify", deviceId: MATRIX.deviceId },
-        MATRIX,
-      ),
+    () => validateCryptoCommand({ kind: "verify", deviceId: MATRIX.deviceId }, MATRIX),
     /differ from the bridge device/u,
   );
 });
@@ -92,14 +82,7 @@ void test("classifies crypto failures with metadata-only stable categories", () 
 
 void test("matches a manifest only for the exact identity and current public keys", () => {
   assert.equal(cryptoManifestMatches(MANIFEST, MATRIX, FINGERPRINTS), true);
-  assert.equal(
-    cryptoManifestMatches(
-      MANIFEST,
-      { ...MATRIX, deviceId: "OTHER" },
-      FINGERPRINTS,
-    ),
-    false,
-  );
+  assert.equal(cryptoManifestMatches(MANIFEST, { ...MATRIX, deviceId: "OTHER" }, FINGERPRINTS), false);
   assert.equal(
     cryptoManifestMatches(MANIFEST, MATRIX, {
       ...FINGERPRINTS,
@@ -107,12 +90,5 @@ void test("matches a manifest only for the exact identity and current public key
     }),
     false,
   );
-  assert.equal(
-    cryptoManifestMatches(
-      { ...MANIFEST, schemaVersion: 1 },
-      MATRIX,
-      FINGERPRINTS,
-    ),
-    true,
-  );
+  assert.equal(cryptoManifestMatches({ ...MANIFEST, schemaVersion: 1 }, MATRIX, FINGERPRINTS), true);
 });

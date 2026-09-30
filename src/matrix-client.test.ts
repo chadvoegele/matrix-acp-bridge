@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  createClient as createMatrixSdkClient,
-  MemoryStore as MatrixSdkMemoryStore,
-} from "matrix-js-sdk";
+import { createClient as createMatrixSdkClient, MemoryStore as MatrixSdkMemoryStore } from "matrix-js-sdk";
 import {
   MatrixAdapterError,
   MatrixClientAdapterImpl,
@@ -18,11 +15,7 @@ import {
   type MatrixSdkEventLike,
   type MatrixSdkRoomLike,
 } from "./matrix-client.js";
-import {
-  DEFAULT_LIMITS,
-  type BridgeConfig,
-  type MatrixConfig,
-} from "./config.js";
+import { DEFAULT_LIMITS, type BridgeConfig, type MatrixConfig } from "./config.js";
 import { matrixHtmlContentBytes } from "./matrix-message-content.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
@@ -157,9 +150,7 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return this.whoamiResponse;
   }
 
-  async startClient(options?: {
-    readonly initialSyncLimit?: number;
-  }): Promise<void> {
+  async startClient(options?: { readonly initialSyncLimit?: number }): Promise<void> {
     this.startCalls += 1;
     this.startClientOptions = options;
     if (this.startError !== undefined) {
@@ -184,13 +175,8 @@ class FakeSdkClient implements MatrixSdkClientLike {
     | {
         getOwnDeviceKeys(): Promise<unknown>;
         isEncryptionEnabledInRoom(roomId: string): Promise<boolean>;
-        requestDeviceVerification?(
-          userId: string,
-          deviceId: string,
-        ): Promise<unknown>;
-        getVerificationRequestsToDeviceInProgress?(
-          userId: string,
-        ): readonly unknown[];
+        requestDeviceVerification?(userId: string, deviceId: string): Promise<unknown>;
+        getVerificationRequestsToDeviceInProgress?(userId: string): readonly unknown[];
       }
     | undefined {
     if (!this.cryptoInitialized) {
@@ -198,12 +184,9 @@ class FakeSdkClient implements MatrixSdkClientLike {
     }
     return {
       getOwnDeviceKeys: async () => this.ownDeviceKeys,
-      isEncryptionEnabledInRoom: async (_roomId: string) =>
-        this.encryptionEnabledInRoom,
-      requestDeviceVerification: async (_userId: string, _deviceId: string) =>
-        this.verificationRequest,
-      getVerificationRequestsToDeviceInProgress: (_userId: string) =>
-        this.verificationRequests,
+      isEncryptionEnabledInRoom: async (_roomId: string) => this.encryptionEnabledInRoom,
+      requestDeviceVerification: async (_userId: string, _deviceId: string) => this.verificationRequest,
+      getVerificationRequestsToDeviceInProgress: (_userId: string) => this.verificationRequests,
     };
   }
 
@@ -217,9 +200,7 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return { joined_rooms: this.joinedRoomsOverride ?? [...this.rooms.keys()] };
   }
 
-  async roomState(
-    _roomId: string,
-  ): Promise<readonly { readonly type?: string }[]> {
+  async roomState(_roomId: string): Promise<readonly { readonly type?: string }[]> {
     return this.roomStateOverride ?? [];
   }
 
@@ -235,28 +216,16 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return { event_id: "$sent:example.org" };
   }
 
-  async sendTyping(
-    roomId: string,
-    isTyping: boolean,
-    timeoutMs: number,
-  ): Promise<void> {
+  async sendTyping(roomId: string, isTyping: boolean, timeoutMs: number): Promise<void> {
     this.typing.push({ roomId, isTyping, timeoutMs });
   }
 
-  async sendReadReceipt(
-    event: unknown,
-    receiptType?: string,
-    unthreaded?: boolean,
-  ): Promise<void> {
+  async sendReadReceipt(event: unknown, receiptType?: string, unthreaded?: boolean): Promise<void> {
     this.receipts.push({ event, receiptType, unthreaded });
   }
 }
 
-function room(
-  roomId = ROOM_ID,
-  membership = "join",
-  encrypted = false,
-): MatrixSdkRoomLike {
+function room(roomId = ROOM_ID, membership = "join", encrypted = false): MatrixSdkRoomLike {
   return {
     roomId,
     getMyMembership: () => membership,
@@ -410,9 +379,7 @@ interface RealSdkHttpHarness {
   readonly syncResponses: number;
 }
 
-function createRealSdkHttpHarness(
-  options: RealSdkHttpHarnessOptions = {},
-): RealSdkHttpHarness {
+function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): RealSdkHttpHarness {
   const syncRequests: URL[] = [];
   let syncResponses = 0;
 
@@ -495,9 +462,7 @@ function createRealSdkHttpHarness(
                             event_id: "$offline:example.org",
                             room_id: ROOM_ID,
                             sender: ALICE,
-                            type: options.encryptedInitial
-                              ? "m.room.encrypted"
-                              : "m.room.message",
+                            type: options.encryptedInitial ? "m.room.encrypted" : "m.room.message",
                             content: options.encryptedInitial
                               ? {
                                   algorithm: "m.megolm.v1.aes-sha2",
@@ -536,10 +501,7 @@ function createRealSdkHttpHarness(
 
 let realSdkFetchLock: Promise<void> = Promise.resolve();
 
-async function withFetch<T>(
-  fetch: typeof globalThis.fetch,
-  action: () => Promise<T>,
-): Promise<T> {
+async function withFetch<T>(fetch: typeof globalThis.fetch, action: () => Promise<T>): Promise<T> {
   const previous = realSdkFetchLock;
   let release!: () => void;
   realSdkFetchLock = new Promise<void>((resolve) => {
@@ -549,9 +511,7 @@ async function withFetch<T>(
   const previousFetch = globalThis.fetch;
   const previousSetTimeout = globalThis.setTimeout;
   globalThis.fetch = fetch;
-  globalThis.setTimeout = ((
-    ...args: Parameters<typeof globalThis.setTimeout>
-  ) => {
+  globalThis.setTimeout = ((...args: Parameters<typeof globalThis.setTimeout>) => {
     const timer = previousSetTimeout(...args);
     const delay = args[1];
     if (
@@ -614,18 +574,8 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
   const previousFetch = globalThis.fetch;
   let requestCount = 0;
   let sdkLogCalls = 0;
-  const consoleMethods = [
-    "debug",
-    "error",
-    "info",
-    "log",
-    "trace",
-    "warn",
-  ] as const;
-  const previousConsoleMethods = new Map<
-    (typeof consoleMethods)[number],
-    Console[(typeof consoleMethods)[number]]
-  >();
+  const consoleMethods = ["debug", "error", "info", "log", "trace", "warn"] as const;
+  const previousConsoleMethods = new Map<(typeof consoleMethods)[number], Console[(typeof consoleMethods)[number]]>();
   for (const method of consoleMethods) {
     previousConsoleMethods.set(method, console[method].bind(console));
     console[method] = (() => {
@@ -634,10 +584,10 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
   }
   globalThis.fetch = async () => {
     requestCount += 1;
-    return new Response(
-      JSON.stringify({ user_id: BRIDGE_USER_ID, device_id: "BRIDGE-DEVICE" }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ user_id: BRIDGE_USER_ID, device_id: "BRIDGE-DEVICE" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
 
   try {
@@ -646,8 +596,7 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
       userId: BRIDGE_USER_ID,
       deviceId: "BRIDGE-DEVICE",
     });
-    const { logger: matrixSdkRootLogger } =
-      await import("matrix-js-sdk/lib/logger.js");
+    const { logger: matrixSdkRootLogger } = await import("matrix-js-sdk/lib/logger.js");
     matrixSdkRootLogger.debug("root logger must not enter ACP stdout");
     matrixSdkRootLogger
       .getChild("[MatrixRTCSession !room:example.org m.call#ROOM]")
@@ -679,13 +628,8 @@ void test("real SDK initial startup omits since, applies the initial limit, and 
     await adapter.start();
     assert.equal(harness.syncResponses >= 1, true);
     assert.equal(harness.syncRequests[0]?.searchParams.has("since"), false);
-    assert.equal(
-      harness.syncRequests[0]?.searchParams.has("_cacheBuster"),
-      true,
-    );
-    const filter = JSON.parse(
-      harness.syncRequests[0]?.searchParams.get("filter") ?? "{}",
-    ) as {
+    assert.equal(harness.syncRequests[0]?.searchParams.has("_cacheBuster"), true);
+    const filter = JSON.parse(harness.syncRequests[0]?.searchParams.get("filter") ?? "{}") as {
       room?: { timeline?: { limit?: number } };
     };
     assert.equal(filter.room?.timeline?.limit, 100);
@@ -756,9 +700,7 @@ void test("real SDK retries failed initial sync requests without switching to in
     await adapter.whoAmI();
     await adapter.start();
     assert.deepEqual(
-      harness.syncRequests
-        .slice(0, 3)
-        .map((request) => request.searchParams.get("since")),
+      harness.syncRequests.slice(0, 3).map((request) => request.searchParams.get("since")),
       [null, null, null],
     );
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
@@ -774,12 +716,7 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
   let releaseNextSync: (() => void) | undefined;
 
   const fetch: typeof globalThis.fetch = async (input) => {
-    const inputUrl =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
+    const inputUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const url = new URL(inputUrl);
     if (url.pathname.endsWith("/whoami")) {
       return jsonResponse({
@@ -830,10 +767,7 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
       }
       if (runtimeMode && runtimeFailures < 3) {
         runtimeFailures += 1;
-        return jsonResponse(
-          { errcode: "M_UNKNOWN", error: "temporary failure" },
-          503,
-        );
+        return jsonResponse({ errcode: "M_UNKNOWN", error: "temporary failure" }, 503);
       }
       successfulSyncs += 1;
       return jsonResponse({
@@ -893,10 +827,7 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
         }
         for (
           let turn = 0;
-          turn < 100 &&
-          !records.some(
-            (record) => record.event === "matrix-connection-restored",
-          );
+          turn < 100 && !records.some((record) => record.event === "matrix-connection-restored");
           turn += 1
         ) {
           await new Promise<void>((resolve) => setImmediate(resolve));
@@ -904,24 +835,12 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
         assert.equal(runtimeFailures, 3);
         assert.equal(fatal.length, 0);
         assert.deepEqual(
-          syncRequests
-            .slice(0, 5)
-            .map((request) => request.searchParams.get("since")),
-          [
-            null,
-            "runtime-next-1",
-            "runtime-next-1",
-            "runtime-next-1",
-            "runtime-next-1",
-          ],
+          syncRequests.slice(0, 5).map((request) => request.searchParams.get("since")),
+          [null, "runtime-next-1", "runtime-next-1", "runtime-next-1", "runtime-next-1"],
         );
         assert.deepEqual(
           records.map((record) => record.event),
-          [
-            "matrix-connection-lost",
-            "matrix-reconnect-retry",
-            "matrix-connection-restored",
-          ],
+          ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
         );
       } finally {
         await adapter.stop();
@@ -948,25 +867,15 @@ void test("returns strict whoami identity data and validates configured IDs", as
   fake.whoamiResponse = { user_id: BRIDGE_USER_ID };
   await assert.rejects(
     () => adapter.whoAmI(),
-    (error: unknown) =>
-      error instanceof MatrixAdapterError &&
-      /missing a user or device/u.test(error.message),
+    (error: unknown) => error instanceof MatrixAdapterError && /missing a user or device/u.test(error.message),
   );
 
   assert.throws(
-    () =>
-      assertMatrixIdentity(
-        { userId: "@wrong:example.org", deviceId: "BRIDGE-DEVICE" },
-        CONFIG,
-      ),
+    () => assertMatrixIdentity({ userId: "@wrong:example.org", deviceId: "BRIDGE-DEVICE" }, CONFIG),
     /does not match the configured user ID/u,
   );
   assert.throws(
-    () =>
-      assertMatrixIdentity(
-        { userId: BRIDGE_USER_ID, deviceId: "WRONG" },
-        CONFIG,
-      ),
+    () => assertMatrixIdentity({ userId: BRIDGE_USER_ID, deviceId: "WRONG" }, CONFIG),
     /does not match the configured device ID/u,
   );
 });
@@ -1003,10 +912,7 @@ void test("Rust verification adapter uses phase/capability events without readin
   fake.cryptoInitialized = true;
   fake.verificationRequest = raw;
   const adapter = createMatrixCryptoAdapter(fake);
-  const request = await adapter.requestDeviceVerification(
-    "@trusted:example.org",
-    "TRUSTED01",
-  );
+  const request = await adapter.requestDeviceVerification("@trusted:example.org", "TRUSTED01");
 
   assert.equal(request.phase, "requested");
   assert.equal(request.supportsMethod("m.sas.v1"), false);
@@ -1136,18 +1042,13 @@ void test("closes global-only encrypted initial sync at the batch cutoff", async
       limited: false,
     },
   ]);
-  const omission = records.find(
-    (record) => record.event === "matrix-encrypted-initial-event-omitted",
-  );
+  const omission = records.find((record) => record.event === "matrix-encrypted-initial-event-omitted");
   assert.deepEqual(omission?.fields, {
     reason: "decryption_pending_at_initial_sync_cutoff",
     phase: "initial",
     count: 1,
   });
-  assert.doesNotMatch(
-    JSON.stringify(omission),
-    /global-only-catch-up|room:example|alice|not-forwarded/u,
-  );
+  assert.doesNotMatch(JSON.stringify(omission), /global-only-catch-up|room:example|alice|not-forwarded/u);
 
   clearContent = { msgtype: "m.text", body: "late catch-up" };
   fake.emit("Event.decrypted", encrypted);
@@ -1234,10 +1135,7 @@ void test("preserves already-decrypted first-sync encrypted history after PREPAR
   fake.emit("Event.decrypted", encrypted);
 
   assert.equal(batches[0]?.phase, "initial");
-  assert.equal(
-    batches[0]?.rooms[0]?.timeline[0]?.eventId,
-    "$initial-clear:example.org",
-  );
+  assert.equal(batches[0]?.rooms[0]?.timeline[0]?.eventId, "$initial-clear:example.org");
   assert.equal(batches[0]?.rooms[0]?.timeline[0]?.isLive, false);
   await adapter.stop();
 });
@@ -1336,10 +1234,7 @@ void test("bounds encrypted pending state and removes SDK retry listeners on sto
     ["oldest retried after bounded eviction"],
   );
   assert.equal(
-    [...fake.listeners.values()].reduce(
-      (count, listeners) => count + listeners.size,
-      0,
-    ),
+    [...fake.listeners.values()].reduce((count, listeners) => count + listeners.size, 0),
     0,
   );
 });
@@ -1357,8 +1252,7 @@ void test("suppresses SDK decryption-failure clear content and reports metadata 
   });
   await adapter.initializeCrypto(CRYPTO_STATE);
   const received: InboundMatrixEvent[] = [];
-  const failures: Array<{ readonly eventId: string; readonly reason: string }> =
-    [];
+  const failures: Array<{ readonly eventId: string; readonly reason: string }> = [];
   adapter.onSyncBatch((batch) => {
     for (const room of batch.rooms) {
       received.push(...room.timeline);
@@ -1384,12 +1278,8 @@ void test("suppresses SDK decryption-failure clear content and reports metadata 
   fake.emit(SDK_EVENT, failed);
 
   assert.deepEqual(received, []);
-  assert.deepEqual(failures, [
-    { eventId: "$undecryptable:example.org", reason: "decryption_failed" },
-  ]);
-  const diagnostic = records.find(
-    (record) => record.event === "matrix-decryption-failed",
-  );
+  assert.deepEqual(failures, [{ eventId: "$undecryptable:example.org", reason: "decryption_failed" }]);
+  const diagnostic = records.find((record) => record.event === "matrix-decryption-failed");
   assert.deepEqual(diagnostic?.fields, {
     reason: "decryption_failed",
     phase: "decryption",
@@ -1525,11 +1415,7 @@ void test("preserves initial sync events, buffers post-ready events, and preserv
 
 void test("passes the configured initial sync limit to the SDK", async () => {
   const fake = readyClient();
-  const adapter = createMatrixClientAdapter(
-    CONFIG_WITH_INITIAL_LIMIT,
-    "access-token",
-    { client: fake },
-  );
+  const adapter = createMatrixClientAdapter(CONFIG_WITH_INITIAL_LIMIT, "access-token", { client: fake });
   await adapter.start();
   assert.deepEqual(fake.startClientOptions, { initialSyncLimit: 7 });
   await adapter.stop();
@@ -1542,10 +1428,7 @@ void test("fails startup when the initial sync response has no next token", asyn
     fake.emit(SDK_SYNC, "PREPARED", null, {});
   };
   const adapter = adapterFor(fake);
-  await assert.rejects(
-    () => adapter.start(),
-    /Matrix sync response did not establish a next sync token/u,
-  );
+  await assert.rejects(() => adapter.start(), /Matrix sync response did not establish a next sync token/u);
   assert.equal(fake.stopCalls, 1);
 });
 
@@ -1608,11 +1491,11 @@ void test("signals runtime room invariants but ignores other users' membership",
   const otherAdapter = adapterFor(otherUserClient);
   otherAdapter.onFatalError((error) => otherFatal.push(error));
   await otherAdapter.start();
-  otherUserClient.emit(
-    SDK_MEMBER_MEMBERSHIP,
-    event({ type: "m.room.member" }),
-    { roomId: ROOM_ID, userId: ALICE, membership: "leave" },
-  );
+  otherUserClient.emit(SDK_MEMBER_MEMBERSHIP, event({ type: "m.room.member" }), {
+    roomId: ROOM_ID,
+    userId: ALICE,
+    membership: "leave",
+  });
   assert.deepEqual(otherFatal, []);
 
   const encryptedClient = readyClient();
@@ -1634,12 +1517,7 @@ void test("signals runtime room invariants but ignores other users' membership",
   const leftAdapter = adapterFor(leftClient);
   leftAdapter.onFatalError((error) => leftFatal.push(error));
   await leftAdapter.start();
-  leftClient.emit(
-    SDK_MY_MEMBERSHIP,
-    leftClient.rooms.get(ROOM_ID),
-    "leave",
-    "join",
-  );
+  leftClient.emit(SDK_MY_MEMBERSHIP, leftClient.rooms.get(ROOM_ID), "leave", "join");
   leftClient.emit(
     SDK_MEMBER_MEMBERSHIP,
     event({
@@ -1766,8 +1644,7 @@ void test("sends escaped HTML and edits the returned event with stable transacti
   fake.sendError = { httpStatus: 503 };
   await assert.rejects(
     () => adapter.sendHtmlMessage(edit),
-    (error: unknown) =>
-      error instanceof MatrixAdapterError && error.failure.retryable,
+    (error: unknown) => error instanceof MatrixAdapterError && error.failure.retryable,
   );
   fake.sendError = undefined;
   assert.equal(await adapter.sendHtmlMessage(edit), eventId);
@@ -1796,10 +1673,7 @@ void test("HTML edit byte accounting matches the wire payload at the message-siz
   const targetEventId = `$${"x".repeat(254)}`;
   const formattedBody = matrixHtml`<p>😀 &amp; result</p>`;
   const limit = DEFAULT_LIMITS.maxMatrixMessageBytes;
-  const overhead = matrixHtmlContentBytes(
-    { body: "", formattedBody },
-    targetEventId,
-  );
+  const overhead = matrixHtmlContentBytes({ body: "", formattedBody }, targetEventId);
   const body = "x".repeat(Math.floor((limit - overhead) / 2));
   const message = {
     roomId: ROOM_ID,
@@ -1816,10 +1690,7 @@ void test("HTML edit byte accounting matches the wire payload at the message-siz
   assert(wireBytes <= limit && wireBytes >= limit - 1);
   assert.equal(content?.formatted_body, `* ${formattedBody}`);
   // One extra ASCII character occurs in both the outer and replacement body.
-  assert(
-    matrixHtmlContentBytes({ ...message, body: `${body}x` }, targetEventId) >
-      limit,
-  );
+  assert(matrixHtmlContentBytes({ ...message, body: `${body}x` }, targetEventId) > limit);
 });
 
 void test("Matrix HTML wire content preserves an indented result disclosure on send and edit", async () => {
@@ -1857,17 +1728,11 @@ void test("HTML sends enforce configured rooms and required encryption", async (
     body: "text",
     formattedBody: matrixHtml`<p>text</p>`,
   };
-  await assert.rejects(
-    () => adapter.sendHtmlMessage(message),
-    /not configured/u,
-  );
+  await assert.rejects(() => adapter.sendHtmlMessage(message), /not configured/u);
   assert.equal(fake.sent.length, 0);
 
   const required = requiredAdapterFor(fake);
-  await assert.rejects(
-    () => required.sendHtmlMessage({ ...message, roomId: ROOM_ID }),
-    /encryption is not ready/u,
-  );
+  await assert.rejects(() => required.sendHtmlMessage({ ...message, roomId: ROOM_ID }), /encryption is not ready/u);
   assert.equal(fake.sent.length, 0);
 });
 
@@ -1919,8 +1784,7 @@ void test("sends 30-second typing updates and an unthreaded m.read receipt", asy
   const eventObject = { id: "$read:example.org" };
   fake.rooms.set(ROOM_ID, {
     ...room(),
-    findEventById: (eventId: string) =>
-      eventId === "$read:example.org" ? eventObject : undefined,
+    findEventById: (eventId: string) => (eventId === "$read:example.org" ? eventObject : undefined),
   });
   const adapter = adapterFor(fake);
 
@@ -1988,9 +1852,7 @@ void test("normalizes retryability and server retry-delay metadata without retry
         content: { msgtype: "m.text", body: "reply" },
       }),
     (error: unknown) =>
-      error instanceof MatrixAdapterError &&
-      error.failure.kind === "transient" &&
-      error.failure.retryable,
+      error instanceof MatrixAdapterError && error.failure.kind === "transient" && error.failure.retryable,
   );
   assert.equal(fake.sent.length, 1);
 });
@@ -2034,8 +1896,7 @@ void test("permanent initial sync errors reject startup immediately", async () =
   adapter.onFatalError((error) => fatal.push(error));
   await assert.rejects(
     () => adapter.start(),
-    (error: unknown) =>
-      error instanceof MatrixAdapterError && error.failure.kind === "permanent",
+    (error: unknown) => error instanceof MatrixAdapterError && error.failure.kind === "permanent",
   );
   assert.equal(fake.startCalls, 1);
   assert.equal(fake.stopCalls, 1);
@@ -2068,11 +1929,7 @@ void test("transient reconnecting and error states do not reject startup", async
   assert.deepEqual(fatal, []);
   assert.deepEqual(
     records.map((record) => record.event),
-    [
-      "matrix-connection-lost",
-      "matrix-reconnect-retry",
-      "matrix-connection-restored",
-    ],
+    ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
   );
   assert.equal(records[0]?.fields.startupCompleted, false);
   assert.equal(records[0]?.fields.httpStatus, 503);
@@ -2122,18 +1979,12 @@ void test("runtime transient failures, including repeated SDK error states, pres
 
   assert.equal(batches.length, 2);
   assert.deepEqual(
-    batches[1]?.rooms
-      .flatMap((room) => room.timeline)
-      .map((item) => item.eventId),
+    batches[1]?.rooms.flatMap((room) => room.timeline).map((item) => item.eventId),
     ["$recovered:example.org"],
   );
   assert.deepEqual(
     records.map((record) => record.event),
-    [
-      "matrix-connection-lost",
-      "matrix-reconnect-retry",
-      "matrix-connection-restored",
-    ],
+    ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
   );
   const diagnosticText = JSON.stringify(records);
   assert.equal(diagnosticText.includes("https://"), false);
@@ -2196,11 +2047,7 @@ void test("does not clear an outage when another failure arrives during durable 
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(
     records.map((record) => record.event),
-    [
-      "matrix-connection-lost",
-      "matrix-reconnect-retry",
-      "matrix-connection-restored",
-    ],
+    ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
   );
   assert.equal(records.at(-1)?.fields.failureCount, 2);
   await adapter.stop();
@@ -2213,10 +2060,7 @@ void test("sync.unexpectedError remains fatal during runtime", async () => {
   adapter.onFatalError((error) => fatal.push(error));
   await adapter.start();
 
-  fake.emit(
-    "sync.unexpectedError",
-    new Error("unsafe local processing failure"),
-  );
+  fake.emit("sync.unexpectedError", new Error("unsafe local processing failure"));
   assert.deepEqual(fatal, [
     {
       code: "matrix_transport",

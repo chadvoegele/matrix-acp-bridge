@@ -2,28 +2,14 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { promises as fs, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
-import {
-  isAbsolute,
-  dirname,
-  join,
-  parse as parsePath,
-  resolve,
-} from "node:path";
+import { isAbsolute, dirname, join, parse as parsePath, resolve } from "node:path";
 import { TextDecoder } from "node:util";
 import type { Readable, Writable } from "node:stream";
 
-import {
-  parse as parseToml,
-  type TomlTableWithoutBigInt,
-  type TomlValueWithoutBigInt,
-} from "smol-toml";
+import { parse as parseToml, type TomlTableWithoutBigInt, type TomlValueWithoutBigInt } from "smol-toml";
 
 import { isMatrixId, isValidMatrixDeviceId } from "./matrix-validation.js";
-import type {
-  MatrixDeviceId,
-  MatrixRoomId,
-  MatrixUserId,
-} from "./matrix-client.js";
+import type { MatrixDeviceId, MatrixRoomId, MatrixUserId } from "./matrix-client.js";
 import { isNodeError } from "./object-validation.js";
 
 export type EncryptionMode = "disabled" | "required";
@@ -170,12 +156,7 @@ export class StateLock implements StateLockLike {
 
   private isReleased = false;
 
-  constructor(
-    lockPath: string,
-    child: ChildProcess,
-    liveness: Writable,
-    exited: Promise<void>,
-  ) {
+  constructor(lockPath: string, child: ChildProcess, liveness: Writable, exited: Promise<void>) {
     this.lockPath = lockPath;
     this.child = child;
     this.liveness = liveness;
@@ -210,9 +191,7 @@ export function parseConfigText(source: string): BridgeConfig {
   const entries = parseTomlEntries(source);
   for (const [table, key] of REQUIRED_KEYS) {
     if (!entries.has(entryName(table, key))) {
-      throw new ConfigurationError(
-        `Missing required configuration key ${entryName(table, key)}`,
-      );
+      throw new ConfigurationError(`Missing required configuration key ${entryName(table, key)}`);
     }
   }
 
@@ -240,15 +219,11 @@ export function parseConfigText(source: string): BridgeConfig {
  * returned paths are normalized once so later session requests can reuse the
  * exact startup values.
  */
-export async function validateConfiguration(
-  config: BridgeConfig,
-): Promise<BridgeConfig> {
+export async function validateConfiguration(config: BridgeConfig): Promise<BridgeConfig> {
   validateShape(config.stateDir, config.matrix, config.acp, config.limits);
 
   const stateDir = await ensurePrivateStateDirectory(config.stateDir);
-  const accessTokenFile = await validateAccessTokenPath(
-    config.matrix.accessTokenFile,
-  );
+  const accessTokenFile = await validateAccessTokenPath(config.matrix.accessTokenFile);
   const cwd = await validateCwdPath(config.acp.cwd);
 
   return {
@@ -263,24 +238,18 @@ export async function validateConfiguration(
 }
 
 /** Read, parse, validate, and lock a configuration file. */
-export async function loadConfiguration(
-  configPath: string,
-): Promise<LoadedConfiguration> {
+export async function loadConfiguration(configPath: string): Promise<LoadedConfiguration> {
   const source = await readConfigurationFile(configPath);
   return loadConfigurationText(source);
 }
 
 /** Read, parse, validate, and lock configuration supplied as TOML text. */
-export async function loadConfigurationText(
-  source: string,
-): Promise<LoadedConfiguration> {
+export async function loadConfigurationText(source: string): Promise<LoadedConfiguration> {
   const parsed = parseConfigText(source);
   const config = await validateConfiguration(parsed);
   const stateLock = await acquireStateLock(config.stateDir);
   try {
-    const accessToken = await readAccessTokenFile(
-      config.matrix.accessTokenFile,
-    );
+    const accessToken = await readAccessTokenFile(config.matrix.accessTokenFile);
     return { config, accessToken, stateLock };
   } catch (error) {
     try {
@@ -306,28 +275,20 @@ export async function acquireStateLock(stateDir: string): Promise<StateLock> {
   try {
     const existingLockPath = await fs.lstat(lockPath);
     if (existingLockPath.isSymbolicLink()) {
-      throw new ConfigurationError(
-        "The private state lock path must not be a symlink",
-      );
+      throw new ConfigurationError("The private state lock path must not be a symlink");
     }
   } catch (error) {
     if (error instanceof ConfigurationError) {
       throw error;
     }
     if (!isNotFound(error)) {
-      throw new ConfigurationError(
-        "Unable to inspect the private state lock path",
-      );
+      throw new ConfigurationError("Unable to inspect the private state lock path");
     }
   }
 
   let lockFile: FileHandle;
   try {
-    lockFile = await fs.open(
-      lockPath,
-      constants.O_CREAT | constants.O_RDWR | NOFOLLOW,
-      0o600,
-    );
+    lockFile = await fs.open(lockPath, constants.O_CREAT | constants.O_RDWR | NOFOLLOW, 0o600);
   } catch {
     throw new ConfigurationError("Unable to open the private state lock file");
   }
@@ -339,11 +300,7 @@ export async function acquireStateLock(stateDir: string): Promise<StateLock> {
 
     const child = spawn(
       "sh",
-      [
-        "-c",
-        "flock -n 3 || exit 1; printf ready >&4; exec cat <&5 >/dev/null",
-        "matrix-acp-state-lock",
-      ],
+      ["-c", "flock -n 3 || exit 1; printf ready >&4; exec cat <&5 >/dev/null", "matrix-acp-state-lock"],
       {
         stdio: ["ignore", "ignore", "ignore", lockFile.fd, "pipe", "pipe"],
       },
@@ -363,10 +320,7 @@ export async function acquireStateLock(stateDir: string): Promise<StateLock> {
 }
 
 /** Create a new private state file with owner-only read/write permissions. */
-export async function openPrivateStateFile(
-  stateDir: string,
-  fileName: string,
-): Promise<FileHandle> {
+export async function openPrivateStateFile(stateDir: string, fileName: string): Promise<FileHandle> {
   const normalizedStateDir = await ensurePrivateStateDirectory(stateDir);
   if (
     typeof fileName !== "string" ||
@@ -383,11 +337,7 @@ export async function openPrivateStateFile(
   const filePath = join(normalizedStateDir, fileName);
   let handle: FileHandle;
   try {
-    handle = await fs.open(
-      filePath,
-      constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | NOFOLLOW,
-      0o600,
-    );
+    handle = await fs.open(filePath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | NOFOLLOW, 0o600);
   } catch {
     throw new ConfigurationError("Unable to create the private state file");
   }
@@ -429,16 +379,12 @@ export async function readAccessTokenFile(filePath: string): Promise<string> {
     try {
       contents = new TextDecoder("utf8", { fatal: true }).decode(bytes);
     } catch {
-      throw new ConfigurationError(
-        "The Matrix access token file is not valid UTF-8",
-      );
+      throw new ConfigurationError("The Matrix access token file is not valid UTF-8");
     }
 
     const token = stripTokenTerminator(contents);
     if (token === undefined) {
-      throw new ConfigurationError(
-        "The Matrix access token file must contain one nonempty token",
-      );
+      throw new ConfigurationError("The Matrix access token file must contain one nonempty token");
     }
     return token;
   } catch (error) {
@@ -452,11 +398,7 @@ export async function readAccessTokenFile(filePath: string): Promise<string> {
 }
 
 async function readConfigurationFile(configPath: string): Promise<string> {
-  if (
-    typeof configPath !== "string" ||
-    configPath.length === 0 ||
-    configPath.includes("\u0000")
-  ) {
+  if (typeof configPath !== "string" || configPath.length === 0 || configPath.includes("\u0000")) {
     throw new ConfigurationError("Configuration file path is invalid");
   }
 
@@ -467,12 +409,7 @@ async function readConfigurationFile(configPath: string): Promise<string> {
   }
 }
 
-function validateShape(
-  stateDir: string,
-  matrix: MatrixConfig,
-  acp: AcpConfig,
-  limits: BridgeLimits,
-): void {
+function validateShape(stateDir: string, matrix: MatrixConfig, acp: AcpConfig, limits: BridgeLimits): void {
   requireAbsolutePath(stateDir, "state_dir");
   requireAbsolutePath(matrix.accessTokenFile, "matrix.access_token_file");
   requireAbsolutePath(acp.cwd, "acp.cwd");
@@ -482,9 +419,7 @@ function validateShape(
   requireMatrixIdList(matrix.allowedRooms, "matrix.allowed_rooms", "!");
   requireMatrixIdList(matrix.allowedSenders, "matrix.allowed_senders", "@");
   if (matrix.encryption !== "disabled" && matrix.encryption !== "required") {
-    throw new ConfigurationError(
-      'matrix.encryption must be either "disabled" or "required"',
-    );
+    throw new ConfigurationError('matrix.encryption must be either "disabled" or "required"');
   }
   validateLimits(limits);
 }
@@ -511,9 +446,7 @@ function validateLimits(limits: BridgeLimits): void {
     throw new ConfigurationError("limits.max_output_bytes must be at least 20");
   }
   if (limits.maxMatrixMessageBytes < 64) {
-    throw new ConfigurationError(
-      "limits.max_matrix_message_bytes must be at least 64",
-    );
+    throw new ConfigurationError("limits.max_matrix_message_bytes must be at least 64");
   }
   for (const key of [
     "max_turn_seconds",
@@ -522,20 +455,13 @@ function validateLimits(limits: BridgeLimits): void {
     "max_catchup_age_seconds",
   ] as const) {
     if (values[key] > Math.floor(MAX_NODE_TIMER_MILLISECONDS / 1000)) {
-      throw new ConfigurationError(
-        `limits.${key} exceeds the Node timer bound`,
-      );
+      throw new ConfigurationError(`limits.${key} exceeds the Node timer bound`);
     }
   }
 }
 
 function requireAbsolutePath(value: string, field: string): void {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.includes("\u0000") ||
-    !isAbsolute(value)
-  ) {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\u0000") || !isAbsolute(value)) {
     throw new ConfigurationError(`${field} must be an absolute path`);
   }
 }
@@ -567,37 +493,23 @@ function requireHomeserver(value: string): void {
     value.includes("#") ||
     url.hostname.length === 0
   ) {
-    throw new ConfigurationError(
-      "matrix.homeserver must be an HTTPS URL without credentials, query, or fragment",
-    );
+    throw new ConfigurationError("matrix.homeserver must be an HTTPS URL without credentials, query, or fragment");
   }
 }
 
 function requireDeviceId(value: string): void {
   if (!isValidMatrixDeviceId(value)) {
-    throw new ConfigurationError(
-      "matrix.device_id must be a nonempty identifier",
-    );
+    throw new ConfigurationError("matrix.device_id must be a nonempty identifier");
   }
 }
 
-function requireMatrixId(
-  value: string,
-  field: string,
-  prefix: "@" | "!",
-): void {
+function requireMatrixId(value: string, field: string, prefix: "@" | "!"): void {
   if (!isMatrixId(value, prefix)) {
-    throw new ConfigurationError(
-      `${field} must be an exact Matrix ${prefix === "!" ? "room ID" : "user ID"}`,
-    );
+    throw new ConfigurationError(`${field} must be an exact Matrix ${prefix === "!" ? "room ID" : "user ID"}`);
   }
 }
 
-function requireMatrixIdList(
-  values: readonly string[],
-  field: string,
-  prefix: "@" | "!",
-): void {
+function requireMatrixIdList(values: readonly string[], field: string, prefix: "@" | "!"): void {
   if (!Array.isArray(values) || values.length === 0) {
     throw new ConfigurationError(`${field} must contain at least one entry`);
   }
@@ -605,9 +517,7 @@ function requireMatrixIdList(
   for (const value of values as readonly string[]) {
     requireMatrixId(value, field, prefix);
     if (seen.has(value)) {
-      throw new ConfigurationError(
-        `${field} must not contain duplicate entries`,
-      );
+      throw new ConfigurationError(`${field} must not contain duplicate entries`);
     }
     seen.add(value);
   }
@@ -618,25 +528,18 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
   for (const key of LIMIT_KEYS) {
     const value = entries.get(entryName("limits", key));
     const defaultValue = DEFAULT_LIMITS[limitProperty(key)];
-    const parsed =
-      value === undefined
-        ? defaultValue
-        : requireInteger(value, `limits.${key}`);
+    const parsed = value === undefined ? defaultValue : requireInteger(value, `limits.${key}`);
     values.set(key, parsed);
   }
 
   const maxOutputBytes = values.get("max_output_bytes")!;
   const maxMatrixMessageBytes = values.get("max_matrix_message_bytes")!;
-  const maxActivityEventsPerMessage = values.get(
-    "max_activity_events_per_message",
-  )!;
+  const maxActivityEventsPerMessage = values.get("max_activity_events_per_message")!;
   if (maxOutputBytes < 20) {
     throw new ConfigurationError("limits.max_output_bytes must be at least 20");
   }
   if (maxMatrixMessageBytes < 64) {
-    throw new ConfigurationError(
-      "limits.max_matrix_message_bytes must be at least 64",
-    );
+    throw new ConfigurationError("limits.max_matrix_message_bytes must be at least 64");
   }
 
   for (const key of [
@@ -647,9 +550,7 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
   ] as const) {
     const seconds = values.get(key)!;
     if (seconds > Math.floor(MAX_NODE_TIMER_MILLISECONDS / 1000)) {
-      throw new ConfigurationError(
-        `limits.${key} exceeds the Node timer bound`,
-      );
+      throw new ConfigurationError(`limits.${key} exceeds the Node timer bound`);
     }
   }
 
@@ -674,18 +575,12 @@ function requireInteger(value: TomlValue, field: string): number {
     throw new ConfigurationError(`${field} must be an integer`);
   }
   if (value <= 0 || value > MAX_CONFIGURATION_INTEGER) {
-    throw new ConfigurationError(
-      `${field} must be between 1 and ${MAX_CONFIGURATION_INTEGER}`,
-    );
+    throw new ConfigurationError(`${field} must be between 1 and ${MAX_CONFIGURATION_INTEGER}`);
   }
   return value;
 }
 
-function requiredString(
-  entries: ReadonlyMap<string, TomlValue>,
-  table: TomlTable,
-  key: string,
-): string {
+function requiredString(entries: ReadonlyMap<string, TomlValue>, table: TomlTable, key: string): string {
   const value = entries.get(entryName(table, key));
   if (typeof value !== "string") {
     throw new ConfigurationError(`${entryName(table, key)} must be a string`);
@@ -693,31 +588,21 @@ function requiredString(
   return value;
 }
 
-function requiredStringArray(
-  entries: ReadonlyMap<string, TomlValue>,
-  table: TomlTable,
-  key: string,
-): string[] {
+function requiredStringArray(entries: ReadonlyMap<string, TomlValue>, table: TomlTable, key: string): string[] {
   const value = entries.get(entryName(table, key));
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new ConfigurationError(
-      `${entryName(table, key)} must be an array of strings`,
-    );
+    throw new ConfigurationError(`${entryName(table, key)} must be an array of strings`);
   }
   return [...value] as string[];
 }
 
-function requiredEncryption(
-  entries: ReadonlyMap<string, TomlValue>,
-): EncryptionMode {
+function requiredEncryption(entries: ReadonlyMap<string, TomlValue>): EncryptionMode {
   const value = entries.get(entryName("matrix", "encryption"));
   if (typeof value !== "string") {
     throw new ConfigurationError("matrix.encryption must be a string");
   }
   if (value !== "disabled" && value !== "required") {
-    throw new ConfigurationError(
-      'matrix.encryption must be either "disabled" or "required"',
-    );
+    throw new ConfigurationError('matrix.encryption must be either "disabled" or "required"');
   }
   return value;
 }
@@ -742,20 +627,14 @@ function limitProperty(key: LimitKey): keyof BridgeLimits {
 
 async function validateAccessTokenPath(filePath: string): Promise<string> {
   requireAbsolutePath(filePath, "matrix.access_token_file");
-  const normalized = await validateExistingPath(
-    filePath,
-    "matrix.access_token_file",
-    "file",
-  );
+  const normalized = await validateExistingPath(filePath, "matrix.access_token_file", "file");
   try {
     validateAccessTokenFile(await fs.lstat(normalized));
   } catch (error) {
     if (error instanceof ConfigurationError) {
       throw error;
     }
-    throw new ConfigurationError(
-      "Unable to inspect the Matrix access token file",
-    );
+    throw new ConfigurationError("Unable to inspect the Matrix access token file");
   }
   return normalized;
 }
@@ -777,11 +656,7 @@ async function validateCwdPath(cwd: string): Promise<string> {
   }
 }
 
-async function validateExistingPath(
-  rawPath: string,
-  field: string,
-  expected: "file" | "directory",
-): Promise<string> {
+async function validateExistingPath(rawPath: string, field: string, expected: "file" | "directory"): Promise<string> {
   const normalized = resolve(rawPath);
   await walkPathComponents(rawPath, field, false);
   let stat: Stats;
@@ -791,9 +666,7 @@ async function validateExistingPath(
     throw new ConfigurationError(`${field} does not exist`);
   }
   if (stat.isSymbolicLink()) {
-    throw new ConfigurationError(
-      `${field} must not contain symlink components`,
-    );
+    throw new ConfigurationError(`${field} must not contain symlink components`);
   }
   if (expected === "file" && !stat.isFile()) {
     throw new ConfigurationError(`${field} must be a regular file`);
@@ -820,25 +693,17 @@ async function ensurePrivateStateDirectory(rawPath: string): Promise<string> {
   }
   requireServiceOwner(stat, "state_dir");
   if ((stat.mode & 0o7777) !== 0o700) {
-    throw new ConfigurationError(
-      "state_dir must be owned by the service user with mode 0700",
-    );
+    throw new ConfigurationError("state_dir must be owned by the service user with mode 0700");
   }
   return normalized;
 }
 
 /** Validate and normalize the already-configured private state directory. */
-export async function validatePrivateStateDirectory(
-  rawPath: string,
-): Promise<string> {
+export async function validatePrivateStateDirectory(rawPath: string): Promise<string> {
   return ensurePrivateStateDirectory(rawPath);
 }
 
-async function walkPathComponents(
-  rawPath: string,
-  field: string,
-  createMissing: boolean,
-): Promise<void> {
+async function walkPathComponents(rawPath: string, field: string, createMissing: boolean): Promise<void> {
   const root = parsePath(rawPath).root;
   let current = root;
   const remainder = rawPath
@@ -858,9 +723,7 @@ async function walkPathComponents(
       stat = await fs.lstat(current);
     } catch (error) {
       if (!createMissing || !isNotFound(error)) {
-        throw new ConfigurationError(
-          `${field} has a missing or inaccessible path component`,
-        );
+        throw new ConfigurationError(`${field} has a missing or inaccessible path component`);
       }
       try {
         await fs.mkdir(current, { mode: 0o700 });
@@ -871,51 +734,37 @@ async function walkPathComponents(
           try {
             stat = await fs.lstat(current);
           } catch {
-            throw new ConfigurationError(
-              `${field} has an inaccessible path component`,
-            );
+            throw new ConfigurationError(`${field} has an inaccessible path component`);
           }
         } else {
-          throw new ConfigurationError(
-            `${field} could not create its private path`,
-          );
+          throw new ConfigurationError(`${field} could not create its private path`);
         }
       }
     }
 
     if (stat.isSymbolicLink()) {
-      throw new ConfigurationError(
-        `${field} must not contain symlink components`,
-      );
+      throw new ConfigurationError(`${field} must not contain symlink components`);
     }
     if (index < remainder.length - 1 && !stat.isDirectory()) {
-      throw new ConfigurationError(
-        `${field} has a non-directory path component`,
-      );
+      throw new ConfigurationError(`${field} has a non-directory path component`);
     }
   }
 }
 
 function validateAccessTokenFile(stat: Stats): void {
   if (!stat.isFile()) {
-    throw new ConfigurationError(
-      "matrix.access_token_file must be a regular file",
-    );
+    throw new ConfigurationError("matrix.access_token_file must be a regular file");
   }
   requireServiceOwner(stat, "matrix.access_token_file");
   const mode = stat.mode & 0o7777;
   if ((mode & ~0o600) !== 0 || (mode & 0o400) === 0) {
-    throw new ConfigurationError(
-      "matrix.access_token_file must be owner-readable with no group or world access",
-    );
+    throw new ConfigurationError("matrix.access_token_file must be owner-readable with no group or world access");
   }
 }
 
 function validatePrivateLockFile(stat: Stats): void {
   if (!stat.isFile()) {
-    throw new ConfigurationError(
-      "The private state lock path must be a regular file",
-    );
+    throw new ConfigurationError("The private state lock path must be a regular file");
   }
   requireServiceOwner(stat, "state lock");
 }
@@ -952,13 +801,8 @@ function stripTokenTerminator(contents: string): string | undefined {
   return token;
 }
 
-async function waitForLock(
-  child: ChildProcess,
-  lockPath: string,
-): Promise<StateLock> {
-  const streams = child.stdio as unknown as Array<
-    Readable | Writable | null | undefined
-  >;
+async function waitForLock(child: ChildProcess, lockPath: string): Promise<StateLock> {
+  const streams = child.stdio as unknown as Array<Readable | Writable | null | undefined>;
   const ready = streams[4] as Readable | null | undefined;
   const liveness = streams[5] as Writable | null | undefined;
   if (ready == undefined || liveness == undefined) {
@@ -980,9 +824,7 @@ async function waitForLock(
       }
       settled = true;
       child.kill("SIGTERM");
-      rejectLock(
-        new ConfigurationError("Timed out acquiring the private state lock"),
-      );
+      rejectLock(new ConfigurationError("Timed out acquiring the private state lock"));
     }, 5000);
 
     const reject = (message: string): void => {
@@ -1018,10 +860,7 @@ async function waitForLock(
   });
 }
 
-async function waitForChildExit(
-  child: ChildProcess,
-  exited: Promise<void>,
-): Promise<void> {
+async function waitForChildExit(child: ChildProcess, exited: Promise<void>): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
@@ -1042,10 +881,7 @@ async function waitForChildExit(
   }
   if (timedOut && child.exitCode === null && child.signalCode === null) {
     child.kill("SIGTERM");
-    await Promise.race([
-      exited,
-      new Promise<void>((resolveRace) => setTimeout(resolveRace, 1000).unref()),
-    ]);
+    await Promise.race([exited, new Promise<void>((resolveRace) => setTimeout(resolveRace, 1000).unref())]);
   }
 }
 
@@ -1072,10 +908,7 @@ async function closeFileQuietly(handle: FileHandle): Promise<void> {
 function parseTomlEntries(source: string): ReadonlyMap<string, TomlValue> {
   let document: TomlTableWithoutBigInt;
   try {
-    document = parseToml(
-      source.startsWith("\uFEFF") ? source.slice(1) : source,
-      { integersAsBigInt: false },
-    );
+    document = parseToml(source.startsWith("\uFEFF") ? source.slice(1) : source, { integersAsBigInt: false });
   } catch {
     throw new ConfigurationError("Invalid TOML configuration");
   }
@@ -1111,10 +944,5 @@ function addTomlTableEntries(
 }
 
 function isTomlTable(value: TomlValue): value is TomlTableWithoutBigInt {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    !(value instanceof Date)
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value) && !(value instanceof Date);
 }

@@ -56,9 +56,7 @@ export class SasBridgeDiagnostics {
     }
     if (record?.event === "crypto-verification-failed") {
       this.lastEvent = "crypto-verification-failed";
-      this.reason = REASONS.has(record.fields?.reason)
-        ? record.fields.reason
-        : "unknown";
+      this.reason = REASONS.has(record.fields?.reason) ? record.fields.reason : "unknown";
     } else if (record?.event === "startup-failed") {
       this.lastEvent = "startup-failed";
       this.reason = "startup";
@@ -66,14 +64,8 @@ export class SasBridgeDiagnostics {
   }
 
   summary(code, signal) {
-    const exit =
-      Number.isSafeInteger(code) && code >= 0 && code <= 255
-        ? String(code)
-        : "unknown";
-    const safeSignal =
-      signal === "SIGTERM" || signal === "SIGKILL" || signal === "SIGINT"
-        ? signal
-        : "none";
+    const exit = Number.isSafeInteger(code) && code >= 0 && code <= 255 ? String(code) : "unknown";
+    const safeSignal = signal === "SIGTERM" || signal === "SIGKILL" || signal === "SIGINT" ? signal : "none";
     return `exit=${exit}, signal=${safeSignal}, diagnostic=${this.lastEvent}, stdout=${this.stdoutSeen ? "seen" : "absent"}, stderr=${this.stderrSeen ? "seen" : "absent"}`;
   }
 }

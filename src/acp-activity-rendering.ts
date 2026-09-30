@@ -1,9 +1,5 @@
 import type { AcpActivity, AcpToolActivity } from "./acp-activity.js";
-import {
-  ACTIVITY_RESULT_DETAIL_BYTES,
-  ACTIVITY_TITLE_DETAIL_BYTES,
-  cleanActivityText,
-} from "./acp-activity.js";
+import { ACTIVITY_RESULT_DETAIL_BYTES, ACTIVITY_TITLE_DETAIL_BYTES, cleanActivityText } from "./acp-activity.js";
 import { takeBytes } from "./bounded-text.js";
 import { escapeHtml } from "./html.js";
 
@@ -84,11 +80,7 @@ function thoughtParagraphs(value: string): string[] {
 }
 
 function toolName(tool: AcpToolActivity): string {
-  if (
-    tool.title?.toLowerCase() === "mcp" ||
-    /^mcp__[\w-]+$/iu.test(tool.title ?? "")
-  )
-    return "MCP";
+  if (tool.title?.toLowerCase() === "mcp" || /^mcp__[\w-]+$/iu.test(tool.title ?? "")) return "MCP";
   if (tool.toolKind === "execute") return "Execute";
   if (tool.toolKind === "read") return "Read";
   if (tool.toolKind === "edit") {
@@ -100,12 +92,10 @@ function toolName(tool: AcpToolActivity): string {
 
 function toolTitle(tool: AcpToolActivity): string {
   const name = toolName(tool);
-  const path =
-    tool.path ?? tool.content?.find((item) => item.type === "diff")?.path;
+  const path = tool.path ?? tool.content?.find((item) => item.type === "diff")?.path;
   if (name === "MCP") {
     const server = /^mcp__([\w-]+)$/iu.exec(tool.title ?? "")?.[1];
-    if (server && tool.mcpOperation)
-      return `MCP(${server}/${tool.mcpOperation})`;
+    if (server && tool.mcpOperation) return `MCP(${server}/${tool.mcpOperation})`;
     if (tool.mcpOperation) return `MCP(${tool.mcpOperation})`;
     return server ? `MCP(${server})` : "MCP";
   }
@@ -139,39 +129,25 @@ function titleMarkup(title: string, status: string): string {
   return `<span data-mx-bg-color="${colors.background}"><span data-mx-color="${colors.rail}">┃</span> ${span(`🔧 ${title}`, "#000000")}</span>`;
 }
 
-function compactTool(
-  title: string,
-  label: string,
-  maxHtmlBytes: number,
-): RenderedAcpActivity {
+function compactTool(title: string, label: string, maxHtmlBytes: number): RenderedAcpActivity {
   let budget = Math.min(Buffer.byteLength(title, "utf8"), maxHtmlBytes);
   for (;;) {
     const bounded = takeBytes(title, budget);
     const body = `[${label}] 🔧 ${bounded.text} (truncated)`;
     const formattedBody = `<p>🔧 ${html(bounded.text)} (truncated)</p>`;
-    if (Buffer.byteLength(formattedBody, "utf8") <= maxHtmlBytes || budget <= 0)
-      return { body, formattedBody };
+    if (Buffer.byteLength(formattedBody, "utf8") <= maxHtmlBytes || budget <= 0) return { body, formattedBody };
     budget = Math.max(0, Math.floor(budget / 2));
   }
 }
 
-function lineSegments(
-  text: string,
-  sign: "-" | "+",
-  color: Color,
-): { segments: Segment[]; cut: boolean } {
+function lineSegments(text: string, sign: "-" | "+", color: Color): { segments: Segment[]; cut: boolean } {
   const bounded = takeBytes(text, ACTIVITY_RESULT_DETAIL_BYTES);
   const lines = bounded.text.split("\n");
   if (lines.at(-1) === "") lines.pop();
   const segments: Segment[] = [];
   for (const [index, line] of lines.entries()) {
-    segments.push(
-      { text: sign, color },
-      { text: `${index + 1} `, color: "#000000" },
-      { text: line, color },
-    );
-    if (index < lines.length - 1 || bounded.text.endsWith("\n"))
-      segments.push({ text: "\n" });
+    segments.push({ text: sign, color }, { text: `${index + 1} `, color: "#000000" }, { text: line, color });
+    if (index < lines.length - 1 || bounded.text.endsWith("\n")) segments.push({ text: "\n" });
   }
   return { segments, cut: bounded.cut };
 }
@@ -184,29 +160,18 @@ function resultFromContent(tool: AcpToolActivity): Output | undefined {
     for (const item of display) {
       if (segments.length > 0) segments.push({ text: "\n\n" });
       if (item.type === "content") {
-        const bounded = takeBytes(
-          cleanActivityText(item.text),
-          ACTIVITY_RESULT_DETAIL_BYTES,
-        );
+        const bounded = takeBytes(cleanActivityText(item.text), ACTIVITY_RESULT_DETAIL_BYTES);
         segments.push({ text: bounded.text });
         sourceCut ||= bounded.cut;
       }
       if (item.type === "diff") {
         if (typeof item.oldText === "string") {
-          const old = lineSegments(
-            cleanActivityText(item.oldText),
-            "-",
-            "#C00000",
-          );
+          const old = lineSegments(cleanActivityText(item.oldText), "-", "#C00000");
           segments.push(...old.segments, { text: "\n" });
           sourceCut ||= old.cut;
         }
         if (typeof item.newText === "string") {
-          const next = lineSegments(
-            cleanActivityText(item.newText),
-            "+",
-            "#008000",
-          );
+          const next = lineSegments(cleanActivityText(item.newText), "+", "#008000");
           segments.push(...next.segments);
           sourceCut ||= next.cut;
         }
@@ -222,9 +187,7 @@ function resultFromContent(tool: AcpToolActivity): Output | undefined {
   }
   if (tool.terminalBytes > 0) {
     const over = tool.terminalBytes > ACTIVITY_RESULT_DETAIL_BYTES;
-    const text = over
-      ? `${tool.terminalHead}\n\n${tool.terminalTail}`
-      : tool.terminalSmall;
+    const text = over ? `${tool.terminalHead}\n\n${tool.terminalTail}` : tool.terminalSmall;
     return { segments: [{ text }], plain: text, cut: over, terminal: true };
   }
   if (tool.rawFallback) {
@@ -239,10 +202,7 @@ function resultFromContent(tool: AcpToolActivity): Output | undefined {
 }
 
 /** Presents retained activity as Matrix plain text and HTML within the message budget. */
-export function renderAcpActivity(
-  event: AcpActivity,
-  maxHtmlBytes = 32_768,
-): RenderedAcpActivity {
+export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): RenderedAcpActivity {
   if (event.type === "thought") {
     const source = cleanActivityText(event.text);
     let budget = Math.min(ACTIVITY_RESULT_DETAIL_BYTES, maxHtmlBytes);
@@ -264,11 +224,7 @@ export function renderAcpActivity(
               .join("\n")
           : `<p>💭${suffix}</p>`;
       const result = { body, formattedBody };
-      if (
-        Buffer.byteLength(result.formattedBody, "utf8") <= maxHtmlBytes ||
-        budget <= 0
-      )
-        return result;
+      if (Buffer.byteLength(result.formattedBody, "utf8") <= maxHtmlBytes || budget <= 0) return result;
       budget = Math.max(0, Math.floor(budget / 2));
     }
   }
@@ -279,9 +235,7 @@ export function renderAcpActivity(
     : toolName(event) === "Execute"
       ? cleanActivityText(event.title ?? "")
       : fullTitle;
-  const previewSource = isScript
-    ? command.replaceAll(/\s+/gu, " ").trim()
-    : command;
+  const previewSource = isScript ? command.replaceAll(/\s+/gu, " ").trim() : command;
   const boundedPreview = takeBytes(previewSource, ACTIVITY_TITLE_PREVIEW_BYTES);
   const previewCommand = boundedPreview.cut
     ? `${takeBytes(previewSource, ACTIVITY_TITLE_PREVIEW_BYTES - Buffer.byteLength("…", "utf8")).text}…`
@@ -293,10 +247,7 @@ export function renderAcpActivity(
       : previewCommand;
   const titleDetail = takeBytes(
     command,
-    Math.min(
-      ACTIVITY_TITLE_DETAIL_BYTES,
-      Math.max(128, Math.floor(maxHtmlBytes / 3)),
-    ),
+    Math.min(ACTIVITY_TITLE_DETAIL_BYTES, Math.max(128, Math.floor(maxHtmlBytes / 3))),
   );
   const titleCut = titleDetail.cut || (isScript && event.script!.cut);
   const palette = statusPalette(event.status);
@@ -305,9 +256,7 @@ export function renderAcpActivity(
     isScript || previewCommand !== command
       ? `<details><summary>${titleMarkup(titleSummary, event.status)}</summary>${code([{ text: titleDetail.text }])}</details>`
       : `<p>${titleMarkup(titleSummary, event.status)}</p>`;
-  const scriptBody = isScript
-    ? `\nScript:\n${titleDetail.text}${titleCut ? " (truncated)" : ""}`
-    : "";
+  const scriptBody = isScript ? `\nScript:\n${titleDetail.text}${titleCut ? " (truncated)" : ""}` : "";
   const output = resultFromContent(event);
   if (!output || output.plain.length === 0) {
     if (Buffer.byteLength(titleHtml, "utf8") <= maxHtmlBytes)
@@ -321,30 +270,15 @@ export function renderAcpActivity(
   let previewBytes = ACTIVITY_RESULT_PREVIEW_BYTES;
   for (;;) {
     let detail = clipSegments(output.segments, detailBytes);
-    if (
-      output.terminal &&
-      detailBytes < ACTIVITY_RESULT_DETAIL_BYTES &&
-      event.terminalBytes > detailBytes
-    ) {
-      const head = takeBytes(
-        event.terminalHead || event.terminalSmall,
-        Math.floor(detailBytes * 0.75),
-      );
-      const tail = takeBytes(
-        event.terminalTail,
-        detailBytes - Buffer.byteLength(head.text, "utf8"),
-        true,
-      );
+    if (output.terminal && detailBytes < ACTIVITY_RESULT_DETAIL_BYTES && event.terminalBytes > detailBytes) {
+      const head = takeBytes(event.terminalHead || event.terminalSmall, Math.floor(detailBytes * 0.75));
+      const tail = takeBytes(event.terminalTail, detailBytes - Buffer.byteLength(head.text, "utf8"), true);
       detail = {
         segments: [{ text: `${head.text}\n\n${tail.text}` }],
         cut: true,
       };
     }
-    const preview = clipSegments(
-      output.segments,
-      previewBytes,
-      output.terminal,
-    );
+    const preview = clipSegments(output.segments, previewBytes, output.terminal);
     const truncated = output.cut || detail.cut;
     const detailDiffers = preview.cut || truncated;
     const body = `[${palette.label}] 🔧 ${titleSummary}${scriptBody}\n${plain(preview.segments)}${truncated ? " (truncated)" : ""}`;
@@ -352,10 +286,8 @@ export function renderAcpActivity(
       ? `<details><summary><code>${preview.segments.map((part) => (part.color ? span(part.text, part.color) : html(part.text))).join("")}</code>${truncated ? " (truncated)" : ""}</summary>${code(detail.segments)}</details>`
       : code(detail.segments);
     const formattedBody = `${titleHtml}\n<blockquote>${resultHtml}</blockquote>`;
-    if (Buffer.byteLength(formattedBody, "utf8") <= maxHtmlBytes)
-      return { body, formattedBody };
-    if (detailBytes > previewBytes)
-      detailBytes = Math.max(previewBytes, Math.floor(detailBytes / 2));
+    if (Buffer.byteLength(formattedBody, "utf8") <= maxHtmlBytes) return { body, formattedBody };
+    if (detailBytes > previewBytes) detailBytes = Math.max(previewBytes, Math.floor(detailBytes / 2));
     else if (previewBytes > 16) previewBytes = Math.floor(previewBytes / 2);
     else if (detailBytes > 16) detailBytes = Math.floor(detailBytes / 2);
     else return compactTool(titleSummary, palette.label, maxHtmlBytes);

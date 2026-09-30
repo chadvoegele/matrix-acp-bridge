@@ -32,8 +32,7 @@ export function isMatrixId(value: string, prefix: "@" | "!"): boolean {
   const serverName = value.slice(separator + 1);
   return (
     // eslint-disable-next-line no-control-regex -- Matrix localparts reject ASCII controls
-    /^[^\s\u0000-\u001F\u007F:[\],]+$/u.test(localpart) &&
-    isMatrixServerName(serverName)
+    /^[^\s\u0000-\u001F\u007F:[\],]+$/u.test(localpart) && isMatrixServerName(serverName)
   );
 }
 
@@ -42,13 +41,8 @@ export function isMatrixServerName(value: string): boolean {
     return false;
   }
   const hostname = String.raw`[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?`;
-  const match = new RegExp(
-    `^(?:(${hostname})|\\[([0-9A-Fa-f:.]+)\\])(?::([0-9]{1,5}))?$`,
-    "u",
-  ).exec(value);
-  return (
-    match !== null && (match[3] === undefined || Number(match[3]) <= 65_535)
-  );
+  const match = new RegExp(`^(?:(${hostname})|\\[([0-9A-Fa-f:.]+)\\])(?::([0-9]{1,5}))?$`, "u").exec(value);
+  return match !== null && (match[3] === undefined || Number(match[3]) <= 65_535);
 }
 
 export function isValidMatrixEventId(value: unknown): value is string {

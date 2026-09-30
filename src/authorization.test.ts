@@ -18,9 +18,7 @@ const ALICE = "@alice:example.org";
 const BOB = "@bob:example.org";
 const BRIDGE = "@bridge:example.org";
 
-function makeEvent(
-  overrides: Partial<InboundMatrixEvent> = {},
-): InboundMatrixEvent {
+function makeEvent(overrides: Partial<InboundMatrixEvent> = {}): InboundMatrixEvent {
   return {
     roomId: ROOM_ID,
     eventId: "$event:example.org",
@@ -33,9 +31,7 @@ function makeEvent(
   };
 }
 
-function options(
-  overrides: Partial<Parameters<typeof createInboundAuthorizer>[0]> = {},
-) {
+function options(overrides: Partial<Parameters<typeof createInboundAuthorizer>[0]> = {}) {
   return {
     allowedRooms: [ROOM_ID],
     allowedSenders: [ALICE, BOB],
@@ -59,10 +55,7 @@ function reasonOf(decision: InboundAuthorizationDecision): string {
 
 void test("accepts exact room/sender text and preserves the body exactly", () => {
   const body = "  hello\nworld  ";
-  const decision = authorizeInboundEvent(
-    makeEvent({ content: { msgtype: "m.text", body } }),
-    options(),
-  );
+  const decision = authorizeInboundEvent(makeEvent({ content: { msgtype: "m.text", body } }), options());
 
   assert.equal(decision.accepted, true);
   assert.deepEqual(decision.event, {
@@ -75,27 +68,15 @@ void test("accepts exact room/sender text and preserves the body exactly", () =>
 
 void test("uses one global sender allowlist and excludes the bridge identity", () => {
   assert.equal(
-    reasonOf(
-      authorizeInboundEvent(makeEvent({ roomId: OTHER_ROOM_ID }), options()),
-    ),
+    reasonOf(authorizeInboundEvent(makeEvent({ roomId: OTHER_ROOM_ID }), options())),
     INBOUND_REJECTION_REASONS.roomNotAllowed,
   );
   assert.equal(
-    reasonOf(
-      authorizeInboundEvent(
-        makeEvent({ sender: "@mallory:example.org" }),
-        options(),
-      ),
-    ),
+    reasonOf(authorizeInboundEvent(makeEvent({ sender: "@mallory:example.org" }), options())),
     INBOUND_REJECTION_REASONS.senderNotAllowed,
   );
   assert.equal(
-    reasonOf(
-      authorizeInboundEvent(
-        makeEvent({ sender: BRIDGE }),
-        options({ allowedSenders: [ALICE, BRIDGE] }),
-      ),
-    ),
+    reasonOf(authorizeInboundEvent(makeEvent({ sender: BRIDGE }), options({ allowedSenders: [ALICE, BRIDGE] }))),
     INBOUND_REJECTION_REASONS.selfEvent,
   );
 });
@@ -110,17 +91,11 @@ void test("rejects history, redacted, encrypted, state, and unsupported events",
     [{ stateKey: "" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
     [{ type: "m.room.member" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
     [{ type: "m.reaction" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
-    [
-      { type: "com.example.custom" },
-      INBOUND_REJECTION_REASONS.unsupportedEventType,
-    ],
+    [{ type: "com.example.custom" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
   ];
 
   for (const [overrides, expectedReason] of cases) {
-    assert.equal(
-      reasonOf(authorizeInboundEvent(makeEvent(overrides), options())),
-      expectedReason,
-    );
+    assert.equal(reasonOf(authorizeInboundEvent(makeEvent(overrides), options())), expectedReason);
   }
 });
 
@@ -182,10 +157,7 @@ void test("rejects malformed event IDs and accepts historical and modern opaque 
             return missingEventId;
           })()
         : makeEvent({ eventId });
-    assert.equal(
-      reasonOf(authorizeInboundEvent(event, options())),
-      INBOUND_REJECTION_REASONS.invalidEventId,
-    );
+    assert.equal(reasonOf(authorizeInboundEvent(event, options())), INBOUND_REJECTION_REASONS.invalidEventId);
   }
 
   for (const eventId of ["$opaque:example.org", "$base64/_-opaque"]) {
@@ -249,10 +221,7 @@ void test("strips only the leading plain-text reply fallback", () => {
   assert.equal(stripReplyFallback("> quoted\n> second\n\nreply"), "reply");
   assert.equal(stripReplyFallback("> quoted\nreply"), "reply");
   assert.equal(stripReplyFallback("> quoted\n\n\nreply"), "\nreply");
-  assert.equal(
-    stripReplyFallback("  > not a fallback\nreply"),
-    "  > not a fallback\nreply",
-  );
+  assert.equal(stripReplyFallback("  > not a fallback\nreply"), "  > not a fallback\nreply");
 
   const relationFree = authorizeInboundEvent(
     makeEvent({ content: { msgtype: "m.text", body: "> quote\n\nreply" } }),
@@ -265,12 +234,7 @@ void test("strips only the leading plain-text reply fallback", () => {
 void test("rejects empty normalized text and measures UTF-8 bytes after stripping", () => {
   for (const body of ["", " \t\n"]) {
     assert.equal(
-      reasonOf(
-        authorizeInboundEvent(
-          makeEvent({ content: { msgtype: "m.text", body } }),
-          options(),
-        ),
-      ),
+      reasonOf(authorizeInboundEvent(makeEvent({ content: { msgtype: "m.text", body } }), options())),
       INBOUND_REJECTION_REASONS.emptyBody,
     );
   }
@@ -331,9 +295,7 @@ void test("diagnostics contain only metadata and report suppressed counts", () =
   authorizer.authorize(invalid);
   assert.equal(lines.length, 6);
 
-  const records = lines.map(
-    (line) => JSON.parse(line) as { fields: Record<string, unknown> },
-  );
+  const records = lines.map((line) => JSON.parse(line) as { fields: Record<string, unknown> });
   assert.deepEqual(records[5]!.fields, {
     eventId: "$event:example.org",
     reason: INBOUND_REJECTION_REASONS.senderNotAllowed,

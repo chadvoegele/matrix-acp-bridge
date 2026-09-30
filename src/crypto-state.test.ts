@@ -1,28 +1,12 @@
 import assert from "node:assert/strict";
-import {
-  chmod,
-  lstat,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  CRYPTO_MANIFEST_FILE,
-  CRYPTO_MANIFEST_SCHEMA_VERSION,
-} from "./crypto-runtime.js";
+import { CRYPTO_MANIFEST_FILE, CRYPTO_MANIFEST_SCHEMA_VERSION } from "./crypto-runtime.js";
 import { acquireStateLock } from "./config.js";
-import {
-  CryptoStateError,
-  ensureCryptoDatabaseDirectory,
-  openCryptoStateStore,
-} from "./crypto-state.js";
+import { CryptoStateError, ensureCryptoDatabaseDirectory, openCryptoStateStore } from "./crypto-state.js";
 
 const identity = {
   homeserver: "https://matrix.example",
@@ -35,9 +19,7 @@ const fingerprints = {
   curve25519Fingerprint: "curve25519:fingerprint",
 } as const;
 
-function manifest(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     schemaVersion: CRYPTO_MANIFEST_SCHEMA_VERSION,
     ...identity,
@@ -54,9 +36,7 @@ async function makeStateDir(): Promise<string> {
   return stateDir;
 }
 
-async function withStateDir(
-  run: (stateDir: string) => Promise<void>,
-): Promise<void> {
+async function withStateDir(run: (stateDir: string) => Promise<void>): Promise<void> {
   const stateDir = await makeStateDir();
   try {
     await run(stateDir);
@@ -65,15 +45,9 @@ async function withStateDir(
   }
 }
 
-async function writeRawManifest(
-  stateDir: string,
-  value: unknown,
-): Promise<void> {
+async function writeRawManifest(stateDir: string, value: unknown): Promise<void> {
   const path = join(stateDir, CRYPTO_MANIFEST_FILE);
-  await writeFile(
-    path,
-    typeof value === "string" ? value : JSON.stringify(value),
-  );
+  await writeFile(path, typeof value === "string" ? value : JSON.stringify(value));
   await chmod(path, 0o600);
 }
 
@@ -84,10 +58,7 @@ async function expectCryptoError(
   let rejected: unknown;
   await assert.rejects(action, (error: unknown) => {
     rejected = error;
-    assert.ok(
-      error instanceof CryptoStateError,
-      `expected CryptoStateError, got ${String(error)}`,
-    );
+    assert.ok(error instanceof CryptoStateError, `expected CryptoStateError, got ${String(error)}`);
     assert.equal(error.category, category);
     assert.equal(error.code, "crypto_state");
     assert.equal(error.fatal, true);
@@ -126,9 +97,7 @@ void test("first use and interrupted bootstrap expose private, distinct storage 
     assert.equal(resumed.status, "verified");
     assert.equal((await lstat(resumed.manifestPath)).mode & 0o7777, 0o600);
 
-    const raw = JSON.parse(
-      await readFile(resumed.manifestPath, "utf8"),
-    ) as Record<string, unknown>;
+    const raw = JSON.parse(await readFile(resumed.manifestPath, "utf8")) as Record<string, unknown>;
     assert.deepEqual(Object.keys(raw).sort(), [
       "bootstrapCompleted",
       "curve25519Fingerprint",
@@ -139,14 +108,7 @@ void test("first use and interrupted bootstrap expose private, distinct storage 
       "schemaVersion",
       "userId",
     ]);
-    for (const forbidden of [
-      "accessToken",
-      "privateKey",
-      "roomKey",
-      "sas",
-      "transcript",
-      "syncToken",
-    ]) {
+    for (const forbidden of ["accessToken", "privateKey", "roomKey", "sas", "transcript", "syncToken"]) {
       assert.equal(Object.hasOwn(raw, forbidden), false);
     }
 
@@ -189,10 +151,7 @@ void test("manifest parsing is strict, versioned, and fail-closed", async () => 
     await withStateDir(async (stateDir) => {
       await ensureCryptoDatabaseDirectory(stateDir);
       await writeRawManifest(stateDir, value);
-      const error = await expectCryptoError(
-        () => openCryptoStateStore({ stateDir, identity }),
-        category,
-      );
+      const error = await expectCryptoError(() => openCryptoStateStore({ stateDir, identity }), category);
       assert.equal(error.message.includes("fingerprint"), false);
       assert.equal(error.message.includes("accessToken"), false);
     });
@@ -226,29 +185,17 @@ void test("identity and public-key fingerprints are bound without leaking metada
 void test("missing established database and unverified state cannot satisfy daemon restoration", async () => {
   await withStateDir(async (stateDir) => {
     await writeRawManifest(stateDir, manifest());
-    await expectCryptoError(
-      () => openCryptoStateStore({ stateDir, identity }),
-      "database-missing",
-    );
+    await expectCryptoError(() => openCryptoStateStore({ stateDir, identity }), "database-missing");
   });
 
   await withStateDir(async (stateDir) => {
     await ensureCryptoDatabaseDirectory(stateDir);
     const store = await openCryptoStateStore({ stateDir, identity });
-    await expectCryptoError(
-      async () => store.assertReadyForDaemon(fingerprints),
-      "manifest-absent",
-    );
+    await expectCryptoError(async () => store.assertReadyForDaemon(fingerprints), "manifest-absent");
     await store.recordBootstrap(fingerprints);
-    await expectCryptoError(
-      async () => store.assertReadyForDaemon(fingerprints),
-      "verification-required",
-    );
+    await expectCryptoError(async () => store.assertReadyForDaemon(fingerprints), "verification-required");
     await store.recordSasVerification(fingerprints);
-    assert.equal(
-      store.assertReadyForDaemon(fingerprints).deviceId,
-      identity.deviceId,
-    );
+    assert.equal(store.assertReadyForDaemon(fingerprints).deviceId, identity.deviceId);
   });
 });
 
@@ -258,28 +205,19 @@ void test("database validation rejects symlinks, insecure modes, and non-regular
     const child = join(databasePath, "store.db");
     await writeFile(child, "opaque sdk bytes");
     await chmod(child, 0o640);
-    await expectCryptoError(
-      () => openCryptoStateStore({ stateDir }),
-      "permissions",
-    );
+    await expectCryptoError(() => openCryptoStateStore({ stateDir }), "permissions");
     await chmod(child, 0o600);
 
     const outside = join(stateDir, "outside.db");
     await writeFile(outside, "not part of the database");
     await symlink(outside, join(databasePath, "linked.db"));
-    await expectCryptoError(
-      () => openCryptoStateStore({ stateDir }),
-      "unsafe-path",
-    );
+    await expectCryptoError(() => openCryptoStateStore({ stateDir }), "unsafe-path");
   });
 
   await withStateDir(async (stateDir) => {
     const databasePath = await ensureCryptoDatabaseDirectory(stateDir);
     await chmod(databasePath, 0o750);
-    await expectCryptoError(
-      () => openCryptoStateStore({ stateDir }),
-      "permissions",
-    );
+    await expectCryptoError(() => openCryptoStateStore({ stateDir }), "permissions");
   });
 });
 
@@ -310,15 +248,9 @@ void test("manifest writes are serialized, atomic, private, and clean up interru
   await withStateDir(async (stateDir) => {
     await ensureCryptoDatabaseDirectory(stateDir);
     const store = await openCryptoStateStore({ stateDir, identity });
-    await Promise.all([
-      store.recordBootstrap(fingerprints),
-      store.recordBootstrap(fingerprints),
-    ]);
+    await Promise.all([store.recordBootstrap(fingerprints), store.recordBootstrap(fingerprints)]);
     assert.equal(store.status, "bootstrapped");
-    assert.equal(
-      (await readdir(stateDir)).filter((name) => name.endsWith(".tmp")).length,
-      0,
-    );
+    assert.equal((await readdir(stateDir)).filter((name) => name.endsWith(".tmp")).length, 0);
 
     const raw = await readFile(store.manifestPath, "utf8");
     assert.equal(raw.endsWith("\n"), true);
@@ -344,8 +276,7 @@ void test("write, file-fsync, rename, and directory-fsync failures are sanitized
       await store.recordBootstrap(fingerprints);
       enabled = true;
       const error = await expectCryptoError(
-        () =>
-          store.writeManifest({ ...store.getManifest()!, sasVerified: true }),
+        () => store.writeManifest({ ...store.getManifest()!, sasVerified: true }),
         point,
       );
       assert.equal(error.message.includes("raw access token"), false);
@@ -361,10 +292,7 @@ void test("write, file-fsync, rename, and directory-fsync failures are sanitized
 
 void test("interrupted bootstrap temporary files are ignored and never parsed", async () => {
   await withStateDir(async (stateDir) => {
-    await writeFile(
-      join(stateDir, `.${CRYPTO_MANIFEST_FILE}.crash.tmp`),
-      "token and truncated manifest",
-    );
+    await writeFile(join(stateDir, `.${CRYPTO_MANIFEST_FILE}.crash.tmp`), "token and truncated manifest");
     await chmod(join(stateDir, `.${CRYPTO_MANIFEST_FILE}.crash.tmp`), 0o600);
     const store = await openCryptoStateStore({ stateDir, identity });
     assert.equal(store.status, "first-use");
@@ -378,20 +306,11 @@ void test("interrupted bootstrap temporary files are ignored and never parsed", 
 void test("recovery guidance is stable metadata and contains no state contents", async () => {
   await withStateDir(async (stateDir) => {
     await ensureCryptoDatabaseDirectory(stateDir);
-    await writeRawManifest(
-      stateDir,
-      manifest({ userId: "@secret-user:example" }),
-    );
-    const error = await expectCryptoError(
-      () => openCryptoStateStore({ stateDir, identity }),
-      "identity-mismatch",
-    );
+    await writeRawManifest(stateDir, manifest({ userId: "@secret-user:example" }));
+    const error = await expectCryptoError(() => openCryptoStateStore({ stateDir, identity }), "identity-mismatch");
     assert.equal(error.recoveryAction, "restore-backup");
     assert.match(error.recoveryGuidance, /matching protected crypto backup/u);
-    assert.equal(
-      error.recoveryGuidance.includes("@secret-user:example"),
-      false,
-    );
+    assert.equal(error.recoveryGuidance.includes("@secret-user:example"), false);
   });
 });
 
@@ -405,9 +324,7 @@ void test("a manifest without a database is never created by a normal state open
         userId: identity.userId,
         deviceId: identity.deviceId,
       } as never),
-      (error: unknown) =>
-        error instanceof CryptoStateError &&
-        error.category === "database-missing",
+      (error: unknown) => error instanceof CryptoStateError && error.category === "database-missing",
     );
     assert.equal((await readdir(stateDir)).includes("matrix-crypto"), false);
   });
@@ -420,11 +337,7 @@ void test("crypto storage reuses the existing process-lifetime state lock", asyn
       await ensureCryptoDatabaseDirectory(stateDir);
       const store = await openCryptoStateStore({ stateDir, identity });
       assert.equal(store.status, "resumable-bootstrap");
-      assert.equal(
-        (await readdir(stateDir)).filter((name) => name.endsWith(".lock"))
-          .length,
-        1,
-      );
+      assert.equal((await readdir(stateDir)).filter((name) => name.endsWith(".lock")).length, 1);
       await assert.rejects(() => acquireStateLock(stateDir));
     } finally {
       await lock.release();

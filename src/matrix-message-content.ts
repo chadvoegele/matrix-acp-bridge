@@ -6,10 +6,7 @@ export interface MatrixHtmlBody {
 }
 
 /** Build the exact wire content used for both delivery and byte accounting. */
-export function matrixHtmlContent(
-  message: MatrixHtmlBody,
-  targetEventId?: string,
-): Readonly<Record<string, unknown>> {
+export function matrixHtmlContent(message: MatrixHtmlBody, targetEventId?: string): Readonly<Record<string, unknown>> {
   const newContent = {
     msgtype: "m.text",
     body: message.body,
@@ -27,14 +24,8 @@ export function matrixHtmlContent(
       };
 }
 
-export function matrixHtmlContentBytes(
-  message: MatrixHtmlBody,
-  targetEventId?: string,
-): number {
-  return Buffer.byteLength(
-    JSON.stringify(matrixHtmlContent(message, targetEventId)),
-    "utf8",
-  );
+export function matrixHtmlContentBytes(message: MatrixHtmlBody, targetEventId?: string): number {
+  return Buffer.byteLength(JSON.stringify(matrixHtmlContent(message, targetEventId)), "utf8");
 }
 
 /** Reserve the edit envelope before its target event ID is known. */

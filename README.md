@@ -35,9 +35,9 @@ npm run check                  # formatting, lint, typecheck, and test gate
 
 ## Code formatting
 
-We use [Prettier](https://prettier.io/) with its standard defaults, configured in
-`.prettierrc.json`: two-space indentation, double quotes, semicolons, and an
-80-column print width. ESLint's Stylistic rules also require blank lines around
+We use [Prettier](https://prettier.io/) with its standard defaults except for a
+120-column print width, configured in `.prettierrc.json`. This includes two-space
+indentation, double quotes, and semicolons. ESLint's Stylistic rules also require blank lines around
 function declarations and exports, and between class members. `eslint-config-prettier`
 disables conflicting lint rules.
 

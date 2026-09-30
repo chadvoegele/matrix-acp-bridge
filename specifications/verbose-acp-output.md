@@ -308,9 +308,7 @@ Read, write, edit, and other tool previews and details start at the beginning of
   <summary>
     <span data-mx-bg-color="#F2F2F2"
       ><span data-mx-color="#000000">┃</span>
-      <span data-mx-color="#000000"
-        >🔧 Execute(python3 -c '…') (truncated)</span
-      ></span
+      <span data-mx-color="#000000">🔧 Execute(python3 -c '…') (truncated)</span></span
     >
   </summary>
   <pre><code>python3 -c 'print("alpha")'</code></pre>
@@ -355,8 +353,7 @@ For reads, use `Read(path)` as the title.
    ```html
    <p>
      <span data-mx-bg-color="#EAEAEA"
-       ><span data-mx-color="#808080">┃</span>
-       <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
+       ><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
      >
    </p>
    ```
@@ -366,8 +363,7 @@ For reads, use `Read(path)` as the title.
    ```html
    <p>
      <span data-mx-bg-color="#F2F2F2"
-       ><span data-mx-color="#000000">┃</span>
-       <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
+       ><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
      >
    </p>
    ```
@@ -377,8 +373,7 @@ For reads, use `Read(path)` as the title.
    ```html
    <p>
      <span data-mx-bg-color="#E6F4EA"
-       ><span data-mx-color="#008000">┃</span>
-       <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
+       ><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -391,8 +386,7 @@ For reads, use `Read(path)` as the title.
    ```html
    <p>
      <span data-mx-bg-color="#FCE8E6"
-       ><span data-mx-color="#C00000">┃</span>
-       <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
+       ><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -409,8 +403,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
    ```html
    <p>
      <span data-mx-bg-color="#EAEAEA"
-       ><span data-mx-color="#808080">┃</span>
-       <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
+       ><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
      >
    </p>
    ```
@@ -420,8 +413,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
    ```html
    <p>
      <span data-mx-bg-color="#F2F2F2"
-       ><span data-mx-color="#000000">┃</span>
-       <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
+       ><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
      >
    </p>
    ```
@@ -431,8 +423,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
    ```html
    <p>
      <span data-mx-bg-color="#E6F4EA"
-       ><span data-mx-color="#008000">┃</span>
-       <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
+       ><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -445,8 +436,7 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
    ```html
    <p>
      <span data-mx-bg-color="#FCE8E6"
-       ><span data-mx-color="#C00000">┃</span>
-       <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
+       ><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -463,8 +453,7 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    ```html
    <p>
      <span data-mx-bg-color="#EAEAEA"
-       ><span data-mx-color="#808080">┃</span>
-       <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
+       ><span data-mx-color="#808080">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
      >
    </p>
    ```
@@ -474,8 +463,7 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    ```html
    <p>
      <span data-mx-bg-color="#F2F2F2"
-       ><span data-mx-color="#000000">┃</span>
-       <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
+       ><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
      >
    </p>
    ```
@@ -485,8 +473,7 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    ```html
    <p>
      <span data-mx-bg-color="#E6F4EA"
-       ><span data-mx-color="#008000">┃</span>
-       <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
+       ><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -499,8 +486,7 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
    ```html
    <p>
      <span data-mx-bg-color="#FCE8E6"
-       ><span data-mx-color="#C00000">┃</span>
-       <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
+       ><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -524,9 +510,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
    <p>
      <span data-mx-bg-color="#EAEAEA"
        ><span data-mx-color="#808080">┃</span>
-       <span data-mx-color="#000000"
-         >🔧 Execute(cat -- /tmp/output.txt)</span
-       ></span
+       <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span
      >
    </p>
    ```
@@ -537,9 +521,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
    <p>
      <span data-mx-bg-color="#F2F2F2"
        ><span data-mx-color="#000000">┃</span>
-       <span data-mx-color="#000000"
-         >🔧 Execute(cat -- /tmp/output.txt)</span
-       ></span
+       <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -553,9 +535,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
    <p>
      <span data-mx-bg-color="#E6F4EA"
        ><span data-mx-color="#008000">┃</span>
-       <span data-mx-color="#000000"
-         >🔧 Execute(cat -- /tmp/output.txt)</span
-       ></span
+       <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span
      >
    </p>
    <blockquote>
@@ -569,9 +549,7 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
    <p>
      <span data-mx-bg-color="#FCE8E6"
        ><span data-mx-color="#C00000">┃</span>
-       <span data-mx-color="#000000"
-         >🔧 Execute(cat -- /tmp/output.txt)</span
-       ></span
+       <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span
      >
    </p>
    <blockquote>

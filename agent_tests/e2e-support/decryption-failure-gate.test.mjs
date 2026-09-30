@@ -12,12 +12,9 @@ test("ignores startup decryption failures and rejects live failures", () => {
       return () => {};
     },
   };
-  const beginLiveExchange = installLiveDecryptionFailureHandler(
-    adapter,
-    (error) => {
-      rejection = error;
-    },
-  );
+  const beginLiveExchange = installLiveDecryptionFailureHandler(adapter, (error) => {
+    rejection = error;
+  });
 
   onFailure();
   assert.equal(rejection, undefined);

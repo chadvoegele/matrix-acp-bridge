@@ -13,9 +13,7 @@ export interface CancellationController {
 
 const noop: Unsubscribe = () => {};
 
-class DefaultCancellation
-  implements CancellationController, CancellationSignal
-{
+class DefaultCancellation implements CancellationController, CancellationSignal {
   readonly signal: CancellationSignal = this;
 
   #cancelled = false;

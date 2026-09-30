@@ -6,20 +6,12 @@ import { readToken } from "./common.mjs";
 
 export async function savedAcpSessionIds(environment, additionalFiles = []) {
   const sessionIds = [];
-  const stateFiles = [
-    join(environment.bridge.stateDir, "bridge-state.json"),
-    ...additionalFiles,
-  ];
+  const stateFiles = [join(environment.bridge.stateDir, "bridge-state.json"), ...additionalFiles];
   for (const path of stateFiles) {
     try {
       const value = JSON.parse(await readFile(path, "utf8"));
-      const ids = Array.isArray(value)
-        ? value
-        : Object.values(value.sessions ?? {});
-      if (
-        !Array.isArray(ids) ||
-        !ids.every((id) => typeof id === "string" && id.length > 0)
-      ) {
+      const ids = Array.isArray(value) ? value : Object.values(value.sessions ?? {});
+      if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string" && id.length > 0)) {
         throw new Error("retained session-ID list is invalid");
       }
       sessionIds.push(...ids);
@@ -33,11 +25,7 @@ export async function savedAcpSessionIds(environment, additionalFiles = []) {
   return [...new Set(sessionIds)];
 }
 
-export async function deleteAcpSessions(
-  environment,
-  sessionIds,
-  clientName = "matrix-acp-e2e-cleanup",
-) {
+export async function deleteAcpSessions(environment, sessionIds, clientName = "matrix-acp-e2e-cleanup") {
   if (sessionIds.length === 0) return;
   const [program, ...arguments_] = environment.acpCommand;
   const child = spawn(program, arguments_, { stdio: ["pipe", "pipe", "pipe"] });
@@ -79,10 +67,7 @@ export async function deleteAcpSessions(
         return;
       }
       const id = nextId++;
-      const timer = setTimeout(
-        () => reject(new Error(`ACP cleanup ${method} timed out`)),
-        30_000,
-      );
+      const timer = setTimeout(() => reject(new Error(`ACP cleanup ${method} timed out`)), 30_000);
       responses.set(id, (message) => {
         clearTimeout(timer);
         responses.delete(id);
@@ -92,9 +77,7 @@ export async function deleteAcpSessions(
           reject(new Error(`ACP cleanup ${method} failed`));
         }
       });
-      child.stdin.write(
-        `${JSON.stringify({ jsonrpc: "2.0", id, method, params: parameters })}\n`,
-      );
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params: parameters })}\n`);
     });
   try {
     const initialized = await request("initialize", {
@@ -105,13 +88,10 @@ export async function deleteAcpSessions(
       },
       clientInfo: { name: clientName, version: "1" },
     });
-    if (
-      initialized?.agentCapabilities?.sessionCapabilities?.delete === undefined
-    ) {
+    if (initialized?.agentCapabilities?.sessionCapabilities?.delete === undefined) {
       throw new Error("ACP agent does not support session/delete");
     }
-    for (const sessionId of sessionIds)
-      await request("session/delete", { sessionId });
+    for (const sessionId of sessionIds) await request("session/delete", { sessionId });
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.stdin.end();
     const timer = setTimeout(() => child.kill("SIGTERM"), 5000);
@@ -125,49 +105,30 @@ export async function cleanupEnvironment(
   environment,
   { roles, additionalSessionFiles = [], removeSharedRoot = false, clientName },
 ) {
-  await deleteAcpSessions(
-    environment,
-    await savedAcpSessionIds(environment, additionalSessionFiles),
-    clientName,
-  );
+  await deleteAcpSessions(environment, await savedAcpSessionIds(environment, additionalSessionFiles), clientName);
 
   let failed = false;
   for (const role of roles) {
     const token = await readToken(environment[role].tokenFile);
-    const response = await fetch(
-      `${environment.homeserver}/_matrix/client/v3/logout`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}` },
-      },
-    );
+    const response = await fetch(`${environment.homeserver}/_matrix/client/v3/logout`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
     if (!response.ok && response.status !== 401) {
       failed = true;
-      process.stderr.write(
-        `Could not revoke ${role} test device: HTTP ${response.status}\n`,
-      );
+      process.stderr.write(`Could not revoke ${role} test device: HTTP ${response.status}\n`);
     }
   }
-  if (failed)
-    throw new Error(
-      "one or more test devices could not be revoked; private state was preserved",
-    );
+  if (failed) throw new Error("one or more test devices could not be revoked; private state was preserved");
 
-  const roleRoots = [
-    ...new Set(roles.map((role) => dirname(environment[role].tokenFile))),
-  ];
-  for (const roleRoot of roleRoots)
-    await rm(roleRoot, { recursive: true, force: true });
-  const sharedParent =
-    roleRoots.length > 0 &&
-    new Set(roleRoots.map((roleRoot) => dirname(roleRoot))).size === 1;
+  const roleRoots = [...new Set(roles.map((role) => dirname(environment[role].tokenFile)))];
+  for (const roleRoot of roleRoots) await rm(roleRoot, { recursive: true, force: true });
+  const sharedParent = roleRoots.length > 0 && new Set(roleRoots.map((roleRoot) => dirname(roleRoot))).size === 1;
   if (removeSharedRoot && sharedParent) {
     await rmdir(dirname(roleRoots[0])).catch((error) => {
       if (error?.code !== "ENOTEMPTY" && error?.code !== "ENOENT") throw error;
     });
   }
   await rm(environmentPath, { force: true });
-  process.stdout.write(
-    "Deleted ACP sessions, revoked Matrix test devices, and removed private E2E state.\n",
-  );
+  process.stdout.write("Deleted ACP sessions, revoked Matrix test devices, and removed private E2E state.\n");
 }

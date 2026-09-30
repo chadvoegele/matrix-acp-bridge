@@ -6,11 +6,7 @@ import { repoRoot } from "./common.mjs";
 
 export function childExit(child, name, allowed = [0]) {
   const finish = (code, signal, resolve, reject) => {
-    if (
-      allowed.includes(code) ||
-      (signal === "SIGTERM" && allowed.includes(143))
-    )
-      resolve(code);
+    if (allowed.includes(code) || (signal === "SIGTERM" && allowed.includes(143))) resolve(code);
     else reject(new Error(`${name} exited with ${code ?? signal}`));
   };
   return new Promise((resolve, reject) => {
@@ -55,23 +51,16 @@ export function parseDiagnostics(text) {
     });
 }
 
-export async function startBridgePair(
-  environment,
-  { onOutbound, onInbound } = {},
-) {
+export async function startBridgePair(environment, { onOutbound, onInbound } = {}) {
   const [acpProgram, ...acpArguments] = environment.acpCommand;
   const acp = spawn(acpProgram, acpArguments, {
     cwd: repoRoot,
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const bridge = spawn(
-    process.execPath,
-    [join(repoRoot, "dist/main.js"), "--config", environment.bridge.configFile],
-    {
-      cwd: repoRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
+  const bridge = spawn(process.execPath, [join(repoRoot, "dist/main.js"), "--config", environment.bridge.configFile], {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const outbound = jsonLineTap(onOutbound ?? (() => {}));
   const inbound = jsonLineTap(onInbound ?? (() => {}));
   bridge.stdout.pipe(outbound).pipe(acp.stdin);
@@ -91,38 +80,22 @@ export async function startBridgePair(
     bridgeDiagnostics: () => bridgeDiagnostics,
     acpDiagnostics: () => acpDiagnostics,
   };
-  await waitFor(
-    () => bridgeDiagnostics.includes("startup-ready"),
-    "bridge startup-ready",
-    120_000,
-    pair,
-  );
+  await waitFor(() => bridgeDiagnostics.includes("startup-ready"), "bridge startup-ready", 120_000, pair);
   return pair;
 }
 
 export async function stopBridgePair(pair) {
-  if (pair.bridge.exitCode === null && pair.bridge.signalCode === null)
-    pair.bridge.kill("SIGTERM");
+  if (pair.bridge.exitCode === null && pair.bridge.signalCode === null) pair.bridge.kill("SIGTERM");
   await childExit(pair.bridge, "bridge");
-  if (pair.acp.exitCode === null && pair.acp.signalCode === null)
-    pair.acp.kill("SIGTERM");
+  if (pair.acp.exitCode === null && pair.acp.signalCode === null) pair.acp.kill("SIGTERM");
   await childExit(pair.acp, "ACP proxy", [0, 143]);
 }
 
-export async function runSender({
-  environmentPath,
-  senderPath,
-  args,
-  forwardStderr = true,
-}) {
-  const child = spawn(
-    process.execPath,
-    [senderPath, "--environment", environmentPath, ...args],
-    {
-      cwd: repoRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+export async function runSender({ environmentPath, senderPath, args, forwardStderr = true }) {
+  const child = spawn(process.execPath, [senderPath, "--environment", environmentPath, ...args], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => {

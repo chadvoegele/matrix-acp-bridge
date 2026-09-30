@@ -1,12 +1,5 @@
 import { deserialize, serialize } from "node:v8";
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { isRecord } from "./object-validation.js";
@@ -89,11 +82,7 @@ interface RawDatabase {
 interface NodeIndexedDatabaseRequest {
   readonly result: NodeIndexedDatabase;
   readonly error?: unknown;
-  addEventListener(
-    type: string,
-    listener: () => void,
-    options?: { readonly once?: boolean },
-  ): void;
+  addEventListener(type: string, listener: () => void, options?: { readonly once?: boolean }): void;
 }
 
 interface NodeIndexedDatabaseObjectStore {
@@ -108,11 +97,7 @@ interface NodeIndexedDatabaseObjectStore {
 interface NodeIndexedDatabaseTransaction {
   error?: unknown;
   objectStore(name: string): NodeIndexedDatabaseObjectStore;
-  addEventListener(
-    type: string,
-    listener: () => void,
-    options?: { readonly once?: boolean },
-  ): void;
+  addEventListener(type: string, listener: () => void, options?: { readonly once?: boolean }): void;
 }
 
 interface NodeIndexedDatabase {
@@ -123,10 +108,7 @@ interface NodeIndexedDatabase {
       readonly autoIncrement: boolean;
     },
   ): NodeIndexedDatabaseObjectStore;
-  transaction(
-    storeNames: readonly string[] | string,
-    mode?: string,
-  ): NodeIndexedDatabaseTransaction;
+  transaction(storeNames: readonly string[] | string, mode?: string): NodeIndexedDatabaseTransaction;
   close(): void;
 }
 
@@ -146,11 +128,7 @@ function isNodeEnvironment(): boolean {
 }
 
 function isSnapshot(value: unknown): value is IndexedDatabaseSnapshot {
-  if (
-    !isRecord(value) ||
-    value.schemaVersion !== SNAPSHOT_SCHEMA_VERSION ||
-    !Array.isArray(value.databases)
-  ) {
+  if (!isRecord(value) || value.schemaVersion !== SNAPSHOT_SCHEMA_VERSION || !Array.isArray(value.databases)) {
     return false;
   }
   return value.databases.every(
@@ -173,23 +151,17 @@ function snapshotTemporaryFile(path: string): string {
 }
 
 function factory(): FakeIndexedDatabaseFactory {
-  return (globalThis as unknown as Record<string, unknown>)
-    .indexedDB as FakeIndexedDatabaseFactory;
+  return (globalThis as unknown as Record<string, unknown>).indexedDB as FakeIndexedDatabaseFactory;
 }
 
 function databaseMatchesPath(name: string): boolean {
-  return (
-    databasePath !== undefined &&
-    (name === databasePath || name.startsWith(`${databasePath}::`))
-  );
+  return databasePath !== undefined && (name === databasePath || name.startsWith(`${databasePath}::`));
 }
 
 function captureSnapshot(): IndexedDatabaseSnapshot {
   const databases = factory()._databases;
   if (!(databases instanceof Map)) {
-    throw new TypeError(
-      "Node IndexedDB factory does not expose its database registry",
-    );
+    throw new TypeError("Node IndexedDB factory does not expose its database registry");
   }
 
   const result: Array<IndexedDatabaseSnapshot["databases"][number]> = [];
@@ -210,19 +182,13 @@ function captureSnapshot(): IndexedDatabaseSnapshot {
         .filter((index) => !isRecord(index) || index.deleted !== true)
         .map((index) => ({
           name: index.name,
-          keyPath:
-            index.keyPath === null || typeof index.keyPath === "string"
-              ? index.keyPath
-              : [...index.keyPath],
+          keyPath: index.keyPath === null || typeof index.keyPath === "string" ? index.keyPath : [...index.keyPath],
           multiEntry: index.multiEntry,
           unique: index.unique,
         }));
       objectStores.push({
         name: storeName,
-        keyPath:
-          store.keyPath === null || typeof store.keyPath === "string"
-            ? store.keyPath
-            : [...store.keyPath],
+        keyPath: store.keyPath === null || typeof store.keyPath === "string" ? store.keyPath : [...store.keyPath],
         autoIncrement: store.autoIncrement,
         ...(store.keyGenerator === undefined || store.keyGenerator === null
           ? {}
@@ -260,46 +226,28 @@ function scheduleSnapshot(): void {
   void snapshotTail.catch(() => {});
 }
 
-function requestResult(
-  request: NodeIndexedDatabaseRequest,
-): Promise<NodeIndexedDatabase> {
+function requestResult(request: NodeIndexedDatabaseRequest): Promise<NodeIndexedDatabase> {
   return new Promise((resolve, reject) => {
     request.addEventListener("success", () => resolve(request.result));
     request.addEventListener("error", () =>
-      reject(
-        request.error instanceof Error
-          ? request.error
-          : new Error("IndexedDB request failed"),
-      ),
+      reject(request.error instanceof Error ? request.error : new Error("IndexedDB request failed")),
     );
   });
 }
 
-function transactionComplete(
-  transaction: NodeIndexedDatabaseTransaction,
-): Promise<void> {
+function transactionComplete(transaction: NodeIndexedDatabaseTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     transaction.addEventListener("complete", () => resolve(), { once: true });
     transaction.addEventListener(
       "abort",
-      () =>
-        reject(
-          transaction.error instanceof Error
-            ? transaction.error
-            : new Error("IndexedDB transaction aborted"),
-        ),
+      () => reject(transaction.error instanceof Error ? transaction.error : new Error("IndexedDB transaction aborted")),
       {
         once: true,
       },
     );
     transaction.addEventListener(
       "error",
-      () =>
-        reject(
-          transaction.error instanceof Error
-            ? transaction.error
-            : new Error("IndexedDB transaction failed"),
-        ),
+      () => reject(transaction.error instanceof Error ? transaction.error : new Error("IndexedDB transaction failed")),
       {
         once: true,
       },
@@ -307,9 +255,7 @@ function transactionComplete(
   });
 }
 
-async function restoreDatabase(
-  database: IndexedDatabaseSnapshot["databases"][number],
-): Promise<void> {
+async function restoreDatabase(database: IndexedDatabaseSnapshot["databases"][number]): Promise<void> {
   const request = factory().open(database.name, database.version);
   request.addEventListener("upgradeneeded", () => {
     const connection = request.result;
@@ -319,14 +265,10 @@ async function restoreDatabase(
         autoIncrement: store.autoIncrement,
       });
       for (const index of store.indexes) {
-        objectStore.createIndex(
-          index.name,
-          index.keyPath as string | string[],
-          {
-            multiEntry: index.multiEntry,
-            unique: index.unique,
-          },
-        );
+        objectStore.createIndex(index.name, index.keyPath as string | string[], {
+          multiEntry: index.multiEntry,
+          unique: index.unique,
+        });
       }
     }
   });
@@ -352,17 +294,11 @@ async function restoreDatabase(
 
   const rawDatabase = factory()._databases?.get(database.name);
   if (rawDatabase === undefined) {
-    throw new Error(
-      "Restored IndexedDB database is missing from the factory registry",
-    );
+    throw new Error("Restored IndexedDB database is missing from the factory registry");
   }
   for (const store of database.objectStores) {
     const rawStore = rawDatabase.rawObjectStores.get(store.name);
-    if (
-      rawStore?.keyGenerator !== undefined &&
-      rawStore.keyGenerator !== null &&
-      store.keyGenerator !== undefined
-    ) {
+    if (rawStore?.keyGenerator !== undefined && rawStore.keyGenerator !== null && store.keyGenerator !== undefined) {
       rawStore.keyGenerator.num = store.keyGenerator;
     }
   }
@@ -387,9 +323,7 @@ async function restoreSnapshot(): Promise<void> {
   }
   for (const database of value.databases) {
     if (!databaseMatchesPath(database.name)) {
-      throw new Error(
-        "Node IndexedDB snapshot contains an unexpected database",
-      );
+      throw new Error("Node IndexedDB snapshot contains an unexpected database");
     }
     await restoreDatabase(database);
   }
@@ -401,10 +335,7 @@ function patchConnection(connection: NodeIndexedDatabase): void {
   }
   patchedConnections.add(connection);
   const transaction = connection.transaction.bind(connection);
-  connection.transaction = (
-    storeNames: readonly string[] | string,
-    mode?: string,
-  ) => {
+  connection.transaction = (storeNames: readonly string[] | string, mode?: string) => {
     const result = transaction(storeNames, mode);
     result.addEventListener("complete", scheduleSnapshot, { once: true });
     result.addEventListener("abort", scheduleSnapshot, { once: true });
@@ -421,9 +352,7 @@ function patchFactory(): void {
   const open = currentFactory.open.bind(currentFactory);
   currentFactory.open = (name: string, version?: number) => {
     const request = version === undefined ? open(name) : open(name, version);
-    request.addEventListener("upgradeneeded", () =>
-      patchConnection(request.result),
-    );
+    request.addEventListener("upgradeneeded", () => patchConnection(request.result));
     request.addEventListener("success", () => patchConnection(request.result));
     return request;
   };
@@ -440,9 +369,7 @@ export async function configureNodeIndexedDb(path: string): Promise<void> {
     return;
   }
   if (databasePath !== undefined && databasePath !== path) {
-    throw new Error(
-      "Only one Node IndexedDB crypto database may be active per process",
-    );
+    throw new Error("Only one Node IndexedDB crypto database may be active per process");
   }
   databasePath = path;
   snapshotPath = snapshotFile(path);

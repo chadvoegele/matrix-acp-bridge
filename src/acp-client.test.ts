@@ -36,8 +36,7 @@ function createFakeInput(): FakeInput {
   return {
     stream,
     push(value) {
-      const text =
-        typeof value === "string" ? value : `${JSON.stringify(value)}\n`;
+      const text = typeof value === "string" ? value : `${JSON.stringify(value)}\n`;
       controller?.enqueue(encoder.encode(text));
     },
     close() {
@@ -136,26 +135,17 @@ function rpcResponse(id: unknown, result: unknown): Record<string, unknown> {
   return { jsonrpc: "2.0", id, result };
 }
 
-function rpcNotification(
-  method: string,
-  parameters: unknown,
-): Record<string, unknown> {
+function rpcNotification(method: string, parameters: unknown): Record<string, unknown> {
   return { jsonrpc: "2.0", method, params: parameters };
 }
 
-function rpcRequest(
-  id: unknown,
-  method: string,
-  parameters: unknown,
-): Record<string, unknown> {
+function rpcRequest(id: unknown, method: string, parameters: unknown): Record<string, unknown> {
   return { jsonrpc: "2.0", id, method, params: parameters };
 }
 
 function assertProtocolFrame(frame: Record<string, unknown>): void {
   assert.equal(frame.jsonrpc, "2.0");
-  assert.ok(
-    typeof frame.method === "string" || "result" in frame || "error" in frame,
-  );
+  assert.ok(typeof frame.method === "string" || "result" in frame || "error" in frame);
 }
 
 function fatalSignal(client: AcpClient): {
@@ -210,11 +200,7 @@ async function createSession(
   return session.sessionId;
 }
 
-function newClient(
-  input: FakeInput,
-  output: FakeOutput,
-  extra: Record<string, unknown> = {},
-): AcpClient {
+function newClient(input: FakeInput, output: FakeOutput, extra: Record<string, unknown> = {}): AcpClient {
   return createAcpClient({
     cwd: CWD,
     input: input.stream,
@@ -289,9 +275,7 @@ void test("loads a saved ACP session with the configured cwd and suppresses raw 
     throw new Error("loadSession capability was not installed");
   }
   const phases: string[] = [];
-  client.onSessionPhase?.((change) =>
-    phases.push(`${change.sessionId}:${change.phase}`),
-  );
+  client.onSessionPhase?.((change) => phases.push(`${change.sessionId}:${change.phase}`));
   const loading = client.loadSession({
     cwd: "/caller-supplied-cwd",
     mcpServers: [],
@@ -531,9 +515,7 @@ void test("preserves bounded thought and tool activity with optional fields and 
         sessionUpdate: "tool_call_update",
         toolCallId: "tool-1",
         status: "completed",
-        content: [
-          { type: "diff", path: "/tmp/example", oldText: null, newText: "new" },
-        ],
+        content: [{ type: "diff", path: "/tmp/example", oldText: null, newText: "new" }],
         _meta: {
           terminal_output: { terminal_id: "terminal-1", data: "ok" },
           terminal_exit: {
@@ -569,9 +551,7 @@ void test("preserves bounded thought and tool activity with optional fields and 
     kind: "tool_call_update",
     toolCallId: "tool-1",
     status: "completed",
-    content: [
-      { type: "diff", path: "/tmp/example", oldText: null, newText: "new" },
-    ],
+    content: [{ type: "diff", path: "/tmp/example", oldText: null, newText: "new" }],
     terminalOutput: { terminalId: "terminal-1", data: "ok" },
     terminalExit: { terminalId: "terminal-1", exitCode: 0, signal: null },
   });
@@ -594,8 +574,7 @@ void test("client activity remains Unicode-safe and visibly truncated through re
     },
   });
   const frame = await output.nextFrame();
-  const push = (update: unknown) =>
-    input.push(rpcNotification("session/update", { sessionId, update }));
+  const push = (update: unknown) => input.push(rpcNotification("session/update", { sessionId, update }));
   push({
     sessionUpdate: "agent_thought_chunk",
     messageId: "thought",
@@ -657,10 +636,7 @@ void test("client activity remains Unicode-safe and visibly truncated through re
     assert.ok(thought.text.startsWith("a".repeat(8190)));
   }
   if (tool.type === "tool")
-    assert.equal(
-      tool.content?.[0]?.type === "content" && tool.content[0].text,
-      "b".repeat(8190),
-    );
+    assert.equal(tool.content?.[0]?.type === "content" && tool.content[0].text, "b".repeat(8190));
   if (many.type === "tool") assert.equal(many.contentCut, true);
   await client.close();
 });
@@ -697,10 +673,7 @@ void test("large terminal notification preserves the first and last UTF-8 bytes"
   await prompt;
   const terminal = (updates[0] as AcpToolCallUpdate).terminalOutput;
   assert.equal(terminal?.originalBytes, Buffer.byteLength(data, "utf8"));
-  assert.ok(
-    Buffer.byteLength(terminal?.data ?? "", "utf8") <=
-      ACP_ACTIVITY_UPDATE_MAX_BYTES,
-  );
+  assert.ok(Buffer.byteLength(terminal?.data ?? "", "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
   assert.match(terminal?.data ?? "", /^FIRST_OUTPUT/u);
   assert.match(terminal?.data ?? "", /LAST_OUTPUT$/u);
   assert.doesNotMatch(terminal?.data ?? "", /�/u);
@@ -716,8 +689,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   const updates: AcpToolCallUpdate[] = [];
   const thoughts: AcpAgentThoughtChunk[] = [];
   client.onUpdate((update) => {
-    if (update.kind === "tool_call" || update.kind === "tool_call_update")
-      updates.push(update);
+    if (update.kind === "tool_call" || update.kind === "tool_call_update") updates.push(update);
     if (update.kind === "agent_thought_chunk") thoughts.push(update);
   });
   const prompt = client.prompt(sessionId, "hello", {
@@ -805,10 +777,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   await prompt;
   const [small, large] = updates;
   assert.ok(small && large);
-  assert.equal(
-    small.content?.[0]?.type === "content" && small.content[0].text,
-    text,
-  );
+  assert.equal(small.content?.[0]?.type === "content" && small.content[0].text, text);
   assert.equal(small.activityCut, undefined);
   assert.equal(small.terminalOutput?.data, text);
   assert.equal(small.terminalOutput?.originalBytes, undefined);
@@ -822,57 +791,29 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   ];
   for (const item of large.content ?? []) {
     if (item.type === "content") strings.push(item.text);
-    if (item.type === "diff")
-      strings.push(item.path, item.oldText ?? "", item.newText);
+    if (item.type === "diff") strings.push(item.path, item.oldText ?? "", item.newText);
   }
-  const retainedBytes = strings.reduce(
-    (sum, value) => sum + Buffer.byteLength(value ?? "", "utf8"),
-    0,
-  );
+  const retainedBytes = strings.reduce((sum, value) => sum + Buffer.byteLength(value ?? "", "utf8"), 0);
   assert.ok(retainedBytes <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
   assert.ok(retainedBytes > 8192);
-  assert.ok(
-    large.rawInput === undefined || JSON.stringify(large.rawInput) === "{}",
-  );
-  assert.ok(
-    large.rawOutput === undefined || JSON.stringify(large.rawOutput) === "{}",
-  );
+  assert.ok(large.rawInput === undefined || JSON.stringify(large.rawInput) === "{}");
+  assert.ok(large.rawOutput === undefined || JSON.stringify(large.rawOutput) === "{}");
   assert.doesNotMatch(strings.join(""), /�/u);
   const raw = updates[2]!;
-  assert.ok(
-    raw.rawInput &&
-      typeof raw.rawInput === "object" &&
-      !Array.isArray(raw.rawInput),
-  );
-  assert.ok(
-    raw.rawOutput &&
-      typeof raw.rawOutput === "object" &&
-      !Array.isArray(raw.rawOutput),
-  );
+  assert.ok(raw.rawInput && typeof raw.rawInput === "object" && !Array.isArray(raw.rawInput));
+  assert.ok(raw.rawOutput && typeof raw.rawOutput === "object" && !Array.isArray(raw.rawOutput));
   const rawInput = raw.rawInput as { code: string };
   const rawOutput = raw.rawOutput as { text: string };
   assert.equal(rawInput.code, text.repeat(3));
+  assert.ok(Buffer.byteLength(rawOutput.text, "utf8") < Buffer.byteLength(text.repeat(3), "utf8"));
   assert.ok(
-    Buffer.byteLength(rawOutput.text, "utf8") <
-      Buffer.byteLength(text.repeat(3), "utf8"),
-  );
-  assert.ok(
-    Buffer.byteLength(
-      rawInput.code + rawOutput.text + "codetextlarge",
-      "utf8",
-    ) <= ACP_ACTIVITY_UPDATE_MAX_BYTES,
+    Buffer.byteLength(rawInput.code + rawOutput.text + "codetextlarge", "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES,
   );
   assert.equal(raw.activityCut, true);
   assert.doesNotMatch(rawOutput.text, /�/u);
-  assert.equal(
-    Buffer.byteLength(thoughts[0]!.text, "utf8"),
-    ACP_ACTIVITY_UPDATE_MAX_BYTES,
-  );
+  assert.equal(Buffer.byteLength(thoughts[0]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES);
   assert.equal(thoughts[0]!.textCut, undefined);
-  assert.equal(
-    Buffer.byteLength(thoughts[1]!.text, "utf8"),
-    ACP_ACTIVITY_UPDATE_MAX_BYTES - 1,
-  );
+  assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 1);
   assert.equal(thoughts[1]!.textCut, true);
   assert.doesNotMatch(thoughts[1]!.text, /�/u);
   const model = new AcpActivityModel();
@@ -1236,9 +1177,8 @@ void test("close answers pending permission requests with cancelled", async () =
 
   await handlerStarted;
   await client.close();
-  const response = output.frames.find(
-    (frame) => (frame as Record<string, unknown>).id === 20,
-  ) as Record<string, unknown> | undefined;
+  const response = output.frames.find((frame) => (frame as Record<string, unknown>).id === 20) as
+    Record<string, unknown> | undefined;
   assert.deepEqual(response?.result, { outcome: { outcome: "cancelled" } });
 });
 

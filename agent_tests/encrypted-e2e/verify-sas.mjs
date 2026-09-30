@@ -89,20 +89,13 @@ function bridgeCommand() {
 }
 
 function stop(child) {
-  if (
-    child !== undefined &&
-    child.exitCode === null &&
-    child.signalCode === null
-  ) {
+  if (child !== undefined && child.exitCode === null && child.signalCode === null) {
     child.kill("SIGTERM");
   }
 }
 
 const result = new Promise((resolve, reject) => {
-  const timer = setTimeout(
-    () => finish(new Error("SAS verification timed out")),
-    timeoutMs,
-  );
+  const timer = setTimeout(() => finish(new Error("SAS verification timed out")), timeoutMs);
 
   function finish(error) {
     if (settled) return;
@@ -115,16 +108,8 @@ const result = new Promise((resolve, reject) => {
   function check() {
     if (settled) return;
     if (helperReady && bridge === undefined) startBridge();
-    if (
-      helperSas !== undefined &&
-      bridgeDecimal !== undefined &&
-      bridgeEmoji !== undefined &&
-      !confirmed
-    ) {
-      if (
-        helperSas.decimal !== bridgeDecimal ||
-        helperSas.emoji !== bridgeEmoji
-      ) {
+    if (helperSas !== undefined && bridgeDecimal !== undefined && bridgeEmoji !== undefined && !confirmed) {
+      if (helperSas.decimal !== bridgeDecimal || helperSas.emoji !== bridgeEmoji) {
         finish(safeFailure("bridge", "sas-confirmation", "protocol"));
         return;
       }
@@ -139,20 +124,14 @@ const result = new Promise((resolve, reject) => {
 
   function startBridge() {
     bridgePhase = "bridge-started";
-    bridge = spawn(
-      "script",
-      ["-q", "-e", "-f", "-c", bridgeCommand(), "/dev/null"],
-      {
-        cwd: repoRoot,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
+    bridge = spawn("script", ["-q", "-e", "-f", "-c", bridgeCommand(), "/dev/null"], {
+      cwd: repoRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     bridge.stdout.on("data", (chunk) => {
       bridgeOutput = `${bridgeOutput}${chunk.toString("utf8")}`.slice(-65_536);
       bridgeDiagnostics.accept(chunk);
-      const decimal = bridgeOutput.match(
-        /SAS decimal: ([0-9]+ [0-9]+ [0-9]+)/u,
-      );
+      const decimal = bridgeOutput.match(/SAS decimal: ([0-9]+ [0-9]+ [0-9]+)/u);
       const emoji = bridgeOutput.match(/SAS emoji: (.+?)\r?\n/u);
       if (decimal !== null) bridgeDecimal = decimal[1];
       if (emoji !== null) bridgeEmoji = emoji[1]?.replace(/\r/gu, "");
@@ -162,14 +141,7 @@ const result = new Promise((resolve, reject) => {
       bridgeDiagnostics.stderrSeen ||= chunk.length > 0;
     });
     bridge.once("error", () =>
-      finish(
-        safeFailure(
-          "bridge",
-          bridgePhase,
-          "unknown",
-          `spawn error; ${bridgeDiagnostics.summary()}`,
-        ),
-      ),
+      finish(safeFailure("bridge", bridgePhase, "unknown", `spawn error; ${bridgeDiagnostics.summary()}`)),
     );
     bridge.once("exit", (code, signal) => {
       bridgeExit = code;
@@ -177,26 +149,15 @@ const result = new Promise((resolve, reject) => {
       if (code === 0) {
         check();
       } else {
-        finish(
-          safeFailure(
-            "bridge",
-            bridgePhase,
-            bridgeDiagnostics.reason,
-            bridgeDiagnostics.summary(code, signal),
-          ),
-        );
+        finish(safeFailure("bridge", bridgePhase, bridgeDiagnostics.reason, bridgeDiagnostics.summary(code, signal)));
       }
     });
   }
 
-  helper = spawn(
-    process.execPath,
-    [join(testDir, "sas-helper.mjs"), environmentPath],
-    {
-      cwd: repoRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  helper = spawn(process.execPath, [join(testDir, "sas-helper.mjs"), environmentPath], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   helper.stdout.on("data", (chunk) => {
     helperLines += chunk.toString("utf8");
     while (helperLines.includes("\n")) {
@@ -230,11 +191,7 @@ const result = new Promise((resolve, reject) => {
           break;
         }
         case "verification-attempt-failed": {
-          helperPhase = safeValue(
-            event.phase,
-            safePhases,
-            "helper-verification",
-          );
+          helperPhase = safeValue(event.phase, safePhases, "helper-verification");
           finish(safeFailure("helper", helperPhase, event.reason));
           return;
         }
@@ -249,9 +206,7 @@ const result = new Promise((resolve, reject) => {
     }
   });
   helper.stderr.resume();
-  helper.once("error", () =>
-    finish(safeFailure("helper", helperPhase, "protocol")),
-  );
+  helper.once("error", () => finish(safeFailure("helper", helperPhase, "protocol")));
   helper.once("exit", (_code, _signal) => {
     if (helperVerified) {
       check();
@@ -263,9 +218,7 @@ const result = new Promise((resolve, reject) => {
 
 try {
   await result;
-  process.stdout.write(
-    "SAS verification completed; emoji and decimal values matched.\n",
-  );
+  process.stdout.write("SAS verification completed; emoji and decimal values matched.\n");
 } finally {
   stop(bridge);
   stop(helper);
