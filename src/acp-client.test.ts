@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   createAcpClient,
+  ACP_ACTIVITY_UPDATE_MAX_BYTES,
   type AcpClient,
   type AcpToolCallUpdate,
+  type AcpAgentThoughtChunk,
 } from "./acp-client.js";
 import { AcpActivityModel, renderAcpActivity } from "./acp-activity.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
@@ -466,7 +468,7 @@ void test("preserves bounded thought and tool activity with optional fields and 
   await prompt;
   assert.deepEqual(updates[0], { sessionId, kind: "agent_thought_chunk", messageId: "thought", text: "thinking" });
   assert.deepEqual(updates[1], { sessionId, kind: "tool_call", toolCallId: "tool-1", title: "write",
-    toolKind: "edit", status: "pending", rawInput: { path: "/tmp/example", content: "x".repeat(8179) },
+    toolKind: "edit", status: "pending", rawInput: { path: "/tmp/example", content: "x".repeat(20_000) },
     locations: [{ path: "/tmp/example", line: 3 }],
   });
   assert.deepEqual(updates[2], { sessionId, kind: "tool_call_update", toolCallId: "tool-1", status: "completed",
@@ -536,7 +538,7 @@ void test("large terminal notification preserves the first and last UTF-8 bytes"
     cancelled: false, reason: undefined, onCancel() { return () => {}; },
   });
   const frame = await output.nextFrame();
-  const data = `FIRST_OUTPUT${"😀".repeat(3000)}LAST_OUTPUT`;
+  const data = `FIRST_OUTPUT${"😀".repeat(100_000)}LAST_OUTPUT`;
   input.push(rpcNotification("session/update", { sessionId, update: {
     sessionUpdate: "tool_call_update", toolCallId: "tool-1",
     _meta: { terminal_output: { data } },
@@ -546,10 +548,101 @@ void test("large terminal notification preserves the first and last UTF-8 bytes"
   await prompt;
   const terminal = (updates[0] as AcpToolCallUpdate).terminalOutput;
   assert.equal(terminal?.originalBytes, Buffer.byteLength(data, "utf8"));
-  assert.ok(Buffer.byteLength(terminal?.data ?? "", "utf8") <= 8192);
+  assert.ok(Buffer.byteLength(terminal?.data ?? "", "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
   assert.match(terminal?.data ?? "", /^FIRST_OUTPUT/u);
   assert.match(terminal?.data ?? "", /LAST_OUTPUT$/u);
   assert.doesNotMatch(terminal?.data ?? "", /�/u);
+  await client.close();
+});
+
+void test("activity ingestion keeps substantial output and shares one budget across fields", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const client = newClient(input, output);
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const updates: AcpToolCallUpdate[] = [];
+  const thoughts: AcpAgentThoughtChunk[] = [];
+  client.onUpdate((update) => {
+    if (update.kind === "tool_call" || update.kind === "tool_call_update") updates.push(update);
+    if (update.kind === "agent_thought_chunk") thoughts.push(update);
+  });
+  const prompt = client.prompt(sessionId, "hello", {
+    cancelled: false, reason: undefined, onCancel() { return () => {}; },
+  });
+  const frame = await output.nextFrame();
+  const text = "😀".repeat(16_384);
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call", toolCallId: "small", title: "read", kind: "read",
+    content: [{ type: "content", content: { type: "text", text } }],
+    _meta: { terminal_output: { data: text } },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call", toolCallId: "large", title: "edit", kind: "edit",
+    locations: [{ path: "file" }],
+    content: [
+      { type: "diff", path: "file", oldText: text, newText: text },
+      { type: "content", content: { type: "text", text } },
+    ],
+    _meta: { terminal_output: { data: text } },
+    rawInput: { code: text }, rawOutput: { content: [{ text }] },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "tool_call_update", toolCallId: "large",
+    rawInput: { code: text.repeat(3) }, rawOutput: { text: text.repeat(3) },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: "😀".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES / 4) },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
+  input.push(rpcNotification("session/update", { sessionId, update: {
+    sessionUpdate: "agent_thought_chunk",
+    content: { type: "text", text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 1)}😀` },
+  } }));
+  // eslint-disable-next-line unicorn/no-array-push-push -- FakeInput.push sends ordered protocol frames
+  input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+  await prompt;
+  const [small, large] = updates;
+  assert.ok(small && large);
+  assert.equal(small.content?.[0]?.type === "content" && small.content[0].text, text);
+  assert.equal(small.activityCut, undefined);
+  assert.equal(small.terminalOutput?.data, text);
+  assert.equal(small.terminalOutput?.originalBytes, undefined);
+  assert.equal(large.activityCut, true);
+  const strings = [large.toolCallId, large.title, large.toolKind, large.locations?.[0]?.path,
+    large.terminalOutput?.data];
+  for (const item of large.content ?? []) {
+    if (item.type === "content") strings.push(item.text);
+    if (item.type === "diff") strings.push(item.path, item.oldText ?? "", item.newText);
+  }
+  const retainedBytes = strings.reduce((sum, value) => sum + Buffer.byteLength(value ?? "", "utf8"), 0);
+  assert.ok(retainedBytes <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
+  assert.ok(retainedBytes > 8192);
+  assert.ok(large.rawInput === undefined || JSON.stringify(large.rawInput) === "{}");
+  assert.ok(large.rawOutput === undefined || JSON.stringify(large.rawOutput) === "{}");
+  assert.doesNotMatch(strings.join(""), /�/u);
+  const raw = updates[2]!;
+  assert.ok(raw.rawInput && typeof raw.rawInput === "object" && !Array.isArray(raw.rawInput));
+  assert.ok(raw.rawOutput && typeof raw.rawOutput === "object" && !Array.isArray(raw.rawOutput));
+  const rawInput = raw.rawInput as { code: string };
+  const rawOutput = raw.rawOutput as { text: string };
+  assert.equal(rawInput.code, text.repeat(3));
+  assert.ok(Buffer.byteLength(rawOutput.text, "utf8") < Buffer.byteLength(text.repeat(3), "utf8"));
+  assert.ok(Buffer.byteLength(rawInput.code + rawOutput.text + "codetextlarge", "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
+  assert.equal(raw.activityCut, true);
+  assert.doesNotMatch(rawOutput.text, /�/u);
+  assert.equal(Buffer.byteLength(thoughts[0]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES);
+  assert.equal(thoughts[0]!.textCut, undefined);
+  assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 1);
+  assert.equal(thoughts[1]!.textCut, true);
+  assert.doesNotMatch(thoughts[1]!.text, /�/u);
+  const model = new AcpActivityModel();
+  model.accept(small);
+  assert.match(renderAcpActivity(model.events[0]!).body, /\(truncated\)/u);
   await client.close();
 });
 

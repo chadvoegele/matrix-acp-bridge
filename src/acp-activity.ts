@@ -181,7 +181,7 @@ function resultFromContent(tool: AcpToolActivity): Output | undefined {
     return { segments: [{ text }], plain: text, cut: over, terminal: true };
   }
   if (tool.rawFallback) {
-    return { segments: [{ text: tool.rawFallback.text }], plain: tool.rawFallback.text, cut: tool.rawFallback.cut, terminal: false };
+    return { segments: [{ text: tool.rawFallback.text }], plain: tool.rawFallback.text, cut: tool.rawFallback.cut || tool.contentCut, terminal: false };
   }
   return undefined;
 }
@@ -296,6 +296,8 @@ export class AcpActivityModel {
       }
     }
     if (update.rawOutput !== undefined) event.rawFallback = rawFallback(update.rawOutput);
+    event.contentCut ||= update.activityCut === true;
+    if (event.script && update.activityCut) event.script = { ...event.script, cut: true };
     if (update.terminalOutput?.data) {
       const chunk = clean(update.terminalOutput.data);
       const bytes = Buffer.byteLength(chunk, "utf8");
