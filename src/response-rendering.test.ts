@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { matrixHtmlContentBytes } from "./matrix-message-content.js";
+import { renderMatrixText } from "./matrix-text-rendering.js";
+
 import {
   computeMatrixTransactionId,
   joinTextAndStatus,
@@ -247,4 +250,110 @@ void test("uses the canonical JSON tuple for deterministic transaction IDs", () 
     computeMatrixTransactionId(ROOM_ID, EVENT_ID, "agent", 1),
     "mab1_AUyQeJqh_xKho8-ZzxDfnikDgu-XUqt8e_3j8IHRsTE",
   );
+});
+
+void test("thread multipart output and retries retain routing and budget the complete Markdown payload", () => {
+  const request = {
+    roomId: ROOM_ID,
+    inboundEventId: EVENT_ID,
+    threadRootEventId: "$root",
+    threadFallbackEventId: EVENT_ID,
+    outcome: { kind: "agent" as const, text: "**<&😀>**\n\n".repeat(100) },
+    maxOutputBytes: 10_000,
+    maxMatrixMessageBytes: 512,
+  };
+  const parts = renderMatrixResponse(request);
+  assert.ok(parts.length > 1);
+  assert.equal(parts.map((part) => removePrefix(part.content.body)).join(""), request.outcome.text);
+  for (const part of parts) {
+    assert.equal(part.threadRootEventId, "$root");
+    assert.equal(part.threadFallbackEventId, EVENT_ID);
+    assert.deepEqual(part.content["m.relates_to"], {
+      rel_type: "m.thread",
+      event_id: "$root",
+      "m.in_reply_to": { event_id: EVENT_ID },
+      is_falling_back: true,
+    });
+    assert.ok(matrixHtmlContentBytes(renderMatrixText(part.content.body, part)) <= 512);
+  }
+  assert.deepEqual(renderMatrixResponse(request), parts);
+  const ids = new Set(parts.map((part) => part.transactionId));
+  for (const alternate of [
+    { ...request, roomId: "!different:example.org" },
+    { ...request, threadRootEventId: "$different-root" },
+    { ...request, outcome: { kind: "cancelled" as const, text: request.outcome.text } },
+  ]) {
+    assert.equal(
+      renderMatrixResponse(alternate).some((part) => ids.has(part.transactionId)),
+      false,
+    );
+  }
+});
+
+void test("thread response exact payload limits include JSON escaping, HTML and relations", () => {
+  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadFallbackEventId: "$fallback" };
+  const text = '<&😀"\\'.repeat(12);
+  const exact = matrixHtmlContentBytes(renderMatrixText(text, routing));
+  const request = {
+    roomId: ROOM_ID,
+    inboundEventId: EVENT_ID,
+    ...routing,
+    outcome: { kind: "agent" as const, text },
+    maxOutputBytes: 4096,
+    maxMatrixMessageBytes: exact,
+  };
+  assert.equal(renderMatrixResponse(request).length, 1);
+  const split = renderMatrixResponse({ ...request, maxMatrixMessageBytes: exact - 1 });
+  assert.ok(split.length > 1);
+  assert.equal(split.map((part) => removePrefix(part.content.body)).join(""), text);
+  for (const part of split) assert.ok(matrixHtmlContentBytes(renderMatrixText(part.content.body, part)) < exact);
+});
+
+void test("synthetic thread errors and unthreaded reset guidance have exact text and distinct IDs", () => {
+  const request = { roomId: ROOM_ID, inboundEventId: EVENT_ID, maxOutputBytes: 256, maxMatrixMessageBytes: 1024 };
+  const [unknown] = renderMatrixResponse({
+    ...request,
+    threadRootEventId: "$unknown",
+    outcome: { kind: "unknown_thread" },
+  });
+  const [guidance] = renderMatrixResponse({ ...request, outcome: { kind: "thread_reset_guidance" } });
+  assert.equal(unknown?.content.body, "Unknown thread agent session. Please start a new thread.");
+  assert.equal(unknown?.content["m.relates_to"]?.event_id, "$unknown");
+  assert.equal(guidance?.content.body, "Use /reset inside a thread to reset its agent session.");
+  assert.equal(guidance?.content["m.relates_to"], undefined);
+  assert.notEqual(guidance?.transactionId, unknown?.transactionId);
+  for (const kind of [
+    "empty",
+    "busy",
+    "oversized",
+    "reset",
+    "timeout",
+    "max_tokens",
+    "max_turn_requests",
+    "refusal",
+    "cancelled",
+    "error",
+  ] as const) {
+    const [part] = renderMatrixResponse({ ...request, threadRootEventId: "$root", outcome: { kind } });
+    assert.equal(part?.content.body, RESPONSE_TEXT[kind]);
+    assert.equal(part?.content["m.relates_to"]?.event_id, "$root");
+  }
+});
+
+void test("threading preserves aggregate output truncation and rejects budgets that cannot fit the envelope", () => {
+  const request = {
+    roomId: ROOM_ID,
+    inboundEventId: EVENT_ID,
+    threadRootEventId: "$root",
+    outcome: { kind: "agent" as const, text: "<&😀".repeat(100) },
+    maxOutputBytes: 40,
+    maxMatrixMessageBytes: 1024,
+  };
+  const parts = renderMatrixResponse(request);
+  assert.equal(
+    parts.map((part) => removePrefix(part.content.body)).join(""),
+    truncateAgentText(request.outcome.text, 40),
+  );
+  assert.ok(parts.at(-1)?.content.body.endsWith(OUTPUT_TRUNCATION_MARKER));
+  assert.throws(() => renderMatrixResponse({ ...request, maxMatrixMessageBytes: 64 }), /cannot fit/);
 });

@@ -18,7 +18,12 @@ import {
   type NormalizedInboundEvent,
 } from "./authorization.js";
 import { InMemorySessionStore } from "./session-store.js";
-import { matrixHtmlContentBytes, matrixHtmlEditContentBytes, type MatrixHtmlBody } from "./matrix-message-content.js";
+import {
+  matrixHtmlContentBytes,
+  matrixHtmlEditContentBytes,
+  type MatrixHtmlBody,
+  type MatrixOutputRouting,
+} from "./matrix-message-content.js";
 import type { SessionStore } from "./session-store.js";
 import type { AcpClient, AcpOutcome, AcpSession, AcpSessionId, AcpUpdate } from "./acp-client.js";
 import {
@@ -133,7 +138,7 @@ interface ActivityBatchDelivery {
   dirty: boolean;
 }
 
-interface TurnCollector {
+interface TurnCollector extends MatrixOutputRouting {
   readonly sessionId: AcpSessionId;
   readonly groups: TextGroup[];
   readonly activity: AcpActivityModel;
@@ -319,9 +324,20 @@ function joinedGroups(groups: readonly TextGroup[]): string {
   return result;
 }
 
+function routingForTurn(turn: TurnCollector): MatrixOutputRouting {
+  return {
+    ...(turn.threadRootEventId === undefined ? {} : { threadRootEventId: turn.threadRootEventId }),
+    ...(turn.threadFallbackEventId === undefined ? {} : { threadFallbackEventId: turn.threadFallbackEventId }),
+  };
+}
+
 function liveTransactionId(turn: TurnCollector, kind: string, index: number, revision: number): string {
   const digest = createHash("sha256")
-    .update(`${turn.room.roomId}\u0000${turn.inboundEventId}\u0000${kind}\u0000${index}\u0000${revision}`)
+    .update(
+      turn.threadRootEventId === undefined
+        ? `${turn.room.roomId}\u0000${turn.inboundEventId}\u0000${kind}\u0000${index}\u0000${revision}`
+        : JSON.stringify([turn.room.roomId, turn.inboundEventId, kind, index, revision, turn.threadRootEventId]),
+    )
     .digest("hex");
   return `matrix-acp-live-${digest}`;
 }
@@ -1128,6 +1144,9 @@ export class BridgeCoordinator {
         const resetParts = renderMatrixResponse({
           roomId: run.room.roomId,
           inboundEventId: run.entry.event.eventId,
+          ...(run.entry.event.threadRootEventId === undefined
+            ? {}
+            : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId }),
           outcome: { kind: "reset" },
           maxOutputBytes: this.#config.limits.maxOutputBytes,
           maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
@@ -1161,7 +1180,14 @@ export class BridgeCoordinator {
       }
 
       const controller = createCancellationController();
+      // The coordinator supplies validated conversation routing. Preserve it
+      // through eager text, activity originals, revisions and archive edits.
+      const routing: MatrixOutputRouting =
+        run.entry.event.threadRootEventId === undefined
+          ? {}
+          : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId };
       const turn: TurnCollector = {
+        ...routing,
         sessionId: session.sessionId,
         groups: [],
         activity: new AcpActivityModel(),
@@ -1169,6 +1195,7 @@ export class BridgeCoordinator {
           maxEvents: this.#config.limits.maxActivityEventsPerMessage,
           maxMessageBytes: this.#config.limits.maxMatrixMessageBytes,
           measure: matrixHtmlEditContentBytes,
+          routing,
         }),
         batchDeliveries: new WeakMap(),
         outboundTail: Promise.resolve(),
@@ -1287,6 +1314,9 @@ export class BridgeCoordinator {
       const parts = renderMatrixResponse({
         roomId: run.room.roomId,
         inboundEventId: run.entry.event.eventId,
+        ...(run.entry.event.threadRootEventId === undefined
+          ? {}
+          : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId }),
         outcome: response,
         maxOutputBytes: this.#config.limits.maxOutputBytes,
         maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
@@ -1466,6 +1496,9 @@ export class BridgeCoordinator {
     const parts = renderMatrixResponse({
       roomId: run.room.roomId,
       inboundEventId: run.entry.event.eventId,
+      ...(run.entry.event.threadRootEventId === undefined
+        ? {}
+        : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId }),
       outcome: { kind: "error" },
       maxOutputBytes: this.#config.limits.maxOutputBytes,
       maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
@@ -1845,7 +1878,12 @@ export class BridgeCoordinator {
       const characters = [...group.text];
       let offset = 0;
       while (offset < characters.length && !turn.liveFailed) {
-        const chunk = renderMatrixTextChunk(characters, offset, this.#config.limits.maxMatrixMessageBytes);
+        const chunk = renderMatrixTextChunk(
+          characters,
+          offset,
+          this.#config.limits.maxMatrixMessageBytes,
+          routingForTurn(turn),
+        );
         if (chunk === undefined) {
           turn.liveFailed = true;
           this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
@@ -1932,11 +1970,16 @@ export class BridgeCoordinator {
     targetEventId?: MatrixEventId,
   ): Promise<MatrixEventId | undefined> {
     if (this.#matrix.sendHtmlMessage === undefined || this.#stopping || this.#fatal !== undefined) return;
-    if (matrixHtmlContentBytes(rendered, targetEventId) > this.#config.limits.maxMatrixMessageBytes) {
+    if (
+      matrixHtmlContentBytes({ ...rendered, ...routingForTurn(turn) }, targetEventId) >
+      this.#config.limits.maxMatrixMessageBytes
+    ) {
       this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
       return;
     }
     const message: MatrixHtmlMessage = {
+      ...(turn.threadRootEventId === undefined ? {} : { threadRootEventId: turn.threadRootEventId }),
+      ...(turn.threadFallbackEventId === undefined ? {} : { threadFallbackEventId: turn.threadFallbackEventId }),
       roomId: turn.room.roomId,
       transactionId: liveTransactionId(turn, kind, 0, revision),
       body: rendered.body,
@@ -1975,6 +2018,7 @@ export class BridgeCoordinator {
     roomId: MatrixRoomId,
     inboundEventId: MatrixEventId,
     descriptor: MatrixResponseDescriptor,
+    routing: MatrixOutputRouting = {},
   ): Promise<void> {
     if (this.#stopping || this.#fatal !== undefined) {
       return;
@@ -1983,6 +2027,7 @@ export class BridgeCoordinator {
       roomId,
       inboundEventId,
       outcome: descriptor,
+      ...routing,
       maxOutputBytes: this.#config.limits.maxOutputBytes,
       maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
     });

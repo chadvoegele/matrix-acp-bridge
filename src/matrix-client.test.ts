@@ -16,10 +16,11 @@ import {
   type MatrixSdkRoomLike,
 } from "./matrix-client.js";
 import { DEFAULT_LIMITS, type BridgeConfig, type MatrixConfig } from "./config.js";
-import { matrixHtmlContentBytes } from "./matrix-message-content.js";
+import { matrixHtmlContentBytes, matrixThreadRelation } from "./matrix-message-content.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
 import type { InboundMatrixEvent, MatrixSyncBatch } from "./matrix-client.js";
+import { renderMatrixResponse, RESPONSE_TEXT } from "./response-rendering.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 
 const ROOM_ID = "!room:example.org";
@@ -2124,4 +2125,226 @@ void test("shutdown during a transient outage emits no false restoration", async
     ["matrix-connection-lost"],
   );
   assert.equal(fake.stopCalls, 1);
+});
+
+for (const encryption of ["disabled", "required"] as const) {
+  void test(`${encryption} adapter preserves threads for multipart text, HTML edits, activity and synthetic responses`, async () => {
+    const fake = readyClient();
+    const adapter = encryption === "required" ? requiredAdapterFor(fake) : adapterFor(fake);
+    if (encryption === "required") {
+      fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
+      await adapter.initializeCrypto(CRYPTO_STATE);
+    }
+    await adapter.start();
+    const routing = { threadRootEventId: "$thread-root", threadFallbackEventId: "$thread-follow-up" };
+    const request = {
+      roomId: ROOM_ID,
+      inboundEventId: "$input",
+      ...routing,
+      maxOutputBytes: 4096,
+      maxMatrixMessageBytes: 512,
+    };
+    const parts = renderMatrixResponse({ ...request, outcome: { kind: "agent", text: '<&😀"'.repeat(200) } });
+    assert.ok(parts.length > 1);
+    for (const part of parts) await adapter.sendMessage(part);
+    for (const [index, send] of fake.sent.entries()) {
+      assert.deepEqual(send.content["m.relates_to"], parts[index]?.content["m.relates_to"]);
+      assert.equal(send.transactionId, parts[index]?.transactionId);
+      assert.ok(Buffer.byteLength(JSON.stringify(send.content)) <= 512);
+    }
+    const activity = {
+      roomId: ROOM_ID,
+      transactionId: "thread-activity-original",
+      ...routing,
+      body: "💭 Working\n[completed] 🔧 Read(file)",
+      formattedBody: matrixHtml`<p>💭 Working</p><p>🔧 Read(file)</p>`,
+    };
+    const originalId = await adapter.sendHtmlMessage(activity);
+    const edit = {
+      ...activity,
+      transactionId: "thread-activity-archive",
+      targetEventId: originalId,
+      formattedBody: matrixHtml`<details><summary>Past agent events (2)</summary><p>💭 Working</p><p>🔧 Read(file)</p></details>`,
+    };
+    fake.sendError = { httpStatus: 503 };
+    await assert.rejects(
+      () => adapter.sendHtmlMessage(edit),
+      (error: unknown) => error instanceof MatrixAdapterError && error.failure.retryable,
+    );
+    fake.sendError = undefined;
+    await adapter.sendHtmlMessage(edit);
+    const attempts = fake.sent.slice(-2);
+    assert.deepEqual(attempts[0], attempts[1]);
+    const content = attempts[1]!.content;
+    assert.deepEqual(content["m.relates_to"], { rel_type: "m.replace", event_id: originalId });
+    assert.deepEqual(
+      (content["m.new_content"] as Record<string, unknown>)["m.relates_to"],
+      matrixThreadRelation(routing),
+    );
+    assert.equal(matrixHtmlContentBytes(edit, originalId), Buffer.byteLength(JSON.stringify(content)));
+    for (const kind of [
+      "unknown_thread",
+      "empty",
+      "busy",
+      "oversized",
+      "reset",
+      "timeout",
+      "max_tokens",
+      "max_turn_requests",
+      "refusal",
+      "cancelled",
+      "error",
+    ] as const) {
+      const [part] = renderMatrixResponse({ ...request, outcome: { kind } });
+      assert.ok(part);
+      await adapter.sendMessage(part);
+      assert.equal(fake.sent.at(-1)?.content.body, RESPONSE_TEXT[kind]);
+      assert.deepEqual(fake.sent.at(-1)?.content["m.relates_to"], matrixThreadRelation(routing));
+    }
+    const [guidance] = renderMatrixResponse({
+      roomId: ROOM_ID,
+      inboundEventId: "$reset",
+      maxOutputBytes: 256,
+      maxMatrixMessageBytes: 512,
+      outcome: { kind: "thread_reset_guidance" },
+    });
+    assert.ok(guidance);
+    await adapter.sendMessage(guidance);
+    assert.equal(fake.sent.at(-1)?.content.body, RESPONSE_TEXT.thread_reset_guidance);
+    assert.equal(fake.sent.at(-1)?.content["m.relates_to"], undefined);
+    await adapter.stop();
+  });
+}
+
+void test("thread text, edits and synthetic guidance fail closed before required encryption readiness", async () => {
+  const fake = readyClient();
+  const adapter = requiredAdapterFor(fake);
+  const [part] = renderMatrixResponse({
+    roomId: ROOM_ID,
+    inboundEventId: "$input",
+    threadRootEventId: "$root",
+    outcome: { kind: "unknown_thread" },
+    maxOutputBytes: 256,
+    maxMatrixMessageBytes: 512,
+  });
+  assert.ok(part);
+  await assert.rejects(() => adapter.sendMessage(part), /encryption is not ready/);
+  await assert.rejects(
+    () =>
+      adapter.sendHtmlMessage({
+        roomId: ROOM_ID,
+        transactionId: "thread-edit",
+        threadRootEventId: "$root",
+        targetEventId: "$original",
+        body: "updated",
+        formattedBody: matrixHtml`<p>updated</p>`,
+      }),
+    /encryption is not ready/,
+  );
+  const [guidance] = renderMatrixResponse({
+    roomId: ROOM_ID,
+    inboundEventId: "$reset",
+    outcome: { kind: "thread_reset_guidance" },
+    maxOutputBytes: 256,
+    maxMatrixMessageBytes: 512,
+  });
+  assert.ok(guidance);
+  await assert.rejects(() => adapter.sendMessage(guidance), /encryption is not ready/);
+  assert.equal(fake.sent.length, 0);
+});
+
+void test("thread encryption failures never retry as plaintext for text or edits", async () => {
+  for (const kind of ["text", "edit"] as const) {
+    const fake = readyClient();
+    fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
+    const adapter = requiredAdapterFor(fake);
+    await adapter.initializeCrypto(CRYPTO_STATE);
+    await adapter.start();
+    fake.sendError = { name: "RustCryptoError", message: "encryption failure" };
+    const [part] = renderMatrixResponse({
+      roomId: ROOM_ID,
+      inboundEventId: "$input",
+      threadRootEventId: "$root",
+      outcome: { kind: "unknown_thread" },
+      maxOutputBytes: 256,
+      maxMatrixMessageBytes: 512,
+    });
+    assert.ok(part);
+    await assert.rejects(
+      () =>
+        kind === "text"
+          ? adapter.sendMessage(part)
+          : adapter.sendHtmlMessage({
+              roomId: ROOM_ID,
+              transactionId: "encrypted-edit",
+              threadRootEventId: "$root",
+              targetEventId: "$original",
+              body: "updated",
+              formattedBody: matrixHtml`<p>updated</p>`,
+            }),
+      /encrypted message delivery failed/,
+    );
+    assert.equal(fake.sent.length, 1);
+    await adapter.stop();
+  }
+});
+
+void test("malformed output routing and unconfigured thread rooms never reach the SDK", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const [part] = renderMatrixResponse({
+    roomId: ROOM_ID,
+    inboundEventId: "$input",
+    outcome: { kind: "busy" },
+    maxOutputBytes: 256,
+    maxMatrixMessageBytes: 512,
+  });
+  assert.ok(part);
+  await assert.rejects(
+    () => adapter.sendMessage({ ...part, threadRootEventId: "invalid" }),
+    /thread routing is invalid/,
+  );
+  await assert.rejects(
+    () => adapter.sendMessage({ ...part, threadFallbackEventId: "$reply" }),
+    /thread routing is invalid/,
+  );
+  await assert.rejects(
+    () => adapter.sendMessage({ ...part, roomId: OTHER_ROOM_ID, threadRootEventId: "$root" }),
+    /not configured/,
+  );
+  await assert.rejects(
+    () =>
+      adapter.sendHtmlMessage({
+        roomId: ROOM_ID,
+        transactionId: "bad-thread",
+        threadRootEventId: "$root",
+        threadFallbackEventId: "invalid",
+        body: "text",
+        formattedBody: matrixHtml`<p>text</p>`,
+      }),
+    /thread routing is invalid/,
+  );
+  assert.equal(fake.sent.length, 0);
+});
+
+void test("thread edit envelopes fit exactly at the byte boundary with maximum-length IDs", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadFallbackEventId: `$${"f".repeat(254)}` };
+  const targetEventId = `$${"e".repeat(254)}`;
+  const formattedBody = matrixHtml`<p>😀 &amp; updated</p>`;
+  const overhead = matrixHtmlContentBytes({ ...routing, body: "", formattedBody }, targetEventId);
+  const limit = overhead + 100;
+  const message = {
+    roomId: ROOM_ID,
+    transactionId: "thread-boundary-edit",
+    ...routing,
+    targetEventId,
+    body: "x".repeat(50),
+    formattedBody,
+  };
+  await adapter.sendHtmlMessage(message);
+  assert.equal(matrixHtmlContentBytes(message, targetEventId), limit);
+  assert.equal(Buffer.byteLength(JSON.stringify(fake.sent[0]?.content)), limit);
+  assert.equal(matrixHtmlContentBytes({ ...message, body: `${message.body}x` }, targetEventId), limit + 2);
 });

@@ -7,7 +7,7 @@ import test from "node:test";
 import { createInboundAuthorizer } from "./authorization.js";
 import { InMemorySessionStore } from "./session-store.js";
 import { BridgeCoordinator } from "./bridge.js";
-import { matrixHtmlContentBytes } from "./matrix-message-content.js";
+import { matrixHtmlContent, matrixHtmlContentBytes } from "./matrix-message-content.js";
 import { openBridgeStateStore } from "./bridge-state.js";
 import type { BridgeConfig } from "./config.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
@@ -2548,4 +2548,98 @@ void test("thread authorization gates session lookup, creation and loading for r
   } finally {
     await bridge.stop();
   }
+});
+
+void test("validated thread routing survives eager text, activity retries and late archive edits", async () => {
+  const transactionIds: string[] = [];
+  for (const [roomId, root] of [
+    [ROOM_ONE, "$root-one"],
+    [ROOM_ONE, "$root-two"],
+    [ROOM_TWO, "$root-one"],
+  ]) {
+    assert.ok(roomId && root);
+    const clock = new FakeClock();
+    const acp = new FakeAcp();
+    const matrix = new FakeLiveMatrix();
+    let resolvePrompt!: (outcome: AcpOutcome) => void;
+    acp.promptImpl = () =>
+      new Promise((resolve) => {
+        resolvePrompt = resolve;
+      });
+    let first = true;
+    matrix.htmlSend = async (message) => {
+      if (first) {
+        first = false;
+        throw { failure: { kind: "transient", retryable: true, sdkRetryable: false, retryAfterMs: 0 } };
+      }
+      matrix.html.push(message);
+      return message.targetEventId ?? `$live-${matrix.html.length}`;
+    };
+    const settings = config({ maxMatrixMessageBytes: 1400 });
+    // Inject the foundation policy to exercise only the outbound boundary;
+    // actual thread admission/session scheduling is the next ticket's scope.
+    const bridge = new BridgeCoordinator({
+      config: settings,
+      acp,
+      matrix,
+      clock,
+      random: () => 0,
+      authorizer: createInboundAuthorizer({
+        ...settings,
+        matrix: { ...settings.matrix, responseMode: "thread" },
+      }),
+    });
+    const inbound = {
+      ...event("$shared-input", roomId),
+      content: { msgtype: "m.text", body: "hello", "m.relates_to": { rel_type: "m.thread", event_id: root } },
+    };
+    const completion = bridge.handleTimelineEvent(inbound);
+    await waitFor(() => acp.promptCalls.length === 1);
+    const sessionId = acp.promptCalls[0]!.sessionId;
+    acp.emit({ sessionId, kind: "tool_call", toolCallId: "late", title: "read", toolKind: "read", status: "pending" });
+    await waitFor(() => matrix.attempts.length > 0);
+    clock.advanceBy(0);
+    await waitFor(() => matrix.html.length > 0);
+    assert.deepEqual(matrix.attempts[0], matrix.attempts[1]);
+    transactionIds.push(matrix.attempts[0]!.transactionId);
+    acp.emit({ sessionId, kind: "agent_message_chunk", text: "<&😀".repeat(200) });
+    acp.emit({ sessionId, kind: "agent_thought_chunk", text: "next thought" });
+    await waitFor(() => matrix.html.some((message) => message.body.startsWith("<&😀")));
+    acp.emit({
+      sessionId,
+      kind: "tool_call_update",
+      toolCallId: "late",
+      status: "completed",
+      content: [{ type: "content", text: "late result" }],
+    });
+    await waitFor(() => matrix.html.some((message) => message.body.includes("late result")));
+    const archived = matrix.html.find((message) => message.body.includes("late result"));
+    assert.ok(archived?.targetEventId);
+    assert.match(archived.formattedBody, /Past agent events/);
+    resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+    await flush();
+    clock.advanceBy(300);
+    await completion;
+    const text = matrix.html.filter((message) => message.body.startsWith("<&😀"));
+    assert.ok(text.length > 1);
+    assert.equal(text.map((message) => message.body).join(""), "<&😀".repeat(200));
+    for (const message of matrix.html) {
+      assert.equal(message.threadRootEventId, root);
+      assert.equal(message.threadFallbackEventId, "$shared-input");
+      assert.ok(matrixHtmlContentBytes(message, message.targetEventId) <= 1400);
+      const content = matrixHtmlContent(message, message.targetEventId);
+      if (message.targetEventId === undefined) {
+        assert.equal((content["m.relates_to"] as Record<string, unknown>).event_id, root);
+      } else {
+        assert.deepEqual(content["m.relates_to"], { rel_type: "m.replace", event_id: message.targetEventId });
+        assert.equal(
+          ((content["m.new_content"] as Record<string, unknown>)["m.relates_to"] as Record<string, unknown>).event_id,
+          root,
+        );
+      }
+    }
+    assert.equal(matrix.sent.length, 0);
+    await bridge.stop();
+  }
+  assert.equal(new Set(transactionIds).size, 3);
 });
