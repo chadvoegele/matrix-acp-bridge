@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -798,4 +798,49 @@ void test("a shutdown grace deadline force-closes adapters and returns exit code
   assert.equal(rig.acp.closeCalls, 1);
   assert.equal(rig.matrix.cryptoCloseCalls, 1);
   assert.equal(rig.lock.released, true);
+});
+
+void test("incompatible private state stops startup with restore guidance, preserves state and releases the lock", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-incompatible-state-"));
+  try {
+    const statePath = join(stateDir, "bridge-state.json");
+    const original = '{"schemaVersion":999,"privateField":"raw-state-secret"}\n';
+    await writeFile(statePath, original, { mode: 0o600 });
+    const log: string[] = [];
+    const diagnosticRecords: string[] = [];
+    const lock = new FakeStateLock();
+    const acp = new FakeAcp(log);
+    const matrix = new FakeMatrix(log);
+    let bridgeConstructed = false;
+    const lifecycle = new DaemonLifecycle({
+      loadedConfiguration: loadedConfiguration(lock, { ...CONFIG, stateDir }),
+      dependencies: {
+        diagnostics: {
+          ...SILENT_DIAGNOSTICS,
+          emit(level, event, fields) {
+            diagnosticRecords.push(JSON.stringify({ level, event, fields }));
+          },
+        },
+        installSignals: false,
+        createAcpClient: () => acp,
+        createMatrixClient: () => matrix,
+        createBridge: () => {
+          bridgeConstructed = true;
+          return new FakeBridge(log, acp, matrix);
+        },
+      },
+    });
+    assert.equal(await lifecycle.run(), 1);
+    assert.equal(bridgeConstructed, false);
+    assert.equal(matrix.startCalls, 0);
+    assert.equal(lock.released, true);
+    assert.equal(await readFile(statePath, "utf8"), original);
+    const diagnostics = diagnosticRecords.join("\n");
+    assert.match(diagnostics, /unsupported-version/u);
+    assert.match(diagnostics, /restore-backup rollback/u);
+    assert.equal(diagnostics.includes("raw-state-secret"), false);
+    assert.equal(diagnostics.includes("reset it only"), false);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });

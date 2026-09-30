@@ -287,9 +287,7 @@ function safeFailureReason(error: unknown): string {
     return "Matrix identity mismatch; verify the configured identity before resetting private bridge state";
   }
   if (error instanceof BridgeStateError) {
-    return error.category === "identity-mismatch"
-      ? "private state identity mismatch; verify the configured Matrix identity before resetting bridge state"
-      : "private state failure; inspect bridge state and reset it only after verifying the configured Matrix identity";
+    return `private state failure (${error.category}); ${error.recoveryGuidance}`;
   }
   if (error instanceof CryptoStateError) {
     return `private crypto state failure (${error.category}); ${error.recoveryGuidance}`;
