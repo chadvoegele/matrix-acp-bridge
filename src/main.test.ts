@@ -844,3 +844,98 @@ void test("incompatible private state stops startup with restore guidance, prese
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+void test("default daemon composition enables configured thread sessions through sync intake", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-main-thread-"));
+  try {
+    const settings: BridgeConfig = {
+      ...CONFIG,
+      stateDir,
+      matrix: { ...CONFIG.matrix, responseMode: "thread" },
+      limits: { ...CONFIG.limits, maxMatrixMessageBytes: 2000 },
+    };
+    const log: string[] = [];
+    const acp = new FakeAcp(log);
+    let sessionCount = 0;
+    acp.createSession = async () => ({ sessionId: `session-${++sessionCount}` });
+    const prompts: Array<{ sessionId: string; text: string }> = [];
+    acp.prompt = async (sessionId, text) => {
+      prompts.push({ sessionId, text });
+      return { kind: "method_error", operation: "session_prompt", fatal: false };
+    };
+    const matrix = new FakeMatrix(log);
+    const sent: RenderedMatrixPart[] = [];
+    matrix.sendMessage = async (part) => {
+      sent.push(part);
+    };
+    const lock = new FakeStateLock();
+    const lifecycle = new DaemonLifecycle({
+      loadedConfiguration: loadedConfiguration(lock, settings),
+      dependencies: {
+        diagnostics: SILENT_DIAGNOSTICS,
+        installSignals: false,
+        createAcpClient: () => acp,
+        createMatrixClient: () => matrix,
+      },
+    });
+    const running = lifecycle.run();
+    const deadline = Date.now() + 5000;
+    while (!(lifecycle.bridge instanceof BridgeCoordinator && lifecycle.bridge.dispatchOpen) && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(matrix.syncBatchSubscriptionCalls, 1);
+    assert.ok(lifecycle.bridge instanceof BridgeCoordinator && lifecycle.bridge.dispatchOpen);
+    const input = (eventId: string, body: string, root?: string): InboundMatrixEvent => ({
+      eventId,
+      roomId: ROOM_ID,
+      sender: "@alice:example.org",
+      type: "m.room.message",
+      isLive: true,
+      isPlaintext: true,
+      isRedacted: false,
+      content: {
+        msgtype: "m.text",
+        body,
+        ...(root === undefined ? {} : { "m.relates_to": { rel_type: "m.thread", event_id: root } }),
+      },
+    });
+    for (const listener of matrix.syncBatchListeners) {
+      await listener({
+        phase: "incremental",
+        rooms: [
+          {
+            roomId: ROOM_ID,
+            limited: false,
+            timeline: [
+              input("$main-root-one", "first"),
+              input("$main-root-two", "second"),
+              input("$main-follow", "follow", "$main-root-one"),
+              input("$main-guidance", "/reset"),
+            ],
+          },
+        ],
+      });
+    }
+    const completeDeadline = Date.now() + 5000;
+    while (sent.length < 4 && Date.now() < completeDeadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.deepEqual(
+      prompts.map(({ sessionId }) => sessionId),
+      ["session-1", "session-2", "session-1"],
+    );
+    assert.equal(
+      sent.find(({ inboundEventId }) => inboundEventId === "$main-follow")?.threadRootEventId,
+      "$main-root-one",
+    );
+    assert.equal(
+      sent.find(({ responseKind }) => responseKind === "thread_reset_guidance")?.threadRootEventId,
+      undefined,
+    );
+    lifecycle.receiveSignal("SIGTERM");
+    assert.equal(await running, 0);
+    assert.equal(lock.releaseCalls, 1);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

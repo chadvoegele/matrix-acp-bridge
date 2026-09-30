@@ -17,6 +17,7 @@ import {
   type InboundAuthorizer,
   type NormalizedInboundEvent,
 } from "./authorization.js";
+import { conversationIdentityForEvent, conversationKey, type ConversationIdentity } from "./conversation-identity.js";
 import { InMemorySessionStore } from "./session-store.js";
 import {
   matrixHtmlContentBytes,
@@ -105,8 +106,14 @@ interface MutableQueueEntry {
 
 interface RoomState {
   readonly roomId: MatrixRoomId;
-  readonly waiting: MutableQueueEntry[];
   readonly outbound: OutboundMutex;
+  readonly conversations: Map<string, ConversationState>;
+}
+
+interface ConversationState {
+  readonly identity: ConversationIdentity;
+  readonly room: RoomState;
+  readonly waiting: MutableQueueEntry[];
   active: MutableQueueEntry | undefined;
   sessionId: AcpSessionId | undefined;
 }
@@ -114,6 +121,7 @@ interface RoomState {
 interface ActiveRun {
   readonly entry: MutableQueueEntry;
   readonly room: RoomState;
+  readonly conversation: ConversationState;
   sessionId: AcpSessionId | undefined;
   controller: CancellationController | undefined;
   turn: TurnCollector | undefined;
@@ -178,6 +186,7 @@ interface SessionResolution {
   readonly session?: AcpSession;
   readonly failureCode?: SessionFailureCode;
   readonly creationFailure?: boolean;
+  readonly methodFailure?: boolean;
 }
 
 interface DeliveryOptions {
@@ -544,7 +553,7 @@ function makeQueueEntry(
 }
 
 /**
- * Coordinates Matrix intake, per-room ACP turns, and outbound delivery.
+ * Coordinates Matrix intake, per-conversation ACP turns, and outbound delivery.
  *
  * The class does not start either adapter.  `beginStartup`, `openIntake`, and
  * `enableDispatch` are deliberately separate so `main.ts` can implement the
@@ -667,6 +676,7 @@ export class BridgeCoordinator {
         bridgeUserId: this.#config.matrix.userId,
         maxInputBytes: this.#config.limits.maxInputBytes,
         encryption: this.#config.matrix.encryption,
+        responseMode: this.#config.matrix.responseMode,
         ...(this.#diagnostics === undefined ? {} : { diagnostics: this.#diagnostics }),
         clock: this.#clock,
       });
@@ -705,8 +715,10 @@ export class BridgeCoordinator {
     let queuedTurns = 0;
     let activeRooms = 0;
     for (const room of this.#rooms.values()) {
-      queuedTurns += room.waiting.length;
-      if (room.active !== undefined) {
+      for (const conversation of room.conversations.values()) {
+        queuedTurns += conversation.waiting.length;
+      }
+      if ([...room.conversations.values()].some((conversation) => conversation.active !== undefined)) {
         activeRooms += 1;
       }
     }
@@ -731,15 +743,27 @@ export class BridgeCoordinator {
   }
 
   getQueueDepth(roomId: MatrixRoomId): number {
-    return this.#rooms.get(roomId)?.waiting.length ?? 0;
+    return [...(this.#rooms.get(roomId)?.conversations.values() ?? [])].reduce(
+      (count, conversation) => count + conversation.waiting.length,
+      0,
+    );
   }
 
   isRoomActive(roomId: MatrixRoomId): boolean {
-    return this.#rooms.get(roomId)?.active !== undefined;
+    return [...(this.#rooms.get(roomId)?.conversations.values() ?? [])].some(
+      (conversation) => conversation.active !== undefined,
+    );
   }
 
   sessionForRoom(roomId: MatrixRoomId): AcpSessionId | undefined {
-    return this.#rooms.get(roomId)?.sessionId ?? this.#sessionStore.get(roomId)?.sessionId;
+    return this.sessionForConversation({ kind: "room", roomId });
+  }
+
+  sessionForConversation(identity: ConversationIdentity): AcpSessionId | undefined {
+    return (
+      this.#rooms.get(identity.roomId)?.conversations.get(conversationKey(identity))?.sessionId ??
+      this.#sessionStore.getConversationRecord(identity)?.sessionId
+    );
   }
 
   beginStartup(): void {
@@ -781,7 +805,9 @@ export class BridgeCoordinator {
     }
     this.#dispatchOpen = true;
     for (const room of this.#rooms.values()) {
-      this.#pumpRoom(room);
+      for (const conversation of room.conversations.values()) {
+        this.#pumpConversation(conversation);
+      }
     }
   }
 
@@ -930,53 +956,85 @@ export class BridgeCoordinator {
       return;
     }
 
-    if (admission === "oversized") {
-      if (!(await this.#completeTerminal(terminalCompletion))) {
-        return;
-      }
+    // Capture authorization's routing synchronously, before any asynchronous
+    // terminal-state boundary can admit another event.
+    const normalized = this.#lastAdmission;
+    const inboundRouting = normalized ?? this.#lastOversizedRouting;
+    this.#lastAdmission = undefined;
+    this.#lastOversizedRouting = undefined;
+    if (inboundRouting === undefined) return;
+    const identity = conversationIdentityForEvent(inboundRouting, this.#config.matrix.responseMode);
+    const routing: MatrixOutputRouting =
+      identity.kind === "thread"
+        ? { threadRootEventId: identity.threadRootEventId, threadFallbackEventId: eventId }
+        : {};
+    const known = identity.kind === "room" || this.#knownThread(identity);
+
+    if (identity.kind === "thread" && inboundRouting.threadRootEventId !== undefined && !known) {
+      if (!(await this.#completeTerminal(terminalCompletion))) return;
       this.#receipt(event);
-      await this.#deliverDescriptor(roomId, eventId, { kind: "oversized" });
+      await this.#deliverDescriptor(roomId, eventId, { kind: "unknown_thread" }, routing);
       return;
     }
-
-    // `#admit` returns the normalized event through the side channel below;
-    // re-authorizing here would be both wasteful and capable of emitting a
-    // second diagnostic.  The method stores it in #lastAdmission for the one
-    // synchronous call frame only.
-    const normalized = this.#lastAdmission;
-    this.#lastAdmission = undefined;
-    if (normalized === undefined) {
+    if (admission === "oversized") {
+      if (!(await this.#completeTerminal(terminalCompletion))) return;
+      this.#receipt(event);
+      await this.#deliverDescriptor(roomId, eventId, { kind: "oversized" }, routing);
+      return;
+    }
+    if (normalized === undefined) return;
+    if (identity.kind === "thread" && normalized.threadRootEventId === undefined && normalized.body === "/reset") {
+      if (!(await this.#completeTerminal(terminalCompletion))) return;
+      this.#receipt(event);
+      await this.#deliverDescriptor(roomId, eventId, { kind: "thread_reset_guidance" });
       return;
     }
 
     const room = this.#room(roomId);
+    const key = conversationKey(identity);
+    const conversation = room.conversations.get(key) ?? {
+      identity,
+      room,
+      waiting: [],
+      active: undefined,
+      sessionId: undefined,
+    };
+    const queueLimit =
+      identity.kind === "thread"
+        ? this.#config.limits.maxQueuedTurnsPerThread
+        : this.#config.limits.maxQueuedTurnsPerRoom;
     let completion: Promise<void>;
-    if (room.active === undefined) {
-      const entry = makeQueueEntry(normalized, terminalCompletion);
-      room.active = entry;
+    if (conversation.active === undefined || conversation.waiting.length < queueLimit) {
+      // Admission records the routing identity immediately. Follow-ups arriving
+      // during setup/reset remain known; rejected roots never enter this map.
+      room.conversations.set(key, conversation);
+      if (identity.kind === "thread" && !known) this.#sessionStore.setConversationRecord(identity);
+      const entry = makeQueueEntry(
+        {
+          ...normalized,
+          ...(identity.kind === "thread" ? { threadRootEventId: identity.threadRootEventId } : {}),
+        },
+        terminalCompletion,
+      );
       completion = entry.completion;
-      this.#pumpRoom(room);
-    } else if (room.waiting.length < this.#config.limits.maxQueuedTurnsPerRoom) {
-      const entry = makeQueueEntry(normalized, terminalCompletion);
-      room.waiting.push(entry);
-      completion = entry.completion;
+      if (conversation.active === undefined) {
+        conversation.active = entry;
+        this.#pumpConversation(conversation);
+      } else {
+        conversation.waiting.push(entry);
+      }
     } else {
       if (event.isCatchUp === true) {
-        // The catch-up selector has already admitted this event to durable
-        // recovery metadata. Queue bounds make it an intentional omission,
-        // not an unresolved event that can remain in the completed-event ledger.
         this.#diagnostic("warn", "catch-up-event-omitted", {
           roomId,
-          reason: "room-queue-bound",
+          reason: identity.kind === "thread" ? "thread-queue-bound" : "room-queue-bound",
         });
         await this.#completeTerminal(terminalCompletion);
         return;
       }
-      if (!(await this.#completeTerminal(terminalCompletion))) {
-        return;
-      }
+      if (!(await this.#completeTerminal(terminalCompletion))) return;
       this.#receipt(event);
-      await this.#deliverDescriptor(roomId, eventId, { kind: "busy" });
+      await this.#deliverDescriptor(roomId, eventId, { kind: "busy" }, routing);
       return;
     }
     this.#receipt(event);
@@ -1001,8 +1059,19 @@ export class BridgeCoordinator {
 
   #lastAdmission: NormalizedInboundEvent | undefined;
 
+  #lastOversizedRouting: Pick<NormalizedInboundEvent, "roomId" | "eventId" | "threadRootEventId"> | undefined;
+
+  #knownThread(identity: ConversationIdentity): boolean {
+    return (
+      this.#rooms.get(identity.roomId)?.conversations.has(conversationKey(identity)) === true ||
+      this.#sessionStore.getConversationRecord(identity) !== undefined ||
+      (this.#loadSession && this.#stateStore?.getConversationRecord(identity) !== undefined)
+    );
+  }
+
   #admit(event: InboundMatrixEvent): BridgeAdmission {
     this.#lastAdmission = undefined;
+    this.#lastOversizedRouting = undefined;
     if (!this.#intakeOpen || this.#stopping || this.#fatal !== undefined) {
       return "ignored";
     }
@@ -1028,6 +1097,7 @@ export class BridgeCoordinator {
       return "ignored";
     }
     if (decision.kind === "oversized") {
+      this.#lastOversizedRouting = decision.routing;
       return "oversized";
     }
     if (!decision.accepted) {
@@ -1051,10 +1121,8 @@ export class BridgeCoordinator {
   #newRoom(roomId: MatrixRoomId): RoomState {
     return {
       roomId,
-      waiting: [],
       outbound: new OutboundMutex(),
-      active: undefined,
-      sessionId: undefined,
+      conversations: new Map(),
     };
   }
 
@@ -1068,24 +1136,25 @@ export class BridgeCoordinator {
     return room;
   }
 
-  #pumpRoom(room: RoomState): void {
+  #pumpConversation(conversation: ConversationState): void {
     if (!this.#dispatchOpen || this.#stopping || this.#fatal !== undefined) {
       return;
     }
-    let entry = room.active;
+    let entry = conversation.active;
     if (entry === undefined) {
-      entry = room.waiting.shift();
+      entry = conversation.waiting.shift();
       if (entry === undefined) {
         return;
       }
-      room.active = entry;
+      conversation.active = entry;
     }
     if (entry === undefined || this.#activeRunsForEntry(entry)) {
       return;
     }
     const run: ActiveRun = {
       entry,
-      room,
+      room: conversation.room,
+      conversation,
       sessionId: undefined,
       controller: undefined,
       turn: undefined,
@@ -1128,9 +1197,10 @@ export class BridgeCoordinator {
           // Commit the durable deletion before changing the live view.  A
           // failed replacement is fatal, and must not make the coordinator
           // look reset while the persisted mapping is still usable.
-          await this.#stateStore?.removeSessionMapping(run.room.roomId);
-          this.#sessionStore.delete(run.room.roomId);
-          run.room.sessionId = undefined;
+          if (!(await this.#prepareSessionState())) return;
+          if (this.#loadSession) await this.#stateStore?.resetConversation(run.conversation.identity);
+          this.#sessionStore.resetConversation(run.conversation.identity);
+          run.conversation.sessionId = undefined;
         } catch {
           this.#triggerFatal({
             code: "state",
@@ -1158,8 +1228,23 @@ export class BridgeCoordinator {
         return;
       }
 
-      const resolution = await this.#sessionForRoom(run.room);
+      const resolution = await this.#sessionForConversation(run.conversation);
       if (resolution.session === undefined) {
+        if (resolution.methodFailure === true) {
+          if (!(await this.#completeTerminal(run.entry.terminalCompletion))) return;
+          await this.#deliverDescriptor(
+            run.room.roomId,
+            run.entry.event.eventId,
+            { kind: "error" },
+            run.entry.event.threadRootEventId === undefined
+              ? {}
+              : {
+                  threadRootEventId: run.entry.event.threadRootEventId,
+                  threadFallbackEventId: run.entry.event.eventId,
+                },
+          );
+          return;
+        }
         if (
           resolution.creationFailure === true &&
           (resolution.failureCode === "acp_transport" || resolution.failureCode === "acp_protocol")
@@ -1335,21 +1420,21 @@ export class BridgeCoordinator {
     }
   }
 
-  async #sessionForRoom(room: RoomState): Promise<SessionResolution> {
+  async #sessionForConversation(conversation: ConversationState): Promise<SessionResolution> {
     if (!(await this.#prepareSessionState())) {
       return { failureCode: "state" };
     }
-    if (room.sessionId !== undefined) {
-      return { session: { sessionId: room.sessionId } };
+    if (conversation.sessionId !== undefined) {
+      return { session: { sessionId: conversation.sessionId } };
     }
-    const inMemory = this.#sessionStore.get(room.roomId);
+    const inMemory = this.#sessionStore.getConversationRecord(conversation.identity);
     if (inMemory !== undefined && typeof inMemory.sessionId === "string" && inMemory.sessionId.length > 0) {
-      room.sessionId = inMemory.sessionId;
+      conversation.sessionId = inMemory.sessionId;
       return { session: { sessionId: inMemory.sessionId } };
     }
 
     if (this.#loadSession) {
-      const sessionId = this.#stateStore?.getSessionMapping(room.roomId);
+      const sessionId = this.#stateStore?.getConversationRecord(conversation.identity)?.sessionId;
       if (sessionId !== undefined && sessionId.length > 0) {
         if (this.#acp.loadSession === undefined) {
           this.#triggerFatal({
@@ -1386,26 +1471,25 @@ export class BridgeCoordinator {
             });
             return { failureCode: "acp_protocol" };
           }
-          room.sessionId = session.sessionId;
-          this.#sessionStore.set({
-            roomId: room.roomId,
+          conversation.sessionId = session.sessionId;
+          this.#sessionStore.setConversationRecord({
+            ...conversation.identity,
             sessionId: session.sessionId,
           });
           this.#loadingSessions.delete(sessionId);
           this.#diagnostic("info", "acp-session-loaded", {
-            roomId: room.roomId,
+            roomId: conversation.identity.roomId,
           });
           return { session: { sessionId: session.sessionId } };
         } catch (error) {
           this.#loadingSessions.delete(sessionId);
           if (isSessionLoadMethodError(error)) {
-            this.#sessionStore.delete(room.roomId);
             try {
               // Delete the stale mapping before creating a replacement.  Each
               // mutation is an atomic state-document replacement, so a
               // failed replacement can never leave a misleading old mapping
               // looking usable after restart.
-              await this.#stateStore?.removeSessionMapping(room.roomId);
+              await this.#stateStore?.resetConversation(conversation.identity);
             } catch {
               this.#triggerFatal({
                 code: "state",
@@ -1413,11 +1497,12 @@ export class BridgeCoordinator {
               });
               return { failureCode: "state" };
             }
+            this.#sessionStore.resetConversation(conversation.identity);
             this.#diagnostic("warn", "stale-session-mapping-discarded", {
-              roomId: room.roomId,
+              roomId: conversation.identity.roomId,
             });
             this.#diagnostic("warn", "room-context-reset", {
-              roomId: room.roomId,
+              roomId: conversation.identity.roomId,
             });
           } else {
             this.#triggerFatal({
@@ -1430,18 +1515,29 @@ export class BridgeCoordinator {
       }
     }
     try {
+      if (
+        this.#loadSession &&
+        conversation.identity.kind === "thread" &&
+        this.#stateStore?.getConversationRecord(conversation.identity) === undefined
+      ) {
+        try {
+          await this.#stateStore?.setConversationRecord(conversation.identity);
+        } catch {
+          this.#triggerFatal({ code: "state", message: "Private bridge state failure" });
+          return { failureCode: "state" };
+        }
+      }
       const session = await this.#acp.createSession(sessionOptions(this.#config));
+      if (isMethodError(session) && conversation.identity.kind === "thread") return { methodFailure: true };
+      if (isFatalAcpOutcome(session)) {
+        return { failureCode: sessionFailureCode(session), creationFailure: true };
+      }
       if (!isRecord(session) || typeof session.sessionId !== "string" || session.sessionId.length === 0) {
         throw new Error("invalid ACP session");
       }
-      room.sessionId = session.sessionId;
-      this.#sessionStore.set({
-        roomId: room.roomId,
-        sessionId: session.sessionId,
-      });
       if (this.#loadSession && this.#stateStore !== undefined) {
         try {
-          await this.#stateStore.setSessionMapping(room.roomId, session.sessionId);
+          await this.#stateStore.setConversationRecord({ ...conversation.identity, sessionId: session.sessionId });
         } catch {
           this.#triggerFatal({
             code: "state",
@@ -1450,8 +1546,11 @@ export class BridgeCoordinator {
           return { failureCode: "state" };
         }
       }
+      conversation.sessionId = session.sessionId;
+      this.#sessionStore.setConversationRecord({ ...conversation.identity, sessionId: session.sessionId });
       return { session: { sessionId: session.sessionId } };
     } catch (error) {
+      if (isMethodError(error) && conversation.identity.kind === "thread") return { methodFailure: true };
       return { failureCode: sessionFailureCode(error), creationFailure: true };
     }
   }
@@ -1551,7 +1650,9 @@ export class BridgeCoordinator {
       return;
     }
     run.typingStarted = false;
-    this.#sendTyping(run, false, "stop");
+    if (![...this.#activeRuns].some((other) => other.room === run.room && other.typingStarted)) {
+      this.#sendTyping(run, false, "stop");
+    }
   }
 
   #sendTyping(run: ActiveRun, isTyping: boolean, operation: "start" | "refresh" | "stop"): void {
@@ -2130,15 +2231,15 @@ export class BridgeCoordinator {
       run.promptResolved = true;
       this.#unresolvedPrompts = Math.max(0, this.#unresolvedPrompts - 1);
     }
-    if (run.room.active === run.entry) {
-      run.room.active = undefined;
+    if (run.conversation.active === run.entry) {
+      run.conversation.active = undefined;
     }
     if (!run.entry.completed) {
       run.entry.completed = true;
       run.entry.resolve();
     }
     if (!this.#stopping && this.#fatal === undefined && this.#dispatchOpen) {
-      this.#pumpRoom(run.room);
+      this.#pumpConversation(run.conversation);
     }
     this.#maybeFinalizeStop();
     this.#resolveIdleWaiters();
@@ -2146,18 +2247,20 @@ export class BridgeCoordinator {
 
   #dropWaitingTurns(): void {
     for (const room of this.#rooms.values()) {
-      if (room.active !== undefined && !this.#activeRunsForEntry(room.active)) {
-        const entry = room.active;
-        room.active = undefined;
-        if (!entry.completed) {
-          entry.completed = true;
-          entry.resolve();
+      for (const conversation of room.conversations.values()) {
+        if (conversation.active !== undefined && !this.#activeRunsForEntry(conversation.active)) {
+          const entry = conversation.active;
+          conversation.active = undefined;
+          if (!entry.completed) {
+            entry.completed = true;
+            entry.resolve();
+          }
         }
-      }
-      for (const entry of room.waiting.splice(0)) {
-        if (!entry.completed) {
-          entry.completed = true;
-          entry.resolve();
+        for (const entry of conversation.waiting.splice(0)) {
+          if (!entry.completed) {
+            entry.completed = true;
+            entry.resolve();
+          }
         }
       }
     }
@@ -2169,8 +2272,10 @@ export class BridgeCoordinator {
       return false;
     }
     for (const room of this.#rooms.values()) {
-      if (room.active !== undefined || room.waiting.length > 0) {
-        return false;
+      for (const conversation of room.conversations.values()) {
+        if (conversation.active !== undefined || conversation.waiting.length > 0) {
+          return false;
+        }
       }
     }
     return true;

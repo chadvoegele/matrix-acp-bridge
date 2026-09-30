@@ -52,6 +52,7 @@ function eligibleEvents(
     bridgeUserId: config.matrix.userId,
     maxInputBytes: config.limits.maxInputBytes,
     encryption: config.matrix.encryption,
+    responseMode: config.matrix.responseMode,
     ...(diagnostics === undefined ? {} : { diagnostics }),
     clock,
   });
