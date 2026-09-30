@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-09-30T20:58:19Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer agent: tt-thread-sessions-final-review-and-one-github-implementation-pr
