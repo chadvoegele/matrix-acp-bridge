@@ -29,26 +29,8 @@ npm run build                  # cleans and emits production files to dist/
 npm run typecheck              # checks production and test sources without emitting
 npm test                       # builds dist/ and dist-test/ before running tests
 npm run format                 # fix spacing and format the repository
-npm run format:check           # check formatting and lint without changing files
 npm run check                  # formatting, lint, typecheck, and test gate
 ```
-
-## Code formatting
-
-We use [Prettier](https://prettier.io/) with its standard defaults except for a
-120-column print width, configured in `.prettierrc.json`. This includes two-space
-indentation, double quotes, and semicolons. ESLint's Stylistic rules also require blank lines around
-function declarations and exports, and between class members. `eslint-config-prettier`
-disables conflicting lint rules.
-
-Run `npm run format` before committing. It applies ESLint fixes, then formats all
-Prettier-supported source, configuration, and documentation files. Generated
-output, dependencies, local environment files, and the npm-managed lockfile are
-excluded by `.prettierignore`. Shell scripts and TOML are not supported by Prettier
-and remain unchanged.
-
-`npm run format:check` checks both formatting and lint without modifying files.
-CI runs it through `npm run check` on every push and pull request.
 
 ## ACP Connection
 
