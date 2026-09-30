@@ -35,3 +35,18 @@
 - Tests cover plaintext and required-encryption adapter content for multipart originals, safe HTML, retries, archived activity edits, all synthetic kinds, fallback targets, exact JSON/HTML/relation byte limits, Unicode reconstruction, room compatibility, failed readiness, crypto failure without plaintext fallback, invalid routing/unconfigured room rejection, and deterministic IDs separated across roots/rooms/kinds.
 - Existing live Matrix scenarios/manual-client checks belong to the later validation stage; no live encrypted/plaintext or manual-client result claimed here. New encrypted tests exercise the validated SDK adapter boundary with injected clients, not a live homeserver.
 - `git diff --check` passed. Source diffs contain public source/tests only; no credentials, private state, transcripts or work log.
+
+## Final checks and integration
+- First `npm run check` passed all formatting, lint, typecheck, build and 327 tests (0 failures/skips). Added one exact threaded-edit boundary test with maximum-length root/fallback/edit target IDs and extended plaintext/encrypted synthetic coverage to all response kinds; no implementation changes followed.
+- Source implementation commit: a0e63df65798d2df7ac6eb8a3df740605c279d23, with agent ID and ticket ID in its message; 13 source/test files only.
+- Investigated integration status `?? worktrees/`: tracked and staged diffs are empty; directory contains only launcher's registered aa-1dfdbdf5 worktree. Explicitly validated its absolute top-level path. Did not change/discard/ignore that directory.
+- Held fd9 flock `/tmp/matrix-acp-bridge-thread-sessions-integration.lock` continuously for final clean-source/integration preflight, `git rebase feat/thread-scoped-sessions`, all following checks, merge and ancestry verification. Rebase passed, already current.
+- Latest rebased `npm run check`: passed formatting, lint, typecheck, build and 328 tests (0 failures/skips). Output outside Git: /tmp/matrix-acp-bridge-aa-1dfdbdf5-final-check.log.
+- Latest rebased `node --test dist-test/matrix-message-content.test.js dist-test/response-rendering.test.js dist-test/matrix-text-rendering.test.js dist-test/matrix-client.test.js dist-test/acp-activity-batches.test.js dist-test/bridge.test.js`: 117 tests passed (0 failures/skips). Output outside Git: /tmp/matrix-acp-bridge-aa-1dfdbdf5-final-focused.log.
+- `git diff --check` and clean isolated worktree preflight passed.
+- `git -C /home/chad/code/github.com/chadvoegele/matrix-acp-bridge/thread-sessions-implementation merge --ff-only "$(git branch --show-current)"`: passed, fast-forward 2f22064 -> a0e63df. Implementation HEAD and feature HEAD both a0e63df65798d2df7ac6eb8a3df740605c279d23; `git merge-base --is-ancestor "$(git rev-parse HEAD)" feat/thread-scoped-sessions` passed before releasing fd9.
+- All output-ticket acceptance criteria implemented and verified. No push, PR, main integration, other ticket/agent mutation or production-service operations. Launcher still owns this agent's terminal status and worktree removal.
+- After integration and repeated ancestry verification, `waap ticket update --ticket-id tt-thread-sessions-matrix-output-and-edit-routing --set-status completed` succeeded; `waap check` passed.
+- Logs committed only on waap, staging only this agent's work_log.md under the separate fd8 state flock. No private artifacts added to implementation commits.
+
+- Ticket completion state commit: 945ab28d841e65d6d466153350ad630e40af750d.
