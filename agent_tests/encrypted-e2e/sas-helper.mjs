@@ -17,7 +17,10 @@ function emit(value) {
 function waitFor(request, predicate, timeoutMs = 120_000) {
   if (predicate()) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error("verification phase timed out")), timeoutMs);
+    const timer = setTimeout(
+      () => finish(new Error("verification phase timed out")),
+      timeoutMs,
+    );
     const unsubscribe = request.onChange(() => {
       try {
         if (predicate()) finish();
@@ -25,6 +28,7 @@ function waitFor(request, predicate, timeoutMs = 120_000) {
         finish(error);
       }
     });
+
     function finish(error) {
       clearTimeout(timer);
       unsubscribe();
@@ -35,7 +39,9 @@ function waitFor(request, predicate, timeoutMs = 120_000) {
 }
 
 let resolveDecision;
-const decision = new Promise((resolve) => { resolveDecision = resolve; });
+const decision = new Promise((resolve) => {
+  resolveDecision = resolve;
+});
 process.once("SIGUSR1", () => resolveDecision("confirm"));
 process.once("SIGHUP", () => resolveDecision("mismatch"));
 
@@ -43,7 +49,8 @@ async function handle(request) {
   if (["cancelled", "done"].includes(request.phase)) return;
   phase = "request-received";
   if (activeRequest !== undefined) {
-    const sameTarget = request.userId === expectedUserId &&
+    const sameTarget =
+      request.userId === expectedUserId &&
       (request.deviceId === "" || request.deviceId === expectedDeviceId);
     if (sameTarget) return;
     await request.cancel().catch(() => {});
@@ -56,22 +63,40 @@ async function handle(request) {
   activeRequest = request;
   if (request.userId === "" || request.deviceId === "") {
     phase = "request-identification";
-    await waitFor(request, () =>
-      (request.userId !== "" && request.deviceId !== "") || ["cancelled", "done"].includes(request.phase));
+    await waitFor(
+      request,
+      () =>
+        (request.userId !== "" && request.deviceId !== "") ||
+        ["cancelled", "done"].includes(request.phase),
+    );
   }
-  if (request.userId !== expectedUserId || request.deviceId !== expectedDeviceId) {
+  if (
+    request.userId !== expectedUserId ||
+    request.deviceId !== expectedDeviceId
+  ) {
     await request.cancel().catch(() => {});
-    throw new Error("verification request target did not match the configured bridge device");
+    throw new Error(
+      "verification request target did not match the configured bridge device",
+    );
   }
   if (request.phase === "requested" && !request.accepting) {
     phase = "request-accepted";
     await request.accept();
   }
   phase = "request-ready";
-  await waitFor(request, () => ["ready", "started", "cancelled", "done"].includes(request.phase));
-  if (["cancelled", "done"].includes(request.phase)) throw new Error("verification ended before SAS");
-  if (!request.supportsMethod("m.sas.v1")) throw new Error("peer does not support SAS");
-  await waitFor(request, () => request.verifier !== undefined || ["cancelled", "done"].includes(request.phase));
+  await waitFor(request, () =>
+    ["ready", "started", "cancelled", "done"].includes(request.phase),
+  );
+  if (["cancelled", "done"].includes(request.phase))
+    throw new Error("verification ended before SAS");
+  if (!request.supportsMethod("m.sas.v1"))
+    throw new Error("peer does not support SAS");
+  await waitFor(
+    request,
+    () =>
+      request.verifier !== undefined ||
+      ["cancelled", "done"].includes(request.phase),
+  );
   const verifier = request.verifier;
   if (verifier === undefined) throw new Error("SAS verifier was not created");
 
@@ -80,7 +105,9 @@ async function handle(request) {
   const unsubscribeShow = verifier.onShowSas((sas) => {
     if (sasShown) return;
     sasShown = true;
-    const emoji = sas.emoji?.map(([symbol, name]) => `${symbol} (${name})`).join(" ");
+    const emoji = sas.emoji
+      ?.map(([symbol, name]) => `${symbol} (${name})`)
+      .join(" ");
     const decimal = sas.decimal?.join(" ");
     emit({ event: "sas", emoji, decimal });
     phase = "sas-shown";
@@ -91,11 +118,14 @@ async function handle(request) {
       else sas.cancel();
     });
   });
-  const unsubscribeCancel = verifier.onCancel(() => emit({ event: "cancelled" }));
+  const unsubscribeCancel = verifier.onCancel(() =>
+    emit({ event: "cancelled" }),
+  );
   try {
     phase = "verification";
     await verifier.verify();
-    if (!sasShown || decisionPromise === undefined) throw new Error("SAS was not shown");
+    if (!sasShown || decisionPromise === undefined)
+      throw new Error("SAS was not shown");
     await decisionPromise;
     phase = "verified";
     emit({ event: "verified" });
@@ -106,11 +136,18 @@ async function handle(request) {
 }
 
 const done = new Promise((resolve, reject) => {
-  crypto.onVerificationRequest((request) => void handle(request).then(resolve, () => {
-    activeRequest = undefined;
-    emit({ event: "verification-attempt-failed", phase, reason: "attempt-failed" });
-    reject(new Error("verification attempt failed"));
-  }));
+  crypto.onVerificationRequest(
+    (request) =>
+      void handle(request).then(resolve, () => {
+        activeRequest = undefined;
+        emit({
+          event: "verification-attempt-failed",
+          phase,
+          reason: "attempt-failed",
+        });
+        reject(new Error("verification attempt failed"));
+      }),
+  );
 });
 
 async function close() {

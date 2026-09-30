@@ -8,7 +8,10 @@ import type {
   MatrixSyncRoomBatch,
 } from "./matrix-client.js";
 import { BridgeStateError } from "./bridge-state.js";
-import type { BridgeStateStore, CompletedEventRoomInput } from "./bridge-state.js";
+import type {
+  BridgeStateStore,
+  CompletedEventRoomInput,
+} from "./bridge-state.js";
 import type { BridgeTerminalCompletion } from "./bridge.js";
 import { isValidMatrixEventId } from "./matrix-validation.js";
 
@@ -17,7 +20,10 @@ export interface SyncCoordinatorBridge {
   enableDispatch(): void;
   /** True when the bridge invokes the callback only for terminal work. */
   readonly consumesTerminalCompletion?: boolean;
-  handleTimelineEvent(event: InboundMatrixEvent, terminalCompletion?: BridgeTerminalCompletion): Promise<void>;
+  handleTimelineEvent(
+    event: InboundMatrixEvent,
+    terminalCompletion?: BridgeTerminalCompletion,
+  ): Promise<void>;
 }
 
 export interface MatrixSyncCoordinatorOptions {
@@ -66,24 +72,28 @@ function eligibleEvents(
       // Initial-sync history is intentionally non-live at the Matrix adapter
       // boundary, but it still needs authorization before its ID is added to
       // the durable suppression baseline.
-      const authorizationEvent = event.isLive ? event : { ...event, isLive: true };
+      const authorizationEvent = event.isLive
+        ? event
+        : { ...event, isLive: true };
       const decision = authorizer.authorize(authorizationEvent);
       if (decision.accepted || decision.kind === "oversized") {
-        values.push(catchUp
-          ? {
-              ...event,
-              // Initial-sync events are history at the adapter boundary, but
-              // selected restart events are intentionally admitted through
-              // the ordinary live authorization path.
-              isLive: true,
-              isCatchUp: true,
-              timeline: {
-                phase: "incremental",
+        values.push(
+          catchUp
+            ? {
+                ...event,
+                // Initial-sync events are history at the adapter boundary, but
+                // selected restart events are intentionally admitted through
+                // the ordinary live authorization path.
+                isLive: true,
                 isCatchUp: true,
-                limited: room.limited,
-              },
-            }
-          : event);
+                timeline: {
+                  phase: "incremental",
+                  isCatchUp: true,
+                  limited: room.limited,
+                },
+              }
+            : event,
+        );
       }
     }
     selected.set(room.roomId, values);
@@ -93,14 +103,23 @@ function eligibleEvents(
 
 export class MatrixSyncCoordinator {
   readonly #config: BridgeConfig;
+
   readonly #bridge: SyncCoordinatorBridge;
+
   readonly #stateStore: BridgeStateStore;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #clock: Clock;
+
   readonly #onFatal: (error: FatalError) => void;
+
   readonly #dispatchedEventIds = new Set<string>();
+
   #startupBatch = true;
+
   #handling = false;
+
   #inFlight: Promise<void> | undefined;
 
   constructor(options: MatrixSyncCoordinatorOptions) {
@@ -160,7 +179,9 @@ export class MatrixSyncCoordinator {
         this.#config,
         this.#diagnostics,
         this.#clock,
-        this.#startupBatch && batch.phase === "initial" && this.#stateStore.getSnapshot().initialized,
+        this.#startupBatch &&
+          batch.phase === "initial" &&
+          this.#stateStore.getSnapshot().initialized,
       );
 
       if (this.#startupBatch && batch.phase === "initial") {
@@ -169,7 +190,11 @@ export class MatrixSyncCoordinator {
           // while the SDK crossed PREPARED are still part of that response;
           // opening live intake does not make them new prompts.
           await this.#establishBaseline(this.#ledgerRooms(batch.rooms));
-          emit(this.#diagnostics, "info", "completed-event-baseline-established");
+          emit(
+            this.#diagnostics,
+            "info",
+            "completed-event-baseline-established",
+          );
           this.#bridge.openIntake();
           this.#bridge.enableDispatch();
           this.#startupBatch = false;
@@ -179,7 +204,10 @@ export class MatrixSyncCoordinator {
         const currentTimeline = this.#ledgerRooms(batch.rooms);
         const selected = new Map<string, InboundMatrixEvent[]>();
         const newlyTerminalByRoom = new Map<string, string[]>(
-          this.#terminalRooms(batch.rooms).map(({ roomId, eventIds }) => [roomId, [...eventIds]]),
+          this.#terminalRooms(batch.rooms).map(({ roomId, eventIds }) => [
+            roomId,
+            [...eventIds],
+          ]),
         );
         let selectedCount = 0;
         let omittedCount = 0;
@@ -190,10 +218,19 @@ export class MatrixSyncCoordinator {
           1 + this.#config.limits.maxQueuedTurnsPerRoom,
         );
         for (const room of batch.rooms) {
-          const events = (eligible.get(room.roomId) ?? []).filter((event) => event.eventId !== undefined);
-          const unseen = events.filter((event) => !this.#stateStore.isEventCompleted(room.roomId, event.eventId!));
-          const tooOld = unseen.filter((event) => this.#isTooOld(event, now, maxAgeMs));
-          const recent = unseen.filter((event) => !this.#isTooOld(event, now, maxAgeMs));
+          const events = (eligible.get(room.roomId) ?? []).filter(
+            (event) => event.eventId !== undefined,
+          );
+          const unseen = events.filter(
+            (event) =>
+              !this.#stateStore.isEventCompleted(room.roomId, event.eventId!),
+          );
+          const tooOld = unseen.filter((event) =>
+            this.#isTooOld(event, now, maxAgeMs),
+          );
+          const recent = unseen.filter(
+            (event) => !this.#isTooOld(event, now, maxAgeMs),
+          );
           // The initial timeline is ordered oldest to newest.  Keep the most
           // recent bounded suffix, while dispatching that suffix in its
           // original Matrix order.
@@ -204,7 +241,10 @@ export class MatrixSyncCoordinator {
           if (omitted.length > 0) {
             const eventIds = newlyTerminalByRoom.get(room.roomId) ?? [];
             for (const event of omitted) {
-              if (event.eventId !== undefined && !eventIds.includes(event.eventId)) {
+              if (
+                event.eventId !== undefined &&
+                !eventIds.includes(event.eventId)
+              ) {
                 eventIds.push(event.eventId);
               }
             }
@@ -214,18 +254,27 @@ export class MatrixSyncCoordinator {
               omittedCount: omitted.length,
               ageOmittedCount: tooOld.length,
               countOmittedCount: omitted.length - tooOld.length,
-              reason: tooOld.length === omitted.length
-                ? "age"
-                : (tooOld.length === 0 ? "count" : "age-and-count"),
+              reason:
+                tooOld.length === omitted.length
+                  ? "age"
+                  : tooOld.length === 0
+                    ? "count"
+                    : "age-and-count",
             });
           }
           selectedCount += keep.length;
         }
         await this.#compact(
           currentTimeline,
-          [...newlyTerminalByRoom.entries()].map(([roomId, eventIds]) => ({ roomId, eventIds })),
+          [...newlyTerminalByRoom.entries()].map(([roomId, eventIds]) => ({
+            roomId,
+            eventIds,
+          })),
         );
-        emit(this.#diagnostics, "info", "initial-sync-recovery-finished", { selectedCount, omittedCount });
+        emit(this.#diagnostics, "info", "initial-sync-recovery-finished", {
+          selectedCount,
+          omittedCount,
+        });
         this.#bridge.openIntake();
         this.#dispatchSelected(batch, selected);
         this.#bridge.enableDispatch();
@@ -244,7 +293,9 @@ export class MatrixSyncCoordinator {
     }
   }
 
-  async #establishBaseline(ledger: readonly CompletedEventRoomInput[]): Promise<void> {
+  async #establishBaseline(
+    ledger: readonly CompletedEventRoomInput[],
+  ): Promise<void> {
     try {
       await this.#stateStore.establishInitialBaseline(ledger);
     } catch (error) {
@@ -258,7 +309,10 @@ export class MatrixSyncCoordinator {
     newlyTerminal: readonly CompletedEventRoomInput[],
   ): Promise<void> {
     try {
-      await this.#stateStore.compactCompletedEventIds(currentTimeline, newlyTerminal);
+      await this.#stateStore.compactCompletedEventIds(
+        currentTimeline,
+        newlyTerminal,
+      );
     } catch (error) {
       this.#stateFailure(error, "compact-completed-event-ledger");
       throw new Error("Private bridge state failure");
@@ -272,7 +326,12 @@ export class MatrixSyncCoordinator {
     for (const room of batch.rooms) {
       const selectedById = new Map(
         (selected.get(room.roomId) ?? [])
-          .filter((event): event is InboundMatrixEvent & { readonly eventId: string } => event.eventId !== undefined)
+          .filter(
+            (
+              event,
+            ): event is InboundMatrixEvent & { readonly eventId: string } =>
+              event.eventId !== undefined,
+          )
           .map((event) => [event.eventId, event]),
       );
       for (const event of room.timeline) {
@@ -316,7 +375,10 @@ export class MatrixSyncCoordinator {
     };
     await this.#bridge.handleTimelineEvent(event, terminalCompletion).then(
       () => {
-        if (!terminalCalled && this.#bridge.consumesTerminalCompletion !== true) {
+        if (
+          !terminalCalled &&
+          this.#bridge.consumesTerminalCompletion !== true
+        ) {
           return terminalCompletion();
         }
       },
@@ -326,7 +388,9 @@ export class MatrixSyncCoordinator {
     );
   }
 
-  #ledgerRooms(rooms: readonly MatrixSyncRoomBatch[]): CompletedEventRoomInput[] {
+  #ledgerRooms(
+    rooms: readonly MatrixSyncRoomBatch[],
+  ): CompletedEventRoomInput[] {
     const byRoom = new Map<string, string[]>();
     for (const room of rooms) {
       const eventIds = room.timeline
@@ -343,13 +407,20 @@ export class MatrixSyncCoordinator {
         byRoom.set(room.roomId, eventIds);
       }
     }
-    return [...byRoom.entries()].map(([roomId, eventIds]) => ({ roomId, eventIds }));
+    return [...byRoom.entries()].map(([roomId, eventIds]) => ({
+      roomId,
+      eventIds,
+    }));
   }
 
-  #terminalRooms(rooms: readonly MatrixSyncRoomBatch[]): CompletedEventRoomInput[] {
-    return rooms.flatMap((room) => room.terminalEventIds === undefined || room.terminalEventIds.length === 0
-      ? []
-      : [{ roomId: room.roomId, eventIds: room.terminalEventIds }]);
+  #terminalRooms(
+    rooms: readonly MatrixSyncRoomBatch[],
+  ): CompletedEventRoomInput[] {
+    return rooms.flatMap((room) =>
+      room.terminalEventIds === undefined || room.terminalEventIds.length === 0
+        ? []
+        : [{ roomId: room.roomId, eventIds: room.terminalEventIds }],
+    );
   }
 
   #isTooOld(event: InboundMatrixEvent, now: number, maxAgeMs: number): boolean {

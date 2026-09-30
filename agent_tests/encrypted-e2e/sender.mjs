@@ -6,7 +6,8 @@ import { createAdapter, readEnvironment, readToken } from "./lib.mjs";
 
 function argument(name) {
   const index = process.argv.indexOf(name);
-  if (index === -1 || process.argv[index + 1] === undefined) throw new Error(`${name} is required`);
+  if (index === -1 || process.argv[index + 1] === undefined)
+    throw new Error(`${name} is required`);
   return process.argv[index + 1];
 }
 
@@ -24,22 +25,39 @@ const exchange = new Promise((resolve, reject) => {
   resolveExchange = resolve;
   rejectExchange = reject;
 });
-const timer = setTimeout(() => rejectExchange(new Error("encrypted exchange timed out")), timeoutMs);
+const timer = setTimeout(
+  () => rejectExchange(new Error("encrypted exchange timed out")),
+  timeoutMs,
+);
 
-adapter.onFatalError(() => rejectExchange(new Error("Matrix sender reported a fatal error")));
-const beginLiveExchange = installLiveDecryptionFailureHandler(adapter, rejectExchange);
+adapter.onFatalError(() =>
+  rejectExchange(new Error("Matrix sender reported a fatal error")),
+);
+const beginLiveExchange = installLiveDecryptionFailureHandler(
+  adapter,
+  rejectExchange,
+);
 adapter.onSyncBatch((batch) => {
   // Initial history is not part of this exchange. Inspect only the normalized
   // timelines from later live batches.
   if (batch.phase === "initial") return;
   for (const room of batch.rooms) {
     for (const event of room.timeline) {
-      const body = typeof event.content?.body === "string" ? event.content.body : undefined;
-      if (event.sender === environment.sender.userId && body === prompt) promptEvent = event;
-      if (promptEvent !== undefined && event.sender === environment.bridge.userId && body === expected) {
+      const body =
+        typeof event.content?.body === "string"
+          ? event.content.body
+          : undefined;
+      if (event.sender === environment.sender.userId && body === prompt)
+        promptEvent = event;
+      if (
+        promptEvent !== undefined &&
+        event.sender === environment.bridge.userId &&
+        body === expected
+      ) {
         responseEvents.push(event);
       }
-      if (promptEvent !== undefined && responseEvents.length > 0) resolveExchange();
+      if (promptEvent !== undefined && responseEvents.length > 0)
+        resolveExchange();
     }
   }
 });
@@ -47,18 +65,29 @@ adapter.onSyncBatch((batch) => {
 async function rawEventType(eventId) {
   const room = encodeURIComponent(environment.roomId);
   const event = encodeURIComponent(eventId);
-  const response = await fetch(`${environment.homeserver}/_matrix/client/v3/rooms/${room}/event/${event}`, {
-    headers: { authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const response = await fetch(
+    `${environment.homeserver}/_matrix/client/v3/rooms/${room}/event/${event}`,
+    {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
   const body = await response.json().catch(() => ({}));
-  if (!response.ok || typeof body.type !== "string") throw new Error(`event lookup failed: HTTP ${response.status}`);
+  if (!response.ok || typeof body.type !== "string")
+    throw new Error(`event lookup failed: HTTP ${response.status}`);
   return body.type;
 }
 
 function assertEncrypted(event, label) {
-  if (event?.eventId === undefined || event.isEncrypted !== true || event.isDecrypted !== true || event.isPlaintext === true) {
-    throw new Error(`${label} was not an authenticated decrypted encrypted event`);
+  if (
+    event?.eventId === undefined ||
+    event.isEncrypted !== true ||
+    event.isDecrypted !== true ||
+    event.isPlaintext === true
+  ) {
+    throw new Error(
+      `${label} was not an authenticated decrypted encrypted event`,
+    );
   }
 }
 
@@ -82,7 +111,8 @@ try {
   process.stderr.write("Encrypted response received.\n");
   await new Promise((resolve) => setTimeout(resolve, 1000));
   clearTimeout(timer);
-  if (responseEvents.length !== 1) throw new Error(`expected one response, received ${responseEvents.length}`);
+  if (responseEvents.length !== 1)
+    throw new Error(`expected one response, received ${responseEvents.length}`);
   const responseEvent = responseEvents[0];
   assertEncrypted(promptEvent, "prompt");
   assertEncrypted(responseEvent, "response");
@@ -90,17 +120,22 @@ try {
     rawEventType(promptEvent.eventId),
     rawEventType(responseEvent.eventId),
   ]);
-  if (promptWireType !== "m.room.encrypted" || responseWireType !== "m.room.encrypted") {
+  if (
+    promptWireType !== "m.room.encrypted" ||
+    responseWireType !== "m.room.encrypted"
+  ) {
     throw new Error("prompt or response was plaintext on the wire");
   }
-  process.stdout.write(`${JSON.stringify({
-    event: "exchange-complete",
-    promptEventId: promptEvent.eventId,
-    responseEventId: responseEvent.eventId,
-    promptWireType,
-    responseWireType,
-    responseCount: responseEvents.length,
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      event: "exchange-complete",
+      promptEventId: promptEvent.eventId,
+      responseEventId: responseEvent.eventId,
+      promptWireType,
+      responseWireType,
+      responseCount: responseEvents.length,
+    })}\n`,
+  );
 } finally {
   clearTimeout(timer);
   await adapter.stop().catch(() => {});

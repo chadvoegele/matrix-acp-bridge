@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,7 +21,11 @@ import {
   openBridgeStateStore,
   type BridgeStateFaultPoint,
 } from "./bridge-state.js";
-import type { DiagnosticFields, DiagnosticLevel, DiagnosticSink } from "./diagnostics.js";
+import type {
+  DiagnosticFields,
+  DiagnosticLevel,
+  DiagnosticSink,
+} from "./diagnostics.js";
 
 const identity = {
   homeserver: "https://matrix.example",
@@ -30,7 +44,9 @@ async function makeStateDir(): Promise<string> {
   return stateDir;
 }
 
-async function withStateDir(run: (stateDir: string) => Promise<void>): Promise<void> {
+async function withStateDir(
+  run: (stateDir: string) => Promise<void>,
+): Promise<void> {
   const stateDir = await makeStateDir();
   try {
     await run(stateDir);
@@ -42,7 +58,9 @@ async function withStateDir(run: (stateDir: string) => Promise<void>): Promise<v
 async function openStore(
   stateDir: string,
   options: {
-    readonly faultInjector?: (point: BridgeStateFaultPoint) => void | Promise<void>;
+    readonly faultInjector?: (
+      point: BridgeStateFaultPoint,
+    ) => void | Promise<void>;
     readonly diagnostics?: DiagnosticSink;
   } = {},
 ) {
@@ -51,11 +69,16 @@ async function openStore(
 
 async function writeRawState(stateDir: string, value: unknown): Promise<void> {
   const statePath = join(stateDir, BRIDGE_STATE_FILE_NAME);
-  await writeFile(statePath, typeof value === "string" ? value : JSON.stringify(value));
+  await writeFile(
+    statePath,
+    typeof value === "string" ? value : JSON.stringify(value),
+  );
   await chmod(statePath, 0o600);
 }
 
-function validState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function validState(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     schemaVersion: BRIDGE_STATE_SCHEMA_VERSION,
     identity: { ...identity },
@@ -73,7 +96,10 @@ async function expectStateError(
   let rejected: unknown;
   await assert.rejects(action, (error: unknown) => {
     rejected = error;
-    assert.ok(error instanceof BridgeStateError, `expected BridgeStateError, got ${String(error)}`);
+    assert.ok(
+      error instanceof BridgeStateError,
+      `expected BridgeStateError, got ${String(error)}`,
+    );
     if (category !== undefined) {
       assert.equal(error.category, category);
     }
@@ -97,9 +123,14 @@ void test("absent private state is fresh and the strict schema round-trips sessi
     });
 
     await store.setSessionMapping(ROOM_ONE, "acp-session");
-    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] }]);
+    await store.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] },
+    ]);
 
-    const raw = JSON.parse(await readFile(store.statePath, "utf8")) as Record<string, unknown>;
+    const raw = JSON.parse(await readFile(store.statePath, "utf8")) as Record<
+      string,
+      unknown
+    >;
     assert.deepEqual(Object.keys(raw).sort(), [
       "completedEventIds",
       "identity",
@@ -109,7 +140,9 @@ void test("absent private state is fresh and the strict schema round-trips sessi
     ]);
     assert.equal(raw.initialized, true);
     assert.deepEqual(raw.sessions, { [ROOM_ONE]: "acp-session" });
-    assert.deepEqual(raw.completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    assert.deepEqual(raw.completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO],
+    });
     for (const forbidden of [
       "cursor",
       "committedAtMs",
@@ -127,7 +160,10 @@ void test("absent private state is fresh and the strict schema round-trips sessi
     assert.equal(reopened.getSnapshot().initialized, true);
     assert.equal(reopened.isEventCompleted(ROOM_ONE, EVENT_ONE), true);
     assert.equal(reopened.isEventCompleted(ROOM_TWO, EVENT_ONE), false);
-    assert.deepEqual([...reopened.getSessionMappings()], [[ROOM_ONE, "acp-session"]]);
+    assert.deepEqual(
+      [...reopened.getSessionMappings()],
+      [[ROOM_ONE, "acp-session"]],
+    );
   });
 });
 
@@ -143,7 +179,10 @@ void test("baseline establishment is atomic and a failed first commit remains fr
       },
     });
     await expectStateError(
-      () => store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]),
+      () =>
+        store.establishInitialBaseline([
+          { roomId: ROOM_ONE, eventIds: [EVENT_ONE] },
+        ]),
       "rename",
     );
     assert.equal(store.getSnapshot().initialized, false);
@@ -152,7 +191,9 @@ void test("baseline establishment is atomic and a failed first commit remains fr
     const reopened = await openStore(stateDir);
     assert.equal(reopened.getSnapshot().initialized, false);
     assert.deepEqual(reopened.getSnapshot().completedEventIds, {});
-    await reopened.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
+    await reopened.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE] },
+    ]);
     assert.equal(reopened.getSnapshot().initialized, true);
   });
 });
@@ -161,7 +202,9 @@ void test("completion is durable, room-scoped, idempotent, and preserves session
   await withStateDir(async (stateDir) => {
     const store = await openStore(stateDir);
     await store.setSessionMapping(ROOM_ONE, "session-one");
-    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
+    await store.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE] },
+    ]);
 
     assert.equal(await store.markEventCompleted(ROOM_ONE, EVENT_TWO), true);
     assert.equal(await store.markEventCompleted(ROOM_ONE, EVENT_TWO), false);
@@ -170,7 +213,10 @@ void test("completion is durable, room-scoped, idempotent, and preserves session
 
     const reopened = await openStore(stateDir);
     assert.equal(reopened.isEventCompleted(ROOM_ONE, EVENT_TWO), true);
-    assert.deepEqual([...reopened.getSessionMappings()], [[ROOM_ONE, "session-one"]]);
+    assert.deepEqual(
+      [...reopened.getSessionMappings()],
+      [[ROOM_ONE, "session-one"]],
+    );
   });
 });
 
@@ -211,29 +257,54 @@ void test("a compaction failure leaves the previous ledger intact and therefore 
         }
       },
     });
-    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] }]);
+    await store.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] },
+    ]);
     fail = true;
     await expectStateError(
-      () => store.compactCompletedEventIds([{ roomId: ROOM_ONE, eventIds: [EVENT_TWO] }]),
+      () =>
+        store.compactCompletedEventIds([
+          { roomId: ROOM_ONE, eventIds: [EVENT_TWO] },
+        ]),
       "write",
     );
-    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    assert.deepEqual(store.getSnapshot().completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO],
+    });
     const reopened = await openStore(stateDir);
-    assert.deepEqual(reopened.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+    assert.deepEqual(reopened.getSnapshot().completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO],
+    });
   });
 });
 
 void test("strict validation rejects cursor-era state, unknown fields, malformed IDs, and duplicates", async () => {
-  const cases: Array<{ readonly value: unknown; readonly category: BridgeStateError["category"] }> = [
+  const cases: Array<{
+    readonly value: unknown;
+    readonly category: BridgeStateError["category"];
+  }> = [
     { value: { ...validState(), extra: true }, category: "corrupt" },
     { value: validState({ initialized: "yes" }), category: "corrupt" },
-    { value: validState({ completedEventIds: { [ROOM_ONE]: [EVENT_ONE, EVENT_ONE] } }), category: "corrupt" },
-    { value: validState({ completedEventIds: { [ROOM_ONE]: ["not-an-event-id"] } }), category: "corrupt" },
+    {
+      value: validState({
+        completedEventIds: { [ROOM_ONE]: [EVENT_ONE, EVENT_ONE] },
+      }),
+      category: "corrupt",
+    },
+    {
+      value: validState({
+        completedEventIds: { [ROOM_ONE]: ["not-an-event-id"] },
+      }),
+      category: "corrupt",
+    },
     { value: validState({ cursor: "old-cursor" }), category: "corrupt" },
-    { value: "{\"schemaVersion\":12,\"identity\":", category: "corrupt" },
+    { value: '{"schemaVersion":12,"identity":', category: "corrupt" },
   ];
   for (const schemaVersion of [1, 2, 3, 10, 11, 13]) {
-    cases.push({ value: validState({ schemaVersion }), category: "unsupported-version" });
+    cases.push({
+      value: validState({ schemaVersion }),
+      category: "unsupported-version",
+    });
   }
 
   for (const { value, category } of cases) {
@@ -246,8 +317,14 @@ void test("strict validation rejects cursor-era state, unknown fields, malformed
 
 void test("state identity is bound without exposing identity or event values in errors", async () => {
   await withStateDir(async (stateDir) => {
-    await writeRawState(stateDir, validState({ identity: { ...identity, userId: "@other:example" } }));
-    const error = await expectStateError(() => openStore(stateDir), "identity-mismatch");
+    await writeRawState(
+      stateDir,
+      validState({ identity: { ...identity, userId: "@other:example" } }),
+    );
+    const error = await expectStateError(
+      () => openStore(stateDir),
+      "identity-mismatch",
+    );
     assert.equal(error.message.includes("@other:example"), false);
     assert.equal(error.message.includes(EVENT_ONE), false);
     assert.equal(error.message.includes("session-one"), false);
@@ -257,18 +334,33 @@ void test("state identity is bound without exposing identity or event values in 
 void test("session mutations are independent of ledger mutations and are serialized", async () => {
   await withStateDir(async (stateDir) => {
     const store = await openStore(stateDir);
-    const rooms = Array.from({ length: 12 }, (_, index) => `!room-${index}:example`);
-    await Promise.all(rooms.map((roomId, index) => store.setSessionMapping(roomId, `session-${index}`)));
-    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
+    const rooms = Array.from(
+      { length: 12 },
+      (_, index) => `!room-${index}:example`,
+    );
+    await Promise.all(
+      rooms.map((roomId, index) =>
+        store.setSessionMapping(roomId, `session-${index}`),
+      ),
+    );
+    await store.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE] },
+    ]);
     assert.equal(store.getSessionMappings().size, rooms.length);
     assert.equal(await store.removeSessionMapping(rooms[0]!), true);
     assert.deepEqual(
       await store.pruneSessionMappings([ROOM_TWO, rooms[1]!]),
-      rooms.filter((room) => room !== rooms[0] && room !== rooms[1] && room !== ROOM_TWO).sort((left, right) => left.localeCompare(right)),
+      rooms
+        .filter(
+          (room) => room !== rooms[0] && room !== rooms[1] && room !== ROOM_TWO,
+        )
+        .sort((left, right) => left.localeCompare(right)),
     );
     assert.equal(await store.discardSessionMappings(), true);
     assert.equal(store.getSnapshot().initialized, true);
-    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE] });
+    assert.deepEqual(store.getSnapshot().completedEventIds, {
+      [ROOM_ONE]: [EVENT_ONE],
+    });
   });
 });
 
@@ -278,10 +370,18 @@ void test("private path protections, temporary cleanup, and every atomic write f
     await writeFile(temporary, "raw token and event body");
     await chmod(temporary, 0o600);
     const store = await openStore(stateDir);
-    assert.equal((await readdir(stateDir)).includes(temporary.split("/").at(-1)!), false);
+    assert.equal(
+      (await readdir(stateDir)).includes(temporary.split("/").at(-1)!),
+      false,
+    );
     assert.equal(store.getSnapshot().initialized, false);
 
-    const points: readonly BridgeStateFaultPoint[] = ["write", "file-fsync", "rename", "directory-fsync"];
+    const points: readonly BridgeStateFaultPoint[] = [
+      "write",
+      "file-fsync",
+      "rename",
+      "directory-fsync",
+    ];
     for (const point of points) {
       let enabled = false;
       const faulted = await openStore(stateDir, {
@@ -311,7 +411,11 @@ void test("private path protections, temporary cleanup, and every atomic write f
 
 void test("state diagnostics expose only sanitized metadata", async () => {
   await withStateDir(async (stateDir) => {
-    const records: Array<{ readonly level: DiagnosticLevel; readonly event: string; readonly fields: DiagnosticFields }> = [];
+    const records: Array<{
+      readonly level: DiagnosticLevel;
+      readonly event: string;
+      readonly fields: DiagnosticFields;
+    }> = [];
     const diagnostics: DiagnosticSink = {
       emit(level, event, fields = {}) {
         records.push({ level, event, fields });
@@ -330,9 +434,14 @@ void test("state diagnostics expose only sanitized metadata", async () => {
         }
       },
     });
-    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE] }]);
+    await store.establishInitialBaseline([
+      { roomId: ROOM_ONE, eventIds: [EVENT_ONE] },
+    ]);
     enabled = true;
-    await expectStateError(() => store.markEventCompleted(ROOM_ONE, EVENT_TWO), "write");
+    await expectStateError(
+      () => store.markEventCompleted(ROOM_ONE, EVENT_TWO),
+      "write",
+    );
     const record = records.at(-1);
     assert.equal(record?.event, "private-state-failure");
     assert.equal(record?.fields.path, store.statePath);

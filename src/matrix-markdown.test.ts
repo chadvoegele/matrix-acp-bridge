@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  MATRIX_HTML_FORMAT,
-  markdownToMatrixHtml,
-} from "./matrix-markdown.js";
+import { MATRIX_HTML_FORMAT, markdownToMatrixHtml } from "./matrix-markdown.js";
 
 void test("renders Markdown as Matrix HTML", () => {
   assert.equal(markdownToMatrixHtml("_hi_"), "<p><em>hi</em></p>");

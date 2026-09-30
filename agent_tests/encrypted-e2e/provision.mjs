@@ -18,8 +18,12 @@ const bridgePassword = required("E2E_BRIDGE_PASSWORD");
 const senderPassword = required("E2E_SENDER_PASSWORD");
 const acpCwd = resolve(process.env.E2E_ACP_CWD ?? "/tmp");
 const acpCommand = JSON.parse(required("E2E_ACP_COMMAND"));
-const privateRoot = resolve(process.env.E2E_PRIVATE_ROOT ?? `${testDir}/private`);
-const environmentPath = resolve(process.env.E2E_ENVIRONMENT_FILE ?? defaultEnvironmentPath);
+const privateRoot = resolve(
+  process.env.E2E_PRIVATE_ROOT ?? `${testDir}/private`,
+);
+const environmentPath = resolve(
+  process.env.E2E_ENVIRONMENT_FILE ?? defaultEnvironmentPath,
+);
 
 await provisionEnvironment({
   homeserver,

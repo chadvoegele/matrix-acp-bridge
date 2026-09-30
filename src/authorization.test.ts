@@ -76,10 +76,7 @@ void test("accepts exact room/sender text and preserves the body exactly", () =>
 void test("uses one global sender allowlist and excludes the bridge identity", () => {
   assert.equal(
     reasonOf(
-      authorizeInboundEvent(
-        makeEvent({ roomId: OTHER_ROOM_ID }),
-        options(),
-      ),
+      authorizeInboundEvent(makeEvent({ roomId: OTHER_ROOM_ID }), options()),
     ),
     INBOUND_REJECTION_REASONS.roomNotAllowed,
   );
@@ -113,11 +110,17 @@ void test("rejects history, redacted, encrypted, state, and unsupported events",
     [{ stateKey: "" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
     [{ type: "m.room.member" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
     [{ type: "m.reaction" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
-    [{ type: "com.example.custom" }, INBOUND_REJECTION_REASONS.unsupportedEventType],
+    [
+      { type: "com.example.custom" },
+      INBOUND_REJECTION_REASONS.unsupportedEventType,
+    ],
   ];
 
   for (const [overrides, expectedReason] of cases) {
-    assert.equal(reasonOf(authorizeInboundEvent(makeEvent(overrides), options())), expectedReason);
+    assert.equal(
+      reasonOf(authorizeInboundEvent(makeEvent(overrides), options())),
+      expectedReason,
+    );
   }
 });
 
@@ -171,13 +174,14 @@ void test("rejects malformed event IDs and accepts historical and modern opaque 
     `$${"x".repeat(255)}`,
   ];
   for (const eventId of invalidIds) {
-    const event = eventId === undefined
-      ? (() => {
-          const missingEventId = makeEvent();
-          delete (missingEventId as { eventId?: string }).eventId;
-          return missingEventId;
-        })()
-      : makeEvent({ eventId });
+    const event =
+      eventId === undefined
+        ? (() => {
+            const missingEventId = makeEvent();
+            delete (missingEventId as { eventId?: string }).eventId;
+            return missingEventId;
+          })()
+        : makeEvent({ eventId });
     assert.equal(
       reasonOf(authorizeInboundEvent(event, options())),
       INBOUND_REJECTION_REASONS.invalidEventId,
@@ -226,7 +230,13 @@ void test("accepts only the exact in-reply-to relation shape", () => {
     assert.equal(
       reasonOf(
         authorizeInboundEvent(
-          makeEvent({ content: { msgtype: "m.text", body: "hello", "m.relates_to": relation } }),
+          makeEvent({
+            content: {
+              msgtype: "m.text",
+              body: "hello",
+              "m.relates_to": relation,
+            },
+          }),
           options(),
         ),
       ),
@@ -236,13 +246,13 @@ void test("accepts only the exact in-reply-to relation shape", () => {
 });
 
 void test("strips only the leading plain-text reply fallback", () => {
-  assert.equal(
-    stripReplyFallback("> quoted\n> second\n\nreply"),
-    "reply",
-  );
+  assert.equal(stripReplyFallback("> quoted\n> second\n\nreply"), "reply");
   assert.equal(stripReplyFallback("> quoted\nreply"), "reply");
   assert.equal(stripReplyFallback("> quoted\n\n\nreply"), "\nreply");
-  assert.equal(stripReplyFallback("  > not a fallback\nreply"), "  > not a fallback\nreply");
+  assert.equal(
+    stripReplyFallback("  > not a fallback\nreply"),
+    "  > not a fallback\nreply",
+  );
 
   const relationFree = authorizeInboundEvent(
     makeEvent({ content: { msgtype: "m.text", body: "> quote\n\nreply" } }),
@@ -255,7 +265,12 @@ void test("strips only the leading plain-text reply fallback", () => {
 void test("rejects empty normalized text and measures UTF-8 bytes after stripping", () => {
   for (const body of ["", " \t\n"]) {
     assert.equal(
-      reasonOf(authorizeInboundEvent(makeEvent({ content: { msgtype: "m.text", body } }), options())),
+      reasonOf(
+        authorizeInboundEvent(
+          makeEvent({ content: { msgtype: "m.text", body } }),
+          options(),
+        ),
+      ),
       INBOUND_REJECTION_REASONS.emptyBody,
     );
   }
@@ -284,7 +299,9 @@ void test("rejects empty normalized text and measures UTF-8 bytes after strippin
   assert.equal(twoBytes.accepted, true);
 
   const oversized = authorizeInboundEvent(
-    makeEvent({ content: { msgtype: "m.text", body: "> very long quote\n\né" } }),
+    makeEvent({
+      content: { msgtype: "m.text", body: "> very long quote\n\né" },
+    }),
     options({ maxInputBytes: 1 }),
   );
   assert.equal(oversized.accepted, false);
@@ -314,7 +331,9 @@ void test("diagnostics contain only metadata and report suppressed counts", () =
   authorizer.authorize(invalid);
   assert.equal(lines.length, 6);
 
-  const records = lines.map((line) => JSON.parse(line) as { fields: Record<string, unknown> });
+  const records = lines.map(
+    (line) => JSON.parse(line) as { fields: Record<string, unknown> },
+  );
   assert.deepEqual(records[5]!.fields, {
     eventId: "$event:example.org",
     reason: INBOUND_REJECTION_REASONS.senderNotAllowed,

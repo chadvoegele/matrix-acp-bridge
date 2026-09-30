@@ -36,6 +36,7 @@ export interface CryptoVerificationOperation {
 
 export class CryptoVerificationError extends Error {
   readonly code = "crypto_verification" as const;
+
   readonly reason:
     | "target_rejected"
     | "method_rejected"
@@ -73,27 +74,47 @@ export interface CryptoVerificationOperationOptions {
  */
 export class MatrixCryptoVerificationOperation implements CryptoVerificationOperation {
   readonly #crypto: MatrixCryptoVerificationAdapter;
+
   readonly #ttyFactory: OperatorTtyFactory;
+
   readonly #timeoutMs: number;
+
   readonly #clock: Clock;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #stateFaultInjector: CryptoStateFaultInjector | undefined;
 
   #tty: OperatorTty | undefined;
+
   #request: CryptoVerificationRequestHandle | undefined;
+
   #verifier: CryptoSasVerifier | undefined;
+
   #localDeviceId: string | undefined;
+
   #targetDeviceId: string | undefined;
+
   #showPromise: Promise<void> | undefined;
+
   #cancelled = false;
+
   #cancelRequested = false;
+
   #completed = false;
+
   #unsubscribeIncoming: Unsubscribe | undefined;
+
   #targetChangeUnsubscribe: Unsubscribe | undefined;
+
   readonly #requestChangeUnsubscribes = new Set<Unsubscribe>();
+
   readonly #knownRequests = new Set<CryptoVerificationRequestHandle>();
+
   readonly #cancelledRequests = new WeakSet<CryptoVerificationRequestHandle>();
+
   #startedVerification = false;
+
   #cancelPromise: Promise<void> | undefined;
 
   constructor(options: CryptoVerificationOperationOptions) {
@@ -105,15 +126,21 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     this.#stateFaultInjector = options.stateFaultInjector;
   }
 
-  async run(request: CryptoVerificationRequest): Promise<CryptoVerificationResult> {
+  async run(
+    request: CryptoVerificationRequest,
+  ): Promise<CryptoVerificationResult> {
     if (request.targetDeviceId === request.identity.deviceId) {
       throw new CryptoVerificationError("target_rejected");
     }
     const store = await openCryptoStateStore({
       stateDir: dirname(request.state.manifestPath),
       identity: request.identity,
-      ...(this.#diagnostics === undefined ? {} : { diagnostics: this.#diagnostics }),
-      ...(this.#stateFaultInjector === undefined ? {} : { faultInjector: this.#stateFaultInjector }),
+      ...(this.#diagnostics === undefined
+        ? {}
+        : { diagnostics: this.#diagnostics }),
+      ...(this.#stateFaultInjector === undefined
+        ? {}
+        : { faultInjector: this.#stateFaultInjector }),
     });
 
     // Restore and re-check the exact local identity before any verification
@@ -131,7 +158,12 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
         return;
       }
       void this.cancel();
-      rejectTimeout(new CryptoVerificationError("timeout", "Matrix SAS verification timed out"));
+      rejectTimeout(
+        new CryptoVerificationError(
+          "timeout",
+          "Matrix SAS verification timed out",
+        ),
+      );
     }, this.#timeoutMs);
 
     const operation = this.#runFlow(request);
@@ -207,35 +239,31 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     if (this.#cancelled) {
       throw new CryptoVerificationError("cancelled");
     }
-    this.#unsubscribeIncoming = this.#crypto.onVerificationRequest((incoming) => {
-      const sameUser = incoming.userId === request.identity.userId;
-      const sameTarget = sameUser && incoming.deviceId === request.targetDeviceId;
-      // Rust crypto emits the same outgoing request through the generic event
-      // as well as returning it from requestDeviceVerification(). The
-      // explicitly returned handle is authoritative because the adapter binds
-      // it to the requested target while Rust may expose an empty device ID
-      // during the Requested phase. Rust can also report initiatedByMe=false
-      // for this generic alias, so an exact-target event is never accepted or
-      // canceled: an independently initiated request is ignored, too, and
-      // therefore cannot become the active transaction.
-      if (sameTarget) {
-        return;
-      }
-      if (
-        incoming.initiatedByMe &&
-        sameUser &&
-        incoming.deviceId === ""
-      ) {
-        return;
-      }
-      if (
-        !sameUser ||
-        incoming.deviceId !== request.targetDeviceId
-      ) {
-        this.#rememberRequest(incoming);
-        void this.#cancelRequest(incoming);
-      }
-    });
+    this.#unsubscribeIncoming = this.#crypto.onVerificationRequest(
+      (incoming) => {
+        const sameUser = incoming.userId === request.identity.userId;
+        const sameTarget =
+          sameUser && incoming.deviceId === request.targetDeviceId;
+        // Rust crypto emits the same outgoing request through the generic event
+        // as well as returning it from requestDeviceVerification(). The
+        // explicitly returned handle is authoritative because the adapter binds
+        // it to the requested target while Rust may expose an empty device ID
+        // during the Requested phase. Rust can also report initiatedByMe=false
+        // for this generic alias, so an exact-target event is never accepted or
+        // canceled: an independently initiated request is ignored, too, and
+        // therefore cannot become the active transaction.
+        if (sameTarget) {
+          return;
+        }
+        if (incoming.initiatedByMe && sameUser && incoming.deviceId === "") {
+          return;
+        }
+        if (!sameUser || incoming.deviceId !== request.targetDeviceId) {
+          this.#rememberRequest(incoming);
+          void this.#cancelRequest(incoming);
+        }
+      },
+    );
 
     let selected: CryptoVerificationRequestHandle;
     try {
@@ -289,7 +317,10 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
 
     let verifier = selected.verifier;
     if (verifier === undefined) {
-      if (this.#startedVerification || this.#requestPhase(selected) === "started") {
+      if (
+        this.#startedVerification ||
+        this.#requestPhase(selected) === "started"
+      ) {
         throw new CryptoVerificationError("protocol");
       }
       this.#startedVerification = true;
@@ -338,7 +369,8 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
   #supportsSas(request: CryptoVerificationRequestHandle): boolean {
     try {
       return (
-        (request.chosenMethod === undefined || request.chosenMethod === SAS_VERIFICATION_METHOD) &&
+        (request.chosenMethod === undefined ||
+          request.chosenMethod === SAS_VERIFICATION_METHOD) &&
         request.supportsMethod(SAS_VERIFICATION_METHOD)
       );
     } catch {
@@ -412,7 +444,9 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     });
   }
 
-  #requestPhase(request: CryptoVerificationRequestHandle): CryptoVerificationRequestHandle["phase"] {
+  #requestPhase(
+    request: CryptoVerificationRequestHandle,
+  ): CryptoVerificationRequestHandle["phase"] {
     try {
       return request.phase;
     } catch {
@@ -480,7 +514,9 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     if (this.#tty === undefined) {
       throw new CryptoVerificationError("tty");
     }
-    const emoji = sas.emoji?.map(([symbol, name]) => `${symbol} (${name})`).join(" ");
+    const emoji = sas.emoji
+      ?.map(([symbol, name]) => `${symbol} (${name})`)
+      .join(" ");
     const decimal = sas.decimal?.join(" ");
     if (emoji === undefined && decimal === undefined) {
       sas.cancel();
@@ -507,7 +543,9 @@ export class MatrixCryptoVerificationOperation implements CryptoVerificationOper
     throw new CryptoVerificationError("operator_rejected");
   }
 
-  async #cancelRequest(request: CryptoVerificationRequestHandle): Promise<void> {
+  async #cancelRequest(
+    request: CryptoVerificationRequestHandle,
+  ): Promise<void> {
     if (this.#cancelledRequests.has(request)) {
       return;
     }

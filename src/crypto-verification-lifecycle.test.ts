@@ -4,10 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ensureCryptoDatabaseDirectory, openCryptoStateStore } from "./crypto-state.js";
+import {
+  ensureCryptoDatabaseDirectory,
+  openCryptoStateStore,
+} from "./crypto-state.js";
 import { CryptoVerificationLifecycle } from "./main.js";
 import type { DaemonProcessLike } from "./main.js";
-import type { BridgeConfig, LoadedConfiguration, StateLockLike } from "./config.js";
+import type {
+  BridgeConfig,
+  LoadedConfiguration,
+  StateLockLike,
+} from "./config.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
 import type { Unsubscribe } from "./cancellation.js";
 import type {
@@ -38,11 +45,21 @@ const KEYS: CryptoDeviceKeyFingerprints = {
 };
 
 const SILENT_DIAGNOSTICS = {
-  emit() { /* hermetic test sink */ },
-  debug() { /* hermetic test sink */ },
-  info() { /* hermetic test sink */ },
-  warn() { /* hermetic test sink */ },
-  error() { /* hermetic test sink */ },
+  emit() {
+    /* hermetic test sink */
+  },
+  debug() {
+    /* hermetic test sink */
+  },
+  info() {
+    /* hermetic test sink */
+  },
+  warn() {
+    /* hermetic test sink */
+  },
+  error() {
+    /* hermetic test sink */
+  },
 } as const;
 
 const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
@@ -72,6 +89,7 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
 
 class Lock implements StateLockLike {
   readonly lockPath: string;
+
   released = false;
 
   constructor(stateDir: string) {
@@ -85,6 +103,7 @@ class Lock implements StateLockLike {
 
 class Tty implements OperatorTty {
   readonly paths: string[];
+
   readonly pending: boolean;
 
   constructor(paths: string[], pending = false) {
@@ -110,8 +129,11 @@ class Tty implements OperatorTty {
 
 class Verifier implements CryptoSasVerifier {
   readonly show = new Set<(sas: CryptoSasCallbacks) => void>();
+
   readonly cancelled = new Set<() => void>();
+
   resolve: (() => void) | undefined;
+
   reject: ((error: Error) => void) | undefined;
 
   onShowSas(listener: (sas: CryptoSasCallbacks) => void): Unsubscribe {
@@ -152,12 +174,19 @@ class Verifier implements CryptoSasVerifier {
 
 class Request implements CryptoVerificationRequestHandle {
   readonly userId = IDENTITY.userId;
+
   readonly deviceId = "TRUSTED01";
+
   readonly initiatedByMe = true;
+
   readonly phase: CryptoVerificationRequestPhase = "ready";
+
   readonly accepting = false;
+
   readonly chosenMethod = undefined;
+
   readonly verifier: CryptoSasVerifier | undefined;
+
   readonly startVerifier: Verifier;
 
   constructor(verifier: Verifier) {
@@ -187,9 +216,13 @@ class Request implements CryptoVerificationRequestHandle {
 
 class Crypto implements MatrixCryptoVerificationAdapter {
   readonly request: Request;
+
   readonly refreshAction: () => Promise<boolean>;
 
-  constructor(request: Request, refreshAction: () => Promise<boolean> = async () => true) {
+  constructor(
+    request: Request,
+    refreshAction: () => Promise<boolean> = async () => true,
+  ) {
     this.request = request;
     this.refreshAction = refreshAction;
   }
@@ -210,7 +243,9 @@ class Crypto implements MatrixCryptoVerificationAdapter {
     return this.refreshAction();
   }
 
-  onVerificationRequest(_listener: (request: CryptoVerificationRequestHandle) => void): Unsubscribe {
+  onVerificationRequest(
+    _listener: (request: CryptoVerificationRequestHandle) => void,
+  ): Unsubscribe {
     return () => {};
   }
 
@@ -221,10 +256,15 @@ class Crypto implements MatrixCryptoVerificationAdapter {
 
 class Matrix implements MatrixClientAdapter {
   readonly crypto: Crypto;
+
   readonly fatal = new Set<(error: FatalError) => void>();
+
   startOptions: MatrixSyncStartOptions | undefined;
+
   started = false;
+
   stopped = false;
+
   initialized = false;
 
   constructor(crypto: Crypto) {
@@ -256,7 +296,9 @@ class Matrix implements MatrixClientAdapter {
     return () => {};
   }
 
-  onSyncBatch(_listener: (batch: MatrixSyncBatch) => void | Promise<void>): Unsubscribe {
+  onSyncBatch(
+    _listener: (batch: MatrixSyncBatch) => void | Promise<void>,
+  ): Unsubscribe {
     return () => {};
   }
 
@@ -280,6 +322,7 @@ class Matrix implements MatrixClientAdapter {
 
 class Process implements DaemonProcessLike {
   readonly listeners = new Map<string, () => void>();
+
   readonly exits: number[] = [];
 
   on(event: "SIGINT" | "SIGTERM", listener: () => void): void {
@@ -298,17 +341,31 @@ class Process implements DaemonProcessLike {
   }
 }
 
-async function state(): Promise<{ readonly stateDir: string; readonly lock: Lock; readonly cleanup: () => Promise<void> }> {
-  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-verification-lifecycle-"));
+async function state(): Promise<{
+  readonly stateDir: string;
+  readonly lock: Lock;
+  readonly cleanup: () => Promise<void>;
+}> {
+  const stateDir = await mkdtemp(
+    join(tmpdir(), "matrix-acp-verification-lifecycle-"),
+  );
   await ensureCryptoDatabaseDirectory(stateDir);
   const store = await openCryptoStateStore({ stateDir, identity: IDENTITY });
   await store.recordBootstrap(KEYS);
   const lock = new Lock(stateDir);
-  return { stateDir, lock, cleanup: () => rm(stateDir, { recursive: true, force: true }) };
+  return {
+    stateDir,
+    lock,
+    cleanup: () => rm(stateDir, { recursive: true, force: true }),
+  };
 }
 
 function loaded(stateDir: string, lock: Lock): LoadedConfiguration {
-  return { config: { stateDir, ...CONFIG_BASE }, accessToken: "token", stateLock: lock };
+  return {
+    config: { stateDir, ...CONFIG_BASE },
+    accessToken: "token",
+    stateLock: lock,
+  };
 }
 
 void test("verification lifecycle starts Matrix intake closed, never constructs ACP, and completes cleanly", async () => {
@@ -345,7 +402,9 @@ void test("verification lifecycle starts Matrix intake closed, never constructs 
     assert.equal(matrix.stopped, true);
     assert.equal(fixture.lock.released, true);
     assert.deepEqual(tty.paths, ["/dev/tty"]);
-    const manifest = JSON.parse(await readFile(join(fixture.stateDir, "crypto-state.json"), "utf8")) as {
+    const manifest = JSON.parse(
+      await readFile(join(fixture.stateDir, "crypto-state.json"), "utf8"),
+    ) as {
       readonly sasVerified: boolean;
     };
     assert.equal(manifest.sasVerified, true);
@@ -355,7 +414,9 @@ void test("verification lifecycle starts Matrix intake closed, never constructs 
 });
 
 void test("verification rejects missing established crypto state before Rust initialization", async () => {
-  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-verification-missing-crypto-"));
+  const stateDir = await mkdtemp(
+    join(tmpdir(), "matrix-acp-verification-missing-crypto-"),
+  );
   try {
     const lock = new Lock(stateDir);
     let matrixCreated = false;
@@ -367,7 +428,9 @@ void test("verification rejects missing established crypto state before Rust ini
         diagnostics: SILENT_DIAGNOSTICS,
         createMatrixClient: () => {
           matrixCreated = true;
-          throw new Error("Matrix must not be created for missing crypto state");
+          throw new Error(
+            "Matrix must not be created for missing crypto state",
+          );
         },
       },
     }).run();
@@ -396,12 +459,11 @@ void test("verification failure diagnostics emit only the safe reason enum", asy
     error() {},
   };
   try {
-    const matrix = new Matrix(new Crypto(
-      new Request(new Verifier()),
-      async () => {
+    const matrix = new Matrix(
+      new Crypto(new Request(new Verifier()), async () => {
         throw new Error("raw SDK failure with private identity text");
-      },
-    ));
+      }),
+    );
     const result = await new CryptoVerificationLifecycle({
       loadedConfiguration: loaded(fixture.stateDir, fixture.lock),
       targetDeviceId: "TRUSTED01",
@@ -414,7 +476,9 @@ void test("verification failure diagnostics emit only the safe reason enum", asy
     }).run();
 
     assert.equal(result, 1);
-    const failure = records.find((record) => record.event === "crypto-verification-failed");
+    const failure = records.find(
+      (record) => record.event === "crypto-verification-failed",
+    );
     assert.deepEqual(failure?.fields, { reason: "protocol" });
     assert.equal(JSON.stringify(records).includes("raw SDK failure"), false);
   } finally {
@@ -439,7 +503,11 @@ void test("first signal cancels verification and second signal uses the conventi
       },
     });
     const pending = lifecycle.run();
-    for (let attempt = 0; attempt < 20 && verifier.show.size === 0; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 20 && verifier.show.size === 0;
+      attempt += 1
+    ) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     lifecycle.receiveSignal("SIGTERM");

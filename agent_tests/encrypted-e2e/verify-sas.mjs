@@ -64,7 +64,9 @@ function safeFailure(side, phase, reason, detail) {
   const safeSide = side === "bridge" || side === "helper" ? side : "unknown";
   const safePhase = safeValue(phase, safePhases);
   const safeReason = safeValue(reason, safeReasons);
-  return new Error(`SAS verification failed on ${safeSide} during ${safePhase} (${safeReason})${detail === undefined ? "" : `; ${detail}`}`);
+  return new Error(
+    `SAS verification failed on ${safeSide} during ${safePhase} (${safeReason})${detail === undefined ? "" : `; ${detail}`}`,
+  );
 }
 
 function shellQuote(value) {
@@ -81,17 +83,26 @@ function bridgeCommand() {
     "verify",
     "--device",
     environment.helper.deviceId,
-  ].map((argument) => shellQuote(argument)).join(" ");
+  ]
+    .map((argument) => shellQuote(argument))
+    .join(" ");
 }
 
 function stop(child) {
-  if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+  if (
+    child !== undefined &&
+    child.exitCode === null &&
+    child.signalCode === null
+  ) {
     child.kill("SIGTERM");
   }
 }
 
 const result = new Promise((resolve, reject) => {
-  const timer = setTimeout(() => finish(new Error("SAS verification timed out")), timeoutMs);
+  const timer = setTimeout(
+    () => finish(new Error("SAS verification timed out")),
+    timeoutMs,
+  );
 
   function finish(error) {
     if (settled) return;
@@ -104,8 +115,16 @@ const result = new Promise((resolve, reject) => {
   function check() {
     if (settled) return;
     if (helperReady && bridge === undefined) startBridge();
-    if (helperSas !== undefined && bridgeDecimal !== undefined && bridgeEmoji !== undefined && !confirmed) {
-      if (helperSas.decimal !== bridgeDecimal || helperSas.emoji !== bridgeEmoji) {
+    if (
+      helperSas !== undefined &&
+      bridgeDecimal !== undefined &&
+      bridgeEmoji !== undefined &&
+      !confirmed
+    ) {
+      if (
+        helperSas.decimal !== bridgeDecimal ||
+        helperSas.emoji !== bridgeEmoji
+      ) {
         finish(safeFailure("bridge", "sas-confirmation", "protocol"));
         return;
       }
@@ -120,35 +139,64 @@ const result = new Promise((resolve, reject) => {
 
   function startBridge() {
     bridgePhase = "bridge-started";
-    bridge = spawn("script", ["-q", "-e", "-f", "-c", bridgeCommand(), "/dev/null"], {
-      cwd: repoRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    bridge = spawn(
+      "script",
+      ["-q", "-e", "-f", "-c", bridgeCommand(), "/dev/null"],
+      {
+        cwd: repoRoot,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     bridge.stdout.on("data", (chunk) => {
       bridgeOutput = `${bridgeOutput}${chunk.toString("utf8")}`.slice(-65_536);
       bridgeDiagnostics.accept(chunk);
-      const decimal = bridgeOutput.match(/SAS decimal: ([0-9]+ [0-9]+ [0-9]+)/u);
+      const decimal = bridgeOutput.match(
+        /SAS decimal: ([0-9]+ [0-9]+ [0-9]+)/u,
+      );
       const emoji = bridgeOutput.match(/SAS emoji: (.+?)\r?\n/u);
       if (decimal !== null) bridgeDecimal = decimal[1];
       if (emoji !== null) bridgeEmoji = emoji[1]?.replace(/\r/gu, "");
       check();
     });
-    bridge.stderr.on("data", (chunk) => { bridgeDiagnostics.stderrSeen ||= chunk.length > 0; });
-    bridge.once("error", () => finish(safeFailure("bridge", bridgePhase, "unknown",
-      `spawn error; ${bridgeDiagnostics.summary()}`)));
+    bridge.stderr.on("data", (chunk) => {
+      bridgeDiagnostics.stderrSeen ||= chunk.length > 0;
+    });
+    bridge.once("error", () =>
+      finish(
+        safeFailure(
+          "bridge",
+          bridgePhase,
+          "unknown",
+          `spawn error; ${bridgeDiagnostics.summary()}`,
+        ),
+      ),
+    );
     bridge.once("exit", (code, signal) => {
       bridgeExit = code;
       bridgeDiagnostics.finish();
-      if (code === 0) {check();}
-      else {finish(safeFailure("bridge", bridgePhase, bridgeDiagnostics.reason,
-        bridgeDiagnostics.summary(code, signal)));}
+      if (code === 0) {
+        check();
+      } else {
+        finish(
+          safeFailure(
+            "bridge",
+            bridgePhase,
+            bridgeDiagnostics.reason,
+            bridgeDiagnostics.summary(code, signal),
+          ),
+        );
+      }
     });
   }
 
-  helper = spawn(process.execPath, [join(testDir, "sas-helper.mjs"), environmentPath], {
-    cwd: repoRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  helper = spawn(
+    process.execPath,
+    [join(testDir, "sas-helper.mjs"), environmentPath],
+    {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   helper.stdout.on("data", (chunk) => {
     helperLines += chunk.toString("utf8");
     while (helperLines.includes("\n")) {
@@ -163,50 +211,61 @@ const result = new Promise((resolve, reject) => {
         return;
       }
       switch (event.event) {
-      case "ready": {
-        helperReady = true;
-        helperPhase = "request-received";
+        case "ready": {
+          helperReady = true;
+          helperPhase = "request-received";
 
-      break;
-      }
-      case "sas": {
-        helperSas = event;
-        helperPhase = "sas-shown";
+          break;
+        }
+        case "sas": {
+          helperSas = event;
+          helperPhase = "sas-shown";
 
-      break;
-      }
-      case "verified": {
-        helperVerified = true;
-        helperPhase = "verified";
+          break;
+        }
+        case "verified": {
+          helperVerified = true;
+          helperPhase = "verified";
 
-      break;
-      }
-      case "verification-attempt-failed": {
-        helperPhase = safeValue(event.phase, safePhases, "helper-verification");
-        finish(safeFailure("helper", helperPhase, event.reason));
-        return;
-      }
-      case "error":
-      case "cancelled": {
-        finish(safeFailure("helper", helperPhase, event.reason));
-        return;
-      }
-      // No default
+          break;
+        }
+        case "verification-attempt-failed": {
+          helperPhase = safeValue(
+            event.phase,
+            safePhases,
+            "helper-verification",
+          );
+          finish(safeFailure("helper", helperPhase, event.reason));
+          return;
+        }
+        case "error":
+        case "cancelled": {
+          finish(safeFailure("helper", helperPhase, event.reason));
+          return;
+        }
+        // No default
       }
       check();
     }
   });
   helper.stderr.resume();
-  helper.once("error", () => finish(safeFailure("helper", helperPhase, "protocol")));
+  helper.once("error", () =>
+    finish(safeFailure("helper", helperPhase, "protocol")),
+  );
   helper.once("exit", (_code, _signal) => {
-    if (helperVerified) {check();}
-    else {finish(safeFailure("helper", helperPhase, "verification-failed"));}
+    if (helperVerified) {
+      check();
+    } else {
+      finish(safeFailure("helper", helperPhase, "verification-failed"));
+    }
   });
 });
 
 try {
   await result;
-  process.stdout.write("SAS verification completed; emoji and decimal values matched.\n");
+  process.stdout.write(
+    "SAS verification completed; emoji and decimal values matched.\n",
+  );
 } finally {
   stop(bridge);
   stop(helper);

@@ -33,17 +33,17 @@ function render(
 }
 
 void test("renders every response kind with exact fallback and status text", () => {
-  const cases: Array<[
-    RenderableResponse,
-    string,
-    string,
-  ]> = [
+  const cases: Array<[RenderableResponse, string, string]> = [
     [{ kind: "empty" }, "empty", RESPONSE_TEXT.empty],
     [{ kind: "busy" }, "busy", RESPONSE_TEXT.busy],
     [{ kind: "oversized" }, "oversized", RESPONSE_TEXT.oversized],
     [{ kind: "timeout" }, "timeout", RESPONSE_TEXT.timeout],
     [{ kind: "max_tokens" }, "max_tokens", RESPONSE_TEXT.max_tokens],
-    [{ kind: "max_turn_requests" }, "max_turn_requests", RESPONSE_TEXT.max_turn_requests],
+    [
+      { kind: "max_turn_requests" },
+      "max_turn_requests",
+      RESPONSE_TEXT.max_turn_requests,
+    ],
     [{ kind: "refusal" }, "refusal", RESPONSE_TEXT.refusal],
     [{ kind: "cancelled" }, "cancelled", RESPONSE_TEXT.cancelled],
     [{ kind: "error" }, "error", RESPONSE_TEXT.error],
@@ -67,7 +67,11 @@ void test("renders every response kind with exact fallback and status text", () 
     );
   }
 
-  const successful = render({ kind: "turn", stopReason: "end_turn", text: "answer" });
+  const successful = render({
+    kind: "turn",
+    stopReason: "end_turn",
+    text: "answer",
+  });
   assert.equal(successful[0]?.responseKind, "agent");
   assert.equal(successful[0]?.content.body, "answer");
 
@@ -75,7 +79,11 @@ void test("renders every response kind with exact fallback and status text", () 
   assert.equal(emptyTurn[0]?.responseKind, "empty");
   assert.equal(emptyTurn[0]?.content.body, RESPONSE_TEXT.empty);
 
-  const methodError = render({ kind: "method_error", operation: "session_prompt", fatal: false });
+  const methodError = render({
+    kind: "method_error",
+    operation: "session_prompt",
+    fatal: false,
+  });
   assert.equal(methodError[0]?.responseKind, "error");
   assert.equal(methodError[0]?.content.body, RESPONSE_TEXT.error);
 });
@@ -126,10 +134,22 @@ function removePrefix(body: string): string {
   return body.replace(/^\[\d+\/\d+\]\n/u, "");
 }
 
-function assertBoundedAndReconstruct(parts: readonly RenderedMatrixPart[], original: string, maxBytes: number): void {
+function assertBoundedAndReconstruct(
+  parts: readonly RenderedMatrixPart[],
+  original: string,
+  maxBytes: number,
+): void {
   assert.ok(parts.length > 1);
-  assert.equal(parts.every((part) => Buffer.byteLength(part.content.body, "utf8") <= maxBytes), true);
-  assert.equal(parts.map((part) => removePrefix(part.content.body)).join(""), original);
+  assert.equal(
+    parts.every(
+      (part) => Buffer.byteLength(part.content.body, "utf8") <= maxBytes,
+    ),
+    true,
+  );
+  assert.equal(
+    parts.map((part) => removePrefix(part.content.body)).join(""),
+    original,
+  );
   assert.equal(new Set(parts.map((part) => part.partCount)).size, 1);
   assert.deepEqual(
     parts.map((part) => part.partNumber),

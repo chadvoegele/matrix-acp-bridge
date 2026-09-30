@@ -10,7 +10,9 @@ interface FakeTimer {
 /** A deterministic timer implementation for unit tests. */
 export class FakeClock implements Clock {
   #now: number;
+
   #nextId = 0;
+
   #timers = new Set<FakeTimer>();
 
   constructor(startAt = 0) {
@@ -23,7 +25,9 @@ export class FakeClock implements Clock {
 
   setTimeout(callback: () => void, delayMs: number): TimerHandle {
     if (!Number.isFinite(delayMs) || delayMs < 0) {
-      throw new RangeError("fake timer delay must be a finite non-negative number");
+      throw new RangeError(
+        "fake timer delay must be a finite non-negative number",
+      );
     }
 
     const timer: FakeTimer = {
@@ -46,7 +50,9 @@ export class FakeClock implements Clock {
 
   advanceBy(milliseconds: number): void {
     if (!Number.isFinite(milliseconds) || milliseconds < 0) {
-      throw new RangeError("fake clock advance must be a finite non-negative number");
+      throw new RangeError(
+        "fake clock advance must be a finite non-negative number",
+      );
     }
 
     const target = this.#now + milliseconds;

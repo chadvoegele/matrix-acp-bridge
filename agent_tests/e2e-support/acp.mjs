@@ -6,7 +6,11 @@ import { repoRoot } from "./common.mjs";
 
 export function childExit(child, name, allowed = [0]) {
   const finish = (code, signal, resolve, reject) => {
-    if (allowed.includes(code) || (signal === "SIGTERM" && allowed.includes(143))) resolve(code);
+    if (
+      allowed.includes(code) ||
+      (signal === "SIGTERM" && allowed.includes(143))
+    )
+      resolve(code);
     else reject(new Error(`${name} exited with ${code ?? signal}`));
   };
   return new Promise((resolve, reject) => {
@@ -27,7 +31,11 @@ export function jsonLineTap(inspect) {
       const lines = pending.split("\n");
       pending = lines.pop() ?? "";
       for (const line of lines) {
-        try { inspect(JSON.parse(line)); } catch { /* Preserve malformed ACP frames unchanged. */ }
+        try {
+          inspect(JSON.parse(line));
+        } catch {
+          /* Preserve malformed ACP frames unchanged. */
+        }
       }
       callback(null, chunk);
     },
@@ -35,18 +43,35 @@ export function jsonLineTap(inspect) {
 }
 
 export function parseDiagnostics(text) {
-  return text.split("\n").filter(Boolean).flatMap((line) => {
-    try { return [JSON.parse(line)]; } catch { return []; }
-  });
+  return text
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
 }
 
-export async function startBridgePair(environment, { onOutbound, onInbound } = {}) {
+export async function startBridgePair(
+  environment,
+  { onOutbound, onInbound } = {},
+) {
   const [acpProgram, ...acpArguments] = environment.acpCommand;
-  const acp = spawn(acpProgram, acpArguments, { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] });
-  const bridge = spawn(process.execPath, [join(repoRoot, "dist/main.js"), "--config", environment.bridge.configFile], {
+  const acp = spawn(acpProgram, acpArguments, {
     cwd: repoRoot,
     stdio: ["pipe", "pipe", "pipe"],
   });
+  const bridge = spawn(
+    process.execPath,
+    [join(repoRoot, "dist/main.js"), "--config", environment.bridge.configFile],
+    {
+      cwd: repoRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   const outbound = jsonLineTap(onOutbound ?? (() => {}));
   const inbound = jsonLineTap(onInbound ?? (() => {}));
   bridge.stdout.pipe(outbound).pipe(acp.stdin);
@@ -54,8 +79,12 @@ export async function startBridgePair(environment, { onOutbound, onInbound } = {
 
   let bridgeDiagnostics = "";
   let acpDiagnostics = "";
-  bridge.stderr.on("data", (chunk) => { bridgeDiagnostics += chunk.toString("utf8"); });
-  acp.stderr.on("data", (chunk) => { acpDiagnostics += chunk.toString("utf8"); });
+  bridge.stderr.on("data", (chunk) => {
+    bridgeDiagnostics += chunk.toString("utf8");
+  });
+  acp.stderr.on("data", (chunk) => {
+    acpDiagnostics += chunk.toString("utf8");
+  });
   const pair = {
     acp,
     bridge,
@@ -72,20 +101,33 @@ export async function startBridgePair(environment, { onOutbound, onInbound } = {
 }
 
 export async function stopBridgePair(pair) {
-  if (pair.bridge.exitCode === null && pair.bridge.signalCode === null) pair.bridge.kill("SIGTERM");
+  if (pair.bridge.exitCode === null && pair.bridge.signalCode === null)
+    pair.bridge.kill("SIGTERM");
   await childExit(pair.bridge, "bridge");
-  if (pair.acp.exitCode === null && pair.acp.signalCode === null) pair.acp.kill("SIGTERM");
+  if (pair.acp.exitCode === null && pair.acp.signalCode === null)
+    pair.acp.kill("SIGTERM");
   await childExit(pair.acp, "ACP proxy", [0, 143]);
 }
 
-export async function runSender({ environmentPath, senderPath, args, forwardStderr = true }) {
-  const child = spawn(process.execPath, [senderPath, "--environment", environmentPath, ...args], {
-    cwd: repoRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+export async function runSender({
+  environmentPath,
+  senderPath,
+  args,
+  forwardStderr = true,
+}) {
+  const child = spawn(
+    process.execPath,
+    [senderPath, "--environment", environmentPath, ...args],
+    {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   let stdout = "";
   let stderr = "";
-  child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString("utf8");
+  });
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString("utf8");
     if (forwardStderr) process.stderr.write(chunk);

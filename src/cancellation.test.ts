@@ -6,7 +6,9 @@ import { createCancellationController } from "./cancellation.js";
 void test("cancellation notifies listeners once and supports unsubscribe", () => {
   const cancellation = createCancellationController();
   const reasons: Array<string | undefined> = [];
-  const unsubscribe = cancellation.signal.onCancel((reason) => reasons.push(reason));
+  const unsubscribe = cancellation.signal.onCancel((reason) =>
+    reasons.push(reason),
+  );
   cancellation.signal.onCancel((reason) => reasons.push(reason));
   unsubscribe();
 

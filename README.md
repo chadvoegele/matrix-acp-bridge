@@ -28,8 +28,27 @@ npm ci                         # installs exactly package-lock.json
 npm run build                  # cleans and emits production files to dist/
 npm run typecheck              # checks production and test sources without emitting
 npm test                       # builds dist/ and dist-test/ before running tests
-npm run check                  # final typecheck and test gate
+npm run format                 # fix spacing and format the repository
+npm run format:check           # check formatting and lint without changing files
+npm run check                  # formatting, lint, typecheck, and test gate
 ```
+
+## Code formatting
+
+We use [Prettier](https://prettier.io/) with its standard defaults, configured in
+`.prettierrc.json`: two-space indentation, double quotes, semicolons, and an
+80-column print width. ESLint's Stylistic rules also require blank lines around
+function declarations and exports, and between class members. `eslint-config-prettier`
+disables conflicting lint rules.
+
+Run `npm run format` before committing. It applies ESLint fixes, then formats all
+Prettier-supported source, configuration, and documentation files. Generated
+output, dependencies, local environment files, and the npm-managed lockfile are
+excluded by `.prettierignore`. Shell scripts and TOML are not supported by Prettier
+and remain unchanged.
+
+`npm run format:check` checks both formatting and lint without modifying files.
+CI runs it through `npm run check` on every push and pull request.
 
 ## ACP Connection
 

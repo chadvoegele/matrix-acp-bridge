@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 
 function hasOwn(value, property) {
-  return value !== null && typeof value === "object" && Object.hasOwn(value, property);
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Object.hasOwn(value, property)
+  );
 }
 
 function normalizeLoadOutcome(message) {
@@ -34,11 +38,18 @@ export function createRestartPersistenceObserver({ statePath } = {}) {
   return {
     outbound(message) {
       if (typeof message?.method !== "string") return;
-      const request = { sequence: sequence++, method: message.method, params: message.params };
+      const request = {
+        sequence: sequence++,
+        method: message.method,
+        params: message.params,
+      };
       requests.push(request);
       if (message.method === "session/prompt" && statePath !== undefined) {
-        try { stateAtPrompts.push(JSON.parse(readFileSync(statePath, "utf8"))); }
-        catch { stateAtPrompts.push(undefined); }
+        try {
+          stateAtPrompts.push(JSON.parse(readFileSync(statePath, "utf8")));
+        } catch {
+          stateAtPrompts.push(undefined);
+        }
       }
       if (message.id !== undefined) pending.set(message.id, request);
     },
@@ -50,14 +61,23 @@ export function createRestartPersistenceObserver({ statePath } = {}) {
         loadSession = message.result?.agentCapabilities?.loadSession === true;
       } else if (request.method === "session/load") {
         loadOutcome = normalizeLoadOutcome(message);
-      } else if (request.method === "session/new" && typeof message.result?.sessionId === "string") {
+      } else if (
+        request.method === "session/new" &&
+        typeof message.result?.sessionId === "string"
+      ) {
         newSessionId = message.result.sessionId;
       }
     },
     requests,
     stateAtPrompts,
-    get loadSession() { return loadSession; },
-    get loadOutcome() { return loadOutcome; },
-    get newSessionId() { return newSessionId; },
+    get loadSession() {
+      return loadSession;
+    },
+    get loadOutcome() {
+      return loadOutcome;
+    },
+    get newSessionId() {
+      return newSessionId;
+    },
   };
 }

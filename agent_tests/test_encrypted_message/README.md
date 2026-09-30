@@ -108,18 +108,18 @@ shutdown_grace_seconds = 30
 
 17. Clean up test-created state, preferably from an `EXIT` trap:
 
-   ```sh
-   node agent_tests/encrypted-e2e/cleanup.mjs
-   ```
+```sh
+node agent_tests/encrypted-e2e/cleanup.mjs
+```
 
-   Cleanup must:
+Cleanup must:
 
-   - call ACP `session/delete` for every session ID saved in bridge state;
-   - log out the bridge, SAS-helper, and sender devices, removing their access tokens and device records;
-   - remove generated token files, TOML files, manifests, Matrix crypto databases, sync/session mappings, snapshots, and locks; and
-   - preserve local state and report failure if remote ACP or Matrix cleanup fails.
+- call ACP `session/delete` for every session ID saved in bridge state;
+- log out the bridge, SAS-helper, and sender devices, removing their access tokens and device records;
+- remove generated token files, TOML files, manifests, Matrix crypto databases, sync/session mappings, snapshots, and locks; and
+- preserve local state and report failure if remote ACP or Matrix cleanup fails.
 
-   Encrypted room events remain in room history. Homeserver, ACP, proxy, and service logs may also retain ordinary operational records.
+Encrypted room events remain in room history. Homeserver, ACP, proxy, and service logs may also retain ordinary operational records.
 
 ## State created by the test
 

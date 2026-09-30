@@ -13,7 +13,12 @@ import {
   stopBridgePair,
   waitFor,
 } from "../e2e-support/acp.mjs";
-import { defaultEnvironmentPath, readEnvironment, repoRoot, testDir } from "./lib.mjs";
+import {
+  defaultEnvironmentPath,
+  readEnvironment,
+  repoRoot,
+  testDir,
+} from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
@@ -30,7 +35,9 @@ function assert(condition, message) {
 
 function promptText(message) {
   const parts = message?.params?.prompt;
-  return Array.isArray(parts) ? parts.find((part) => part?.type === "text")?.text : undefined;
+  return Array.isArray(parts)
+    ? parts.find((part) => part?.type === "text")?.text
+    : undefined;
 }
 
 function protocolObserver() {
@@ -48,7 +55,8 @@ function protocolObserver() {
         forwarded,
       };
       requests.push(request);
-      if (forwarded && message.id !== undefined) pending.set(message.id, request);
+      if (forwarded && message.id !== undefined)
+        pending.set(message.id, request);
     },
     inbound(message) {
       const request = pending.get(message?.id);
@@ -59,7 +67,9 @@ function protocolObserver() {
       }
     },
     requests,
-    get loadSession() { return loadSession; },
+    get loadSession() {
+      return loadSession;
+    },
   };
 }
 
@@ -73,8 +83,14 @@ function outboundGate(blockedPrompt, observer, status) {
       let forwarded = "";
       for (const line of lines) {
         let message;
-        try { message = JSON.parse(line); } catch { /* Forward malformed data unchanged. */ }
-        const block = !status.blocked && message?.method === "session/prompt" &&
+        try {
+          message = JSON.parse(line);
+        } catch {
+          /* Forward malformed data unchanged. */
+        }
+        const block =
+          !status.blocked &&
+          message?.method === "session/prompt" &&
           promptText(message) === blockedPrompt;
         if (message !== undefined) observer.outbound(message, !block);
         if (block) status.blocked = true;
@@ -106,19 +122,28 @@ async function startObservedPair({ blockPrompt } = {}) {
   }
 
   const [acpProgram, ...acpArguments] = environment.acpCommand;
-  const acp = spawn(acpProgram, acpArguments, { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] });
+  const acp = spawn(acpProgram, acpArguments, {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const bridge = spawn(
     process.execPath,
     [join(repoRoot, "dist/main.js"), "--config", environment.bridge.configFile],
     { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] },
   );
   const gateStatus = { blocked: false };
-  bridge.stdout.pipe(outboundGate(blockPrompt, observer, gateStatus)).pipe(acp.stdin);
+  bridge.stdout
+    .pipe(outboundGate(blockPrompt, observer, gateStatus))
+    .pipe(acp.stdin);
   acp.stdout.pipe(jsonLineTap(observer.inbound)).pipe(bridge.stdin);
   let bridgeDiagnostics = "";
   let acpDiagnostics = "";
-  bridge.stderr.on("data", (chunk) => { bridgeDiagnostics += chunk.toString("utf8"); });
-  acp.stderr.on("data", (chunk) => { acpDiagnostics += chunk.toString("utf8"); });
+  bridge.stderr.on("data", (chunk) => {
+    bridgeDiagnostics += chunk.toString("utf8");
+  });
+  acp.stderr.on("data", (chunk) => {
+    acpDiagnostics += chunk.toString("utf8");
+  });
   const pair = {
     acp,
     bridge,
@@ -127,14 +152,21 @@ async function startObservedPair({ blockPrompt } = {}) {
     observer,
     gateStatus,
   };
-  await waitFor(() => bridgeDiagnostics.includes("startup-ready"), "bridge startup-ready", 120_000, pair);
+  await waitFor(
+    () => bridgeDiagnostics.includes("startup-ready"),
+    "bridge startup-ready",
+    120_000,
+    pair,
+  );
   return pair;
 }
 
 async function crashPair(pair) {
-  if (pair.bridge.exitCode === null && pair.bridge.signalCode === null) pair.bridge.kill("SIGKILL");
+  if (pair.bridge.exitCode === null && pair.bridge.signalCode === null)
+    pair.bridge.kill("SIGKILL");
   await childExited(pair.bridge);
-  if (pair.acp.exitCode === null && pair.acp.signalCode === null) pair.acp.kill("SIGTERM");
+  if (pair.acp.exitCode === null && pair.acp.signalCode === null)
+    pair.acp.kill("SIGTERM");
   await childExited(pair.acp);
 }
 
@@ -144,11 +176,19 @@ async function readState() {
 
 function assertCurrentState(state, label) {
   assert(state.initialized === true, `${label} state is not initialized`);
-  assert(Object.hasOwn(state, "cursor") === false, `${label} state contains a legacy cursor`);
-  assert(Object.hasOwn(state, "pendingBatches") === false, `${label} state contains legacy pending batches`);
+  assert(
+    Object.hasOwn(state, "cursor") === false,
+    `${label} state contains a legacy cursor`,
+  );
+  assert(
+    Object.hasOwn(state, "pendingBatches") === false,
+    `${label} state contains legacy pending batches`,
+  );
   const ids = state.completedEventIds?.[environment.roomId];
-  assert(Array.isArray(ids) && new Set(ids).size === ids.length,
-    `${label} completed-event ledger is invalid`);
+  assert(
+    Array.isArray(ids) && new Set(ids).size === ids.length,
+    `${label} completed-event ledger is invalid`,
+  );
   assert(ids.length <= 100, `${label} completed-event ledger is not bounded`);
   return ids;
 }
@@ -163,80 +203,163 @@ async function runSender(arguments_) {
 }
 
 function matchingPrompts(pair, text, forwarded) {
-  return pair.observer.requests.filter((request) => request.method === "session/prompt" &&
-    promptText(request) === text && (forwarded === undefined || request.forwarded === forwarded));
+  return pair.observer.requests.filter(
+    (request) =>
+      request.method === "session/prompt" &&
+      promptText(request) === text &&
+      (forwarded === undefined || request.forwarded === forwarded),
+  );
 }
 
 function assertCleanDiagnostics(pair, requiredEvents) {
   const records = parseDiagnostics(pair.bridgeDiagnostics());
   for (const event of requiredEvents) {
-    assert(records.some((record) => record.event === event), `missing ${event} diagnostic`);
+    assert(
+      records.some((record) => record.event === event),
+      `missing ${event} diagnostic`,
+    );
   }
-  const failures = records.filter((record) => record.level === "error" ||
-    /(?:failed|failure|protocol|lock)/u.test(String(record.event)));
-  assert(failures.length === 0,
-    `unexpected bridge diagnostics: ${failures.map((record) => record.event).join(", ")}`);
+  const failures = records.filter(
+    (record) =>
+      record.level === "error" ||
+      /(?:failed|failure|protocol|lock)/u.test(String(record.event)),
+  );
+  assert(
+    failures.length === 0,
+    `unexpected bridge diagnostics: ${failures.map((record) => record.event).join(", ")}`,
+  );
 }
 
 let pair;
 try {
-  process.stdout.write("Establishing a normal initial-sync completed-ID baseline...\n");
+  process.stdout.write(
+    "Establishing a normal initial-sync completed-ID baseline...\n",
+  );
   pair = await startObservedPair();
-  assert(pair.observer.loadSession === true,
-    "completed-ID recovery requires ACP loadSession support");
-  const first = await runSender(["--prompt", completedPrompt, "--expect", completedReply]);
-  assert(first.event === "exchange-complete" && first.responseCount === 1,
-    "completed baseline prompt did not receive exactly one response");
-  await waitFor(async () => {
-    const state = await readState();
-    const ids = state.completedEventIds?.[environment.roomId] ?? [];
-    return ids.includes(first.promptEventId);
-  }, "completed baseline event", 30_000, pair);
-  assert(matchingPrompts(pair, completedPrompt).length === 1,
-    "baseline prompt did not reach ACP exactly once");
+  assert(
+    pair.observer.loadSession === true,
+    "completed-ID recovery requires ACP loadSession support",
+  );
+  const first = await runSender([
+    "--prompt",
+    completedPrompt,
+    "--expect",
+    completedReply,
+  ]);
+  assert(
+    first.event === "exchange-complete" && first.responseCount === 1,
+    "completed baseline prompt did not receive exactly one response",
+  );
+  await waitFor(
+    async () => {
+      const state = await readState();
+      const ids = state.completedEventIds?.[environment.roomId] ?? [];
+      return ids.includes(first.promptEventId);
+    },
+    "completed baseline event",
+    30_000,
+    pair,
+  );
+  assert(
+    matchingPrompts(pair, completedPrompt).length === 1,
+    "baseline prompt did not reach ACP exactly once",
+  );
   assertCurrentState(await readState(), "baseline");
   await stopBridgePair(pair);
   pair = undefined;
 
   process.stdout.write("Sending an event while the bridge is stopped...\n");
-  const retry = await runSender(["--mode", "send-only", "--prompt", retryPrompt]);
-  assert(retry.event === "prompt-sent" && retry.promptWireType === "m.room.message",
-    "retry event was not sent as plaintext Matrix text");
+  const retry = await runSender([
+    "--mode",
+    "send-only",
+    "--prompt",
+    retryPrompt,
+  ]);
+  assert(
+    retry.event === "prompt-sent" && retry.promptWireType === "m.room.message",
+    "retry event was not sent as plaintext Matrix text",
+  );
 
-  process.stdout.write("Holding the unseen event before ACP, then simulating interruption...\n");
+  process.stdout.write(
+    "Holding the unseen event before ACP, then simulating interruption...\n",
+  );
   pair = await startObservedPair({ blockPrompt: retryPrompt });
-  await waitFor(() => pair.gateStatus.blocked, "unseen event ACP gate", 120_000, pair);
-  assert(matchingPrompts(pair, completedPrompt).length === 0,
-    "completed initial-sync event was submitted during recovery");
-  assert(matchingPrompts(pair, retryPrompt, false).length === 1,
-    "unseen initial-sync event was not held before ACP");
+  await waitFor(
+    () => pair.gateStatus.blocked,
+    "unseen event ACP gate",
+    120_000,
+    pair,
+  );
+  assert(
+    matchingPrompts(pair, completedPrompt).length === 0,
+    "completed initial-sync event was submitted during recovery",
+  );
+  assert(
+    matchingPrompts(pair, retryPrompt, false).length === 1,
+    "unseen initial-sync event was not held before ACP",
+  );
   const heldState = await readState();
   const heldIds = assertCurrentState(heldState, "held");
-  assert(heldIds.includes(first.promptEventId), "completed ID was lost before interruption");
-  assert(!heldIds.includes(retry.promptEventId), "interrupted event was marked completed before ACP");
+  assert(
+    heldIds.includes(first.promptEventId),
+    "completed ID was lost before interruption",
+  );
+  assert(
+    !heldIds.includes(retry.promptEventId),
+    "interrupted event was marked completed before ACP",
+  );
   await crashPair(pair);
   pair = undefined;
 
-  process.stdout.write("Restarting and requiring only the incomplete event...\n");
+  process.stdout.write(
+    "Restarting and requiring only the incomplete event...\n",
+  );
   pair = await startObservedPair();
   const watched = await runSender([
-    "--mode", "watch", "--prompt", retryPrompt, "--expect", retryReply,
-    "--since", retry.syncCursor, "--prompt-event-id", retry.promptEventId,
+    "--mode",
+    "watch",
+    "--prompt",
+    retryPrompt,
+    "--expect",
+    retryReply,
+    "--since",
+    retry.syncCursor,
+    "--prompt-event-id",
+    retry.promptEventId,
   ]);
-  assert(watched.event === "exchange-complete" && watched.responseCount === 1,
-    "interrupted event did not receive exactly one response after retry");
-  await waitFor(() => matchingPrompts(pair, retryPrompt).length === 1,
-    "retried ACP prompt", 30_000, pair);
-  assert(matchingPrompts(pair, completedPrompt).length === 0,
-    "completed event was submitted to ACP again after restart");
-  await waitFor(async () => {
-    const state = await readState();
-    const ids = state.completedEventIds?.[environment.roomId] ?? [];
-    return ids.includes(retry.promptEventId);
-  }, "retried event completion", 30_000, pair);
+  assert(
+    watched.event === "exchange-complete" && watched.responseCount === 1,
+    "interrupted event did not receive exactly one response after retry",
+  );
+  await waitFor(
+    () => matchingPrompts(pair, retryPrompt).length === 1,
+    "retried ACP prompt",
+    30_000,
+    pair,
+  );
+  assert(
+    matchingPrompts(pair, completedPrompt).length === 0,
+    "completed event was submitted to ACP again after restart",
+  );
+  await waitFor(
+    async () => {
+      const state = await readState();
+      const ids = state.completedEventIds?.[environment.roomId] ?? [];
+      return ids.includes(retry.promptEventId);
+    },
+    "retried event completion",
+    30_000,
+    pair,
+  );
   const finalIds = assertCurrentState(await readState(), "final");
-  assert(finalIds.includes(first.promptEventId), "completed event was removed from the recovery ledger too early");
-  assert(finalIds.includes(retry.promptEventId), "retried event was not durably completed");
+  assert(
+    finalIds.includes(first.promptEventId),
+    "completed event was removed from the recovery ledger too early",
+  );
+  assert(
+    finalIds.includes(retry.promptEventId),
+    "retried event was not durably completed",
+  );
   assertCleanDiagnostics(pair, [
     "completed-event-ledger-loaded",
     "initial-sync-recovery-finished",
@@ -244,7 +367,9 @@ try {
   ]);
   await stopBridgePair(pair);
   pair = undefined;
-  process.stdout.write("Completed-ID recovery Matrix E2E test passed with normal initial sync.\n");
+  process.stdout.write(
+    "Completed-ID recovery Matrix E2E test passed with normal initial sync.\n",
+  );
 } finally {
   if (pair !== undefined) {
     await stopBridgePair(pair).catch(() => {

@@ -12,7 +12,11 @@ import {
 import type { DiagnosticSink } from "./diagnostics.js";
 import type { AcpSessionId } from "./acp-client.js";
 import { closeQuietly, unlinkQuietly } from "./file-utils.js";
-import { isMatrixId, isSafeHomeserver, isValidMatrixEventId } from "./matrix-validation.js";
+import {
+  isMatrixId,
+  isSafeHomeserver,
+  isValidMatrixEventId,
+} from "./matrix-validation.js";
 import { hasExactKeys, isNodeError, isRecord } from "./object-validation.js";
 import type {
   MatrixDeviceId,
@@ -41,7 +45,9 @@ export interface BridgeStateSnapshot {
   readonly identity: MatrixBridgeIdentity;
   readonly initialized: boolean;
   readonly sessionMappings: Readonly<Record<MatrixRoomId, AcpSessionId>>;
-  readonly completedEventIds: Readonly<Record<MatrixRoomId, readonly MatrixEventId[]>>;
+  readonly completedEventIds: Readonly<
+    Record<MatrixRoomId, readonly MatrixEventId[]>
+  >;
 }
 
 /**
@@ -53,30 +59,38 @@ export interface BridgeStateStore {
   readonly statePath: string;
   getSnapshot(): BridgeStateSnapshot;
   isEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): boolean;
-  establishInitialBaseline(completedEventIds: CompletedEventLedgerInput): Promise<void>;
-  markEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): Promise<boolean>;
+  establishInitialBaseline(
+    completedEventIds: CompletedEventLedgerInput,
+  ): Promise<void>;
+  markEventCompleted(
+    roomId: MatrixRoomId,
+    eventId: MatrixEventId,
+  ): Promise<boolean>;
   compactCompletedEventIds(
     currentTimeline: CompletedEventLedgerInput,
     newlyCompletedEventIds?: CompletedEventLedgerInput,
   ): Promise<void>;
   getSessionMapping(roomId: MatrixRoomId): AcpSessionId | undefined;
   getSessionMappings(): ReadonlyMap<MatrixRoomId, AcpSessionId>;
-  setSessionMapping(roomId: MatrixRoomId, sessionId: AcpSessionId): Promise<boolean>;
+  setSessionMapping(
+    roomId: MatrixRoomId,
+    sessionId: AcpSessionId,
+  ): Promise<boolean>;
   removeSessionMapping(roomId: MatrixRoomId): Promise<boolean>;
-  pruneSessionMappings(allowedRooms: readonly MatrixRoomId[]): Promise<readonly MatrixRoomId[]>;
+  pruneSessionMappings(
+    allowedRooms: readonly MatrixRoomId[],
+  ): Promise<readonly MatrixRoomId[]>;
   discardSessionMappings(): Promise<boolean>;
   /** Wait for all mutations already accepted by this process to settle. */
   flush?(): Promise<void>;
 }
 
 export const BRIDGE_STATE_FILE_NAME = "bridge-state.json";
+
 export const BRIDGE_STATE_SCHEMA_VERSION = 12;
 
 export type BridgeStateFaultPoint =
-  | "write"
-  | "file-fsync"
-  | "rename"
-  | "directory-fsync";
+  "write" | "file-fsync" | "rename" | "directory-fsync";
 
 /** Test-only fault boundary; injected failures are sanitized before escaping. */
 export type BridgeStateFaultInjector = (
@@ -103,8 +117,11 @@ export type BridgeStateFailureCategory =
  */
 export class BridgeStateError extends Error {
   readonly code = "state" as const;
+
   readonly fatal = true as const;
+
   readonly category: BridgeStateFailureCategory;
+
   readonly statePath: string;
 
   constructor(category: BridgeStateFailureCategory, statePath: string) {
@@ -132,13 +149,17 @@ interface ParsedState {
   readonly identity: MatrixBridgeIdentity;
   readonly initialized: boolean;
   readonly sessions: ReadonlyMap<MatrixRoomId, AcpSessionId>;
-  readonly completedEventIds: ReadonlyMap<MatrixRoomId, readonly MatrixEventId[]>;
+  readonly completedEventIds: ReadonlyMap<
+    MatrixRoomId,
+    readonly MatrixEventId[]
+  >;
 }
 
 const NOFOLLOW = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
 const DIRECTORY_FLAG = "O_DIRECTORY" in constants ? constants.O_DIRECTORY : 0;
 const STATE_FILE_FLAGS = constants.O_RDONLY | NOFOLLOW;
-const TEMP_FILE_FLAGS = constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NOFOLLOW;
+const TEMP_FILE_FLAGS =
+  constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NOFOLLOW;
 
 /** Open and validate the one private bridge-state document for a process. */
 export async function openBridgeStateStore(
@@ -168,10 +189,15 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   readonly statePath: string;
 
   readonly #stateDir: string;
+
   readonly #identity: MatrixBridgeIdentity;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #faultInjector: BridgeStateFaultInjector | undefined;
+
   #state: InternalState | undefined;
+
   #tail: Promise<void> = Promise.resolve();
 
   private constructor(
@@ -191,7 +217,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     this.#faultInjector = faultInjector;
   }
 
-  static async open(options: BridgeStateStoreOptions): Promise<PrivateBridgeStateStore> {
+  static async open(
+    options: BridgeStateStoreOptions,
+  ): Promise<PrivateBridgeStateStore> {
     return openBridgeStateStore(options);
   }
 
@@ -220,7 +248,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   getSnapshot(): BridgeStateSnapshot {
     const state = this.#state;
     const sessions = Object.fromEntries(
-      [...(state?.sessions.entries() ?? [])].sort(([left], [right]) => left.localeCompare(right)),
+      [...(state?.sessions.entries() ?? [])].sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
     ) as Record<MatrixRoomId, AcpSessionId>;
     const completedEventIds = Object.fromEntries(
       [...(state?.completedEventIds.entries() ?? [])]
@@ -239,7 +269,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   isEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): boolean {
     this.#validateRoomId(roomId);
     this.#validateEventId(eventId);
-    return this.#state?.completedEventIds.get(roomId)?.includes(eventId) ?? false;
+    return (
+      this.#state?.completedEventIds.get(roomId)?.includes(eventId) ?? false
+    );
   }
 
   /**
@@ -247,7 +279,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
    * is part of the same replacement as the event IDs, so a crash before the
    * replacement leaves the state fresh and history suppressed on retry.
    */
-  async establishInitialBaseline(completedEventIds: CompletedEventLedgerInput): Promise<void> {
+  async establishInitialBaseline(
+    completedEventIds: CompletedEventLedgerInput,
+  ): Promise<void> {
     return this.#enqueue(async () => {
       const baseline = this.#normalizeLedger(completedEventIds);
       const current = this.#state;
@@ -267,7 +301,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   }
 
   /** Persist one terminal event before its Matrix response is delivered. */
-  async markEventCompleted(roomId: MatrixRoomId, eventId: MatrixEventId): Promise<boolean> {
+  async markEventCompleted(
+    roomId: MatrixRoomId,
+    eventId: MatrixEventId,
+  ): Promise<boolean> {
     return this.#enqueue(async () => {
       this.#validateRoomId(roomId);
       this.#validateEventId(eventId);
@@ -276,7 +313,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       if (existing.includes(eventId)) {
         return false;
       }
-      const completedEventIds = cloneCompletedEventIds(current?.completedEventIds);
+      const completedEventIds = cloneCompletedEventIds(
+        current?.completedEventIds,
+      );
       const room = completedEventIds.get(roomId) ?? [];
       room.push(eventId);
       completedEventIds.set(roomId, room);
@@ -303,14 +342,22 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   ): Promise<void> {
     return this.#enqueue(async () => {
       const currentTimeline = this.#normalizeLedger(currentTimelineInput);
-      const newlyCompleted = this.#normalizeLedger(newlyCompletedEventIds ?? []);
+      const newlyCompleted = this.#normalizeLedger(
+        newlyCompletedEventIds ?? [],
+      );
       const current = this.#state;
       const compacted = new Map<MatrixRoomId, MatrixEventId[]>();
       for (const [roomId, eventIds] of currentTimeline) {
-        const currentIds = new Set(current?.completedEventIds.get(roomId) ?? []);
+        const currentIds = new Set(
+          current?.completedEventIds.get(roomId) ?? [],
+        );
         const terminalIds = new Set(newlyCompleted.get(roomId) ?? []);
-        const retained = eventIds.filter((eventId) => currentIds.has(eventId) || terminalIds.has(eventId));
-        const terminalOutsideWindow = [...terminalIds].filter((eventId) => !eventIds.includes(eventId));
+        const retained = eventIds.filter(
+          (eventId) => currentIds.has(eventId) || terminalIds.has(eventId),
+        );
+        const terminalOutsideWindow = [...terminalIds].filter(
+          (eventId) => !eventIds.includes(eventId),
+        );
         const result = [...retained, ...terminalOutsideWindow];
         if (result.length > 0) {
           compacted.set(roomId, result);
@@ -343,7 +390,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     return new Map(this.#state?.sessions ?? []);
   }
 
-  async setSessionMapping(roomId: MatrixRoomId, sessionId: AcpSessionId): Promise<boolean> {
+  async setSessionMapping(
+    roomId: MatrixRoomId,
+    sessionId: AcpSessionId,
+  ): Promise<boolean> {
     return this.#enqueue(async () => {
       this.#validateRoomId(roomId);
       this.#validateSessionId(sessionId);
@@ -382,7 +432,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     });
   }
 
-  async pruneSessionMappings(allowedRooms: readonly MatrixRoomId[]): Promise<readonly MatrixRoomId[]> {
+  async pruneSessionMappings(
+    allowedRooms: readonly MatrixRoomId[],
+  ): Promise<readonly MatrixRoomId[]> {
     return this.#enqueue(async () => {
       if (!Array.isArray(allowedRooms)) {
         throw this.#failure("invalid-input");
@@ -545,7 +597,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   async #syncDirectory(): Promise<void> {
     let handle: FileHandle | undefined;
     try {
-      handle = await fs.open(this.#stateDir, constants.O_RDONLY | DIRECTORY_FLAG);
+      handle = await fs.open(
+        this.#stateDir,
+        constants.O_RDONLY | DIRECTORY_FLAG,
+      );
       await handle.sync();
     } finally {
       await closeQuietly(handle);
@@ -589,7 +644,15 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     if (value.schemaVersion !== BRIDGE_STATE_SCHEMA_VERSION) {
       throw this.#failure("unsupported-version");
     }
-    if (!hasExactKeys(value, ["schemaVersion", "identity", "initialized", "sessions", "completedEventIds"])) {
+    if (
+      !hasExactKeys(value, [
+        "schemaVersion",
+        "identity",
+        "initialized",
+        "sessions",
+        "completedEventIds",
+      ])
+    ) {
       throw this.#failure("corrupt");
     }
     const identity = this.#parseIdentity(value.identity);
@@ -598,18 +661,36 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       throw this.#failure("corrupt");
     }
     const sessions = this.#parseSessions(value.sessions);
-    const completedEventIds = this.#parseCompletedEventIds(value.completedEventIds);
-    return { identity, initialized: value.initialized, sessions, completedEventIds };
+    const completedEventIds = this.#parseCompletedEventIds(
+      value.completedEventIds,
+    );
+    return {
+      identity,
+      initialized: value.initialized,
+      sessions,
+      completedEventIds,
+    };
   }
 
   #parseIdentity(value: unknown): MatrixBridgeIdentity {
-    if (!isRecord(value) || !hasExactKeys(value, ["homeserver", "userId", "deviceId"])) {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, ["homeserver", "userId", "deviceId"])
+    ) {
       throw this.#failure("corrupt");
     }
-    if (typeof value.homeserver !== "string" || typeof value.userId !== "string" || typeof value.deviceId !== "string") {
+    if (
+      typeof value.homeserver !== "string" ||
+      typeof value.userId !== "string" ||
+      typeof value.deviceId !== "string"
+    ) {
       throw this.#failure("corrupt");
     }
-    const identity = { homeserver: value.homeserver, userId: value.userId, deviceId: value.deviceId };
+    const identity = {
+      homeserver: value.homeserver,
+      userId: value.userId,
+      deviceId: value.deviceId,
+    };
     this.#validateIdentity(identity);
     return identity;
   }
@@ -654,14 +735,20 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     return completedEventIds;
   }
 
-  #normalizeLedger(input: CompletedEventLedgerInput): Map<MatrixRoomId, MatrixEventId[]> {
+  #normalizeLedger(
+    input: CompletedEventLedgerInput,
+  ): Map<MatrixRoomId, MatrixEventId[]> {
     if (!Array.isArray(input)) {
       throw this.#failure("invalid-input");
     }
 
     const result = new Map<MatrixRoomId, MatrixEventId[]>();
     for (const room of input) {
-      if (!isRecord(room) || typeof room.roomId !== "string" || !Array.isArray(room.eventIds)) {
+      if (
+        !isRecord(room) ||
+        typeof room.roomId !== "string" ||
+        !Array.isArray(room.eventIds)
+      ) {
         throw this.#failure("invalid-input");
       }
       const rawRoomId = room.roomId;
@@ -694,13 +781,23 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   }
 
   #validateIdentity(identity: MatrixBridgeIdentity): void {
-    if (!isRecord(identity) || typeof identity.homeserver !== "string" || !isSafeHomeserver(identity.homeserver)) {
+    if (
+      !isRecord(identity) ||
+      typeof identity.homeserver !== "string" ||
+      !isSafeHomeserver(identity.homeserver)
+    ) {
       throw this.#failure("invalid-input");
     }
-    if (typeof identity.userId !== "string" || !isMatrixId(identity.userId, "@")) {
+    if (
+      typeof identity.userId !== "string" ||
+      !isMatrixId(identity.userId, "@")
+    ) {
       throw this.#failure("invalid-input");
     }
-    if (typeof identity.deviceId !== "string" || !/^[A-Za-z0-9._=-]+$/u.test(identity.deviceId)) {
+    if (
+      typeof identity.deviceId !== "string" ||
+      !/^[A-Za-z0-9._=-]+$/u.test(identity.deviceId)
+    ) {
       throw this.#failure("invalid-input");
     }
   }
@@ -741,13 +838,19 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 
   #validateSessionId(sessionId: unknown): asserts sessionId is AcpSessionId {
     // Control characters are forbidden in persisted identifiers.
-    // eslint-disable-next-line no-control-regex -- reject ASCII control characters
-    if (typeof sessionId !== "string" || sessionId.length === 0 || /[\u0000-\u001F\u007F]/u.test(sessionId)) {
+    if (
+      typeof sessionId !== "string" ||
+      sessionId.length === 0 ||
+      // eslint-disable-next-line no-control-regex -- reject ASCII control characters
+      /[\u0000-\u001F\u007F]/u.test(sessionId)
+    ) {
       throw this.#failure("invalid-input");
     }
   }
 
-  #validateSessionIdForParse(sessionId: unknown): asserts sessionId is AcpSessionId {
+  #validateSessionIdForParse(
+    sessionId: unknown,
+  ): asserts sessionId is AcpSessionId {
     try {
       this.#validateSessionId(sessionId);
     } catch (error) {
@@ -763,7 +866,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       validatePrivateStateFileMetadata(stat);
     } catch (error) {
       if (error instanceof ConfigurationError) {
-        const category = error.message.includes("regular files") ? "unsafe-path" : "permissions";
+        const category = error.message.includes("regular files")
+          ? "unsafe-path"
+          : "permissions";
         throw this.#failure(category);
       }
       throw this.#failure("read");
@@ -772,7 +877,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 
   #serializeState(state: InternalState): string {
     const sessions = Object.fromEntries(
-      [...state.sessions.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      [...state.sessions.entries()].sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
     );
     const completedEventIds = Object.fromEntries(
       [...state.completedEventIds.entries()]
@@ -796,9 +903,16 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     return new BridgeStateError(category, this.statePath);
   }
 
-  #emit(level: "debug" | "error", event: string, fields: Record<string, string | number | boolean> = {}): void {
+  #emit(
+    level: "debug" | "error",
+    event: string,
+    fields: Record<string, string | number | boolean> = {},
+  ): void {
     try {
-      this.#diagnostics?.emit(level, event, { path: this.statePath, ...fields });
+      this.#diagnostics?.emit(level, event, {
+        path: this.statePath,
+        ...fields,
+      });
     } catch {
       // Diagnostics must never change state semantics.
     }
@@ -810,7 +924,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const run = this.#tail.then(operation, operation);
-    this.#tail = run.then(() => {}, () => {});
+    this.#tail = run.then(
+      () => {},
+      () => {},
+    );
     return run;
   }
 }
@@ -819,7 +936,10 @@ function cloneCompletedEventIds(
   source: ReadonlyMap<MatrixRoomId, readonly MatrixEventId[]> | undefined,
 ): Map<MatrixRoomId, MatrixEventId[]> {
   return new Map(
-    [...(source?.entries() ?? [])].map(([roomId, eventIds]) => [roomId, [...eventIds]]),
+    [...(source?.entries() ?? [])].map(([roomId, eventIds]) => [
+      roomId,
+      [...eventIds],
+    ]),
   );
 }
 
@@ -851,19 +971,32 @@ function completedLedgersEqual(
   }
   for (const [roomId, eventIds] of right) {
     const previous = left?.get(roomId);
-    if (previous === undefined || previous.length !== eventIds.length ||
-        !previous.every((eventId, index) => eventId === eventIds[index])) {
+    if (
+      previous === undefined ||
+      previous.length !== eventIds.length ||
+      !previous.every((eventId, index) => eventId === eventIds[index])
+    ) {
       return false;
     }
   }
   return true;
 }
 
-function identitiesEqual(left: MatrixBridgeIdentity, right: MatrixBridgeIdentity): boolean {
-  return left.homeserver === right.homeserver && left.userId === right.userId && left.deviceId === right.deviceId;
+function identitiesEqual(
+  left: MatrixBridgeIdentity,
+  right: MatrixBridgeIdentity,
+): boolean {
+  return (
+    left.homeserver === right.homeserver &&
+    left.userId === right.userId &&
+    left.deviceId === right.deviceId
+  );
 }
 
-function emitStateFailure(diagnostics: DiagnosticSink | undefined, error: BridgeStateError): void {
+function emitStateFailure(
+  diagnostics: DiagnosticSink | undefined,
+  error: BridgeStateError,
+): void {
   try {
     diagnostics?.emit("error", "private-state-failure", {
       path: error.statePath,

@@ -46,7 +46,9 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   entries(): IterableIterator<SessionRecord> {
-    const snapshot = [...this.#sessions.values()].map((record) => ({ ...record }));
+    const snapshot = [...this.#sessions.values()].map((record) => ({
+      ...record,
+    }));
     return snapshot[Symbol.iterator]();
   }
 }

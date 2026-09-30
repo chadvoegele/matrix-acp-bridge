@@ -1,0 +1,9 @@
+# Generated files, dependencies, and local state
+**/node_modules/
+**/dist/
+**/dist-test/
+**/coverage/
+**/worktrees/
+**/.env
+**/.env.*
+package-lock.json

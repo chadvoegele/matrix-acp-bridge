@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type {
-  MatrixEventId,
-  MatrixRoomId,
-} from "./matrix-client.js";
+import type { MatrixEventId, MatrixRoomId } from "./matrix-client.js";
 import type { AcpOutcome, AcpStopReason } from "./acp-client.js";
 import { utf8ByteLength } from "./text-utils.js";
 
@@ -115,7 +112,9 @@ function collectedText(value: CollectedAgentText | undefined): string {
     return value;
   }
   if (!Array.isArray(value)) {
-    throw new TypeError("response text must be a string or an array of strings");
+    throw new TypeError(
+      "response text must be a string or an array of strings",
+    );
   }
   for (const chunk of value) {
     if (typeof chunk !== "string") {
@@ -158,7 +157,10 @@ function codePointPrefix(value: string, maxBytes: number): string {
  * Bound agent output by UTF-8 bytes while keeping a valid code-point prefix.
  * The truncation marker itself is included in the aggregate limit.
  */
-export function truncateAgentText(value: string, maxOutputBytes: number): string {
+export function truncateAgentText(
+  value: string,
+  maxOutputBytes: number,
+): string {
   assertPositiveInteger(maxOutputBytes, "maxOutputBytes");
   const markerBytes = utf8ByteLength(OUTPUT_TRUNCATION_MARKER);
   if (maxOutputBytes < markerBytes) {
@@ -246,10 +248,16 @@ function codePointEnd(value: string, start: number, maxBytes: number): number {
   return end;
 }
 
-function fittingChunkEnd(value: string, start: number, maxBytes: number): number {
+function fittingChunkEnd(
+  value: string,
+  start: number,
+  maxBytes: number,
+): number {
   const maxCodePointEnd = codePointEnd(value, start, maxBytes);
   if (maxCodePointEnd === start) {
-    throw new RangeError("maxMatrixMessageBytes cannot fit one Unicode code point");
+    throw new RangeError(
+      "maxMatrixMessageBytes cannot fit one Unicode code point",
+    );
   }
 
   // Delimiters belong to the preceding part.  Paragraph boundaries have
@@ -275,7 +283,9 @@ function splitWithAssumedPartCount(
     const prefixBytes = utf8ByteLength(prefix);
     const chunkCapacity = maxMatrixMessageBytes - prefixBytes;
     if (chunkCapacity <= 0) {
-      throw new RangeError("maxMatrixMessageBytes cannot fit a multipart prefix");
+      throw new RangeError(
+        "maxMatrixMessageBytes cannot fit a multipart prefix",
+      );
     }
     const end = fittingChunkEnd(value, offset, chunkCapacity);
     if (end <= offset) {
@@ -329,7 +339,11 @@ export function splitMatrixResponseText(
   // nonempty value when every prefix can fit at least one code point.
   const upperBound = Math.max(2, value.length);
   for (let candidate = 2; candidate <= upperBound; candidate += 1) {
-    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, candidate);
+    const parts = splitWithAssumedPartCount(
+      value,
+      maxMatrixMessageBytes,
+      candidate,
+    );
     if (parts.length === candidate) {
       return parts;
     }
@@ -350,27 +364,33 @@ function validateTransactionPartNumber(value: number): void {
 
 /** Compute the stable Matrix transaction ID for one rendered response part. */
 export function computeMatrixTransactionId(input: TransactionIdInput): string;
+
 export function computeMatrixTransactionId(
   roomId: MatrixRoomId,
   inboundEventId: MatrixEventId,
   responseKind: MatrixResponseKind,
   oneBasedPartNumber: number,
 ): string;
+
 export function computeMatrixTransactionId(
   inputOrRoomId: TransactionIdInput | MatrixRoomId,
   inboundEventId?: MatrixEventId,
   responseKind?: MatrixResponseKind,
   oneBasedPartNumber?: number,
 ): string {
-  const input: TransactionIdInput = typeof inputOrRoomId === "string"
-    ? {
-        roomId: inputOrRoomId,
-        inboundEventId: inboundEventId as MatrixEventId,
-        responseKind: responseKind as MatrixResponseKind,
-        oneBasedPartNumber: oneBasedPartNumber as number,
-      }
-    : inputOrRoomId;
-  if (typeof input.roomId !== "string" || typeof input.inboundEventId !== "string") {
+  const input: TransactionIdInput =
+    typeof inputOrRoomId === "string"
+      ? {
+          roomId: inputOrRoomId,
+          inboundEventId: inboundEventId as MatrixEventId,
+          responseKind: responseKind as MatrixResponseKind,
+          oneBasedPartNumber: oneBasedPartNumber as number,
+        }
+      : inputOrRoomId;
+  if (
+    typeof input.roomId !== "string" ||
+    typeof input.inboundEventId !== "string"
+  ) {
     throw new TypeError("transaction IDs require string room and event IDs");
   }
   validateTransactionPartNumber(input.oneBasedPartNumber);
@@ -435,12 +455,14 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
     return { responseKind: "error", agentText: "" };
   }
 
-  if (!STATUS_KINDS.has(outcome.kind) &&
-      outcome.kind !== "agent" &&
-      outcome.kind !== "empty" &&
-      outcome.kind !== "busy" &&
-      outcome.kind !== "oversized" &&
-      outcome.kind !== "reset") {
+  if (
+    !STATUS_KINDS.has(outcome.kind) &&
+    outcome.kind !== "agent" &&
+    outcome.kind !== "empty" &&
+    outcome.kind !== "busy" &&
+    outcome.kind !== "oversized" &&
+    outcome.kind !== "reset"
+  ) {
     throw new TypeError(`unsupported response kind: ${String(outcome.kind)}`);
   }
 
@@ -487,17 +509,22 @@ function normalizeResponseText(
   };
 }
 
-function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrixPart[] {
-  if (typeof request.roomId !== "string" || typeof request.inboundEventId !== "string") {
+function renderFromRequest(
+  request: RenderMatrixResponseRequest,
+): RenderedMatrixPart[] {
+  if (
+    typeof request.roomId !== "string" ||
+    typeof request.inboundEventId !== "string"
+  ) {
     throw new TypeError("responses require string room and inbound event IDs");
   }
   assertPositiveInteger(request.maxOutputBytes, "maxOutputBytes");
-  assertPositiveInteger(
-    request.maxMatrixMessageBytes,
-    "maxMatrixMessageBytes",
-  );
+  assertPositiveInteger(request.maxMatrixMessageBytes, "maxMatrixMessageBytes");
 
-  const normalized = normalizeResponseText(request.outcome, request.maxOutputBytes);
+  const normalized = normalizeResponseText(
+    request.outcome,
+    request.maxOutputBytes,
+  );
   const bodies = splitMatrixResponseText(
     normalized.text,
     request.maxMatrixMessageBytes,
@@ -526,6 +553,7 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
 export function renderMatrixResponse(
   request: RenderMatrixResponseRequest,
 ): RenderedMatrixPart[];
+
 export function renderMatrixResponse(
   roomId: MatrixRoomId,
   inboundEventId: MatrixEventId,
@@ -533,19 +561,25 @@ export function renderMatrixResponse(
   maxOutputBytes: number,
   maxMatrixMessageBytes: number,
 ): RenderedMatrixPart[];
+
 export function renderMatrixResponse(
   outcome: RenderableResponse,
   context: ResponseRenderContext,
 ): RenderedMatrixPart[];
+
 export function renderMatrixResponse(
-  requestOrRoomId: RenderMatrixResponseRequest | RenderableResponse | MatrixRoomId,
+  requestOrRoomId:
+    RenderMatrixResponseRequest | RenderableResponse | MatrixRoomId,
   inboundEventIdOrContext?: MatrixEventId | ResponseRenderContext,
   outcome?: RenderableResponse,
   maxOutputBytes?: number,
   maxMatrixMessageBytes?: number,
 ): RenderedMatrixPart[] {
   if (typeof requestOrRoomId !== "string") {
-    if (typeof inboundEventIdOrContext === "object" && inboundEventIdOrContext !== null) {
+    if (
+      typeof inboundEventIdOrContext === "object" &&
+      inboundEventIdOrContext !== null
+    ) {
       return renderFromRequest({
         ...inboundEventIdOrContext,
         outcome: requestOrRoomId as RenderableResponse,
@@ -560,7 +594,9 @@ export function renderMatrixResponse(
     maxOutputBytes === undefined ||
     maxMatrixMessageBytes === undefined
   ) {
-    throw new TypeError("renderMatrixResponse requires room, event, outcome, and limits");
+    throw new TypeError(
+      "renderMatrixResponse requires room, event, outcome, and limits",
+    );
   }
   return renderFromRequest({
     roomId: requestOrRoomId,

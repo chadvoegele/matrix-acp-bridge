@@ -21,7 +21,11 @@ import type {
 } from "./crypto-contracts.js";
 import type { MatrixBridgeIdentity } from "./bridge-state.js";
 import { closeQuietly, unlinkQuietly } from "./file-utils.js";
-import { isMatrixId, isSafeHomeserver, isValidMatrixDeviceId } from "./matrix-validation.js";
+import {
+  isMatrixId,
+  isSafeHomeserver,
+  isValidMatrixDeviceId,
+} from "./matrix-validation.js";
 import type { MatrixDeviceId, MatrixUserId } from "./matrix-client.js";
 import { hasExactKeys, isNodeError, isRecord } from "./object-validation.js";
 
@@ -57,11 +61,7 @@ export type CryptoStateFailureCategory =
   | "directory-fsync";
 
 export type CryptoStateRecoveryAction =
-  | "bootstrap"
-  | "verify"
-  | "restore-backup"
-  | "replace-device"
-  | "inspect";
+  "bootstrap" | "verify" | "restore-backup" | "replace-device" | "inspect";
 
 /**
  * A sanitized crypto-storage failure.  Error text never includes manifest
@@ -69,10 +69,15 @@ export type CryptoStateRecoveryAction =
  */
 export class CryptoStateError extends Error {
   readonly code = "crypto_state" as const;
+
   readonly fatal = true as const;
+
   readonly category: CryptoStateFailureCategory;
+
   readonly statePath: string;
+
   readonly recoveryAction: CryptoStateRecoveryAction;
+
   readonly recoveryGuidance: string;
 
   constructor(category: CryptoStateFailureCategory, statePath: string) {
@@ -122,7 +127,8 @@ export interface CryptoStateInspection {
 const NOFOLLOW = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
 const DIRECTORY_FLAG = "O_DIRECTORY" in constants ? constants.O_DIRECTORY : 0;
 const MANIFEST_FILE_FLAGS = constants.O_RDONLY | NOFOLLOW;
-const TEMP_FILE_FLAGS = constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NOFOLLOW;
+const TEMP_FILE_FLAGS =
+  constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NOFOLLOW;
 const NODE_INDEXEDDB_SNAPSHOT_TEMP_FILE = ".indexeddb.snapshot.tmp";
 const DATABASE_VALIDATION_MAX_ATTEMPTS = 3;
 
@@ -139,7 +145,8 @@ export async function openCryptoStateStore(
   try {
     stateDir = await validatePrivateStateDirectory(options.stateDir);
   } catch (error) {
-    const category = error instanceof ConfigurationError ? "unsafe-path" : "read";
+    const category =
+      error instanceof ConfigurationError ? "unsafe-path" : "read";
     const failure = new CryptoStateError(category, requestedManifestPath);
     emitFailure(options.diagnostics, failure);
     throw failure;
@@ -149,7 +156,10 @@ export async function openCryptoStateStore(
     const paths = cryptoStatePaths(stateDir);
     assertDerivedPaths(stateDir, paths);
     await discardCrashLeftTemporaryFiles(stateDir);
-    const database = await inspectDatabaseDirectory(paths.databasePath, options.faultInjector);
+    const database = await inspectDatabaseDirectory(
+      paths.databasePath,
+      options.faultInjector,
+    );
     const manifest = await readManifest(paths.manifestPath);
 
     if (manifest !== undefined && !database.exists) {
@@ -159,7 +169,11 @@ export async function openCryptoStateStore(
       assertManifestIdentity(manifest, options.identity, paths.manifestPath);
     }
     if (manifest !== undefined && options.fingerprints !== undefined) {
-      assertManifestFingerprints(manifest, options.fingerprints, paths.manifestPath);
+      assertManifestFingerprints(
+        manifest,
+        options.fingerprints,
+        paths.manifestPath,
+      );
     }
 
     const store = new PrivateCryptoStateStore(
@@ -171,16 +185,22 @@ export async function openCryptoStateStore(
       options.diagnostics,
       options.faultInjector,
     );
-    emitDiagnostic(options.diagnostics, "debug", "private-crypto-state-opened", {
-      path: paths.manifestPath,
-      status: store.status,
-      databaseExists: database.exists,
-    });
+    emitDiagnostic(
+      options.diagnostics,
+      "debug",
+      "private-crypto-state-opened",
+      {
+        path: paths.manifestPath,
+        status: store.status,
+        databaseExists: database.exists,
+      },
+    );
     return store;
   } catch (error) {
-    const failure = error instanceof CryptoStateError
-      ? error
-      : new CryptoStateError("read", requestedManifestPath);
+    const failure =
+      error instanceof CryptoStateError
+        ? error
+        : new CryptoStateError("read", requestedManifestPath);
     emitFailure(options.diagnostics, failure);
     throw failure;
   }
@@ -212,9 +232,10 @@ export async function ensureCryptoDatabaseDirectory(
     validateDatabaseRootStat(current, databasePath);
   } catch (error) {
     if (!isNodeError(error, "ENOENT")) {
-      const failure = error instanceof CryptoStateError
-        ? error
-        : new CryptoStateError("read", databasePath);
+      const failure =
+        error instanceof CryptoStateError
+          ? error
+          : new CryptoStateError("read", databasePath);
       emitFailure(diagnostics, failure);
       throw failure;
     }
@@ -222,9 +243,10 @@ export async function ensureCryptoDatabaseDirectory(
       await fs.mkdir(databasePath, { mode: 0o700 });
       await fs.chmod(databasePath, 0o700);
     } catch (createError) {
-      const category = isNodeError(createError, "EACCES") || isNodeError(createError, "EPERM")
-        ? "permissions"
-        : "unsafe-path";
+      const category =
+        isNodeError(createError, "EACCES") || isNodeError(createError, "EPERM")
+          ? "permissions"
+          : "unsafe-path";
       const failure = new CryptoStateError(category, databasePath);
       emitFailure(diagnostics, failure);
       throw failure;
@@ -232,19 +254,24 @@ export async function ensureCryptoDatabaseDirectory(
     try {
       validateDatabaseRootStat(await fs.lstat(databasePath), databasePath);
     } catch (error) {
-      const failure = error instanceof CryptoStateError
-        ? error
-        : new CryptoStateError("read", databasePath);
+      const failure =
+        error instanceof CryptoStateError
+          ? error
+          : new CryptoStateError("read", databasePath);
       emitFailure(diagnostics, failure);
       throw failure;
     }
   }
-  emitDiagnostic(diagnostics, "debug", "private-crypto-database-ready", { path: databasePath });
+  emitDiagnostic(diagnostics, "debug", "private-crypto-database-ready", {
+    path: databasePath,
+  });
   return databasePath;
 }
 
 /** Run SDK database creation/initialization while the process mask is private. */
-export async function withPrivateCryptoCreationMask<T>(operation: () => Promise<T>): Promise<T> {
+export async function withPrivateCryptoCreationMask<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
   const previous = process.umask(0o077);
   try {
     return await operation();
@@ -255,16 +282,25 @@ export async function withPrivateCryptoCreationMask<T>(operation: () => Promise<
 
 export class PrivateCryptoStateStore {
   readonly statePath: string;
+
   readonly databasePath: string;
+
   readonly manifestPath: string;
+
   readonly paths: CryptoStatePaths;
 
   readonly #stateDir: string;
+
   readonly #identity: MatrixBridgeIdentity | undefined;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #faultInjector: CryptoStateFaultInjector | undefined;
+
   #databaseExists: boolean;
+
   #manifest: CryptoManifest | undefined;
+
   #tail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -322,7 +358,10 @@ export class PrivateCryptoStateStore {
   }
 
   isResumableBootstrap(): boolean {
-    return this.status === "resumable-bootstrap" || this.status === "incomplete-bootstrap";
+    return (
+      this.status === "resumable-bootstrap" ||
+      this.status === "incomplete-bootstrap"
+    );
   }
 
   /**
@@ -330,7 +369,9 @@ export class PrivateCryptoStateStore {
    * the SDK to create anything.  Key fingerprints still require a live Rust
    * crypto instance and are checked by the corresponding method below.
    */
-  assertReadyForDaemon(fingerprints?: CryptoDeviceKeyFingerprints): CryptoManifest {
+  assertReadyForDaemon(
+    fingerprints?: CryptoDeviceKeyFingerprints,
+  ): CryptoManifest {
     const manifest = this.#assertReady(true);
     if (fingerprints !== undefined) {
       assertManifestFingerprints(manifest, fingerprints, this.manifestPath);
@@ -339,7 +380,9 @@ export class PrivateCryptoStateStore {
   }
 
   /** Require an established bootstrap before a manual SAS attempt. */
-  assertReadyForVerification(fingerprints?: CryptoDeviceKeyFingerprints): CryptoManifest {
+  assertReadyForVerification(
+    fingerprints?: CryptoDeviceKeyFingerprints,
+  ): CryptoManifest {
     const manifest = this.#assertReady(false);
     if (fingerprints !== undefined) {
       assertManifestFingerprints(manifest, fingerprints, this.manifestPath);
@@ -375,13 +418,19 @@ export class PrivateCryptoStateStore {
     }
     this.#assertIdentity(this.#manifest);
     if (fingerprints !== undefined) {
-      assertManifestFingerprints(this.#manifest, fingerprints, this.manifestPath);
+      assertManifestFingerprints(
+        this.#manifest,
+        fingerprints,
+        this.manifestPath,
+      );
     }
     return this.#manifest.bootstrapCompleted;
   }
 
   /** Record completed bootstrap after the SDK has exposed the current keys. */
-  async recordBootstrap(fingerprints: CryptoDeviceKeyFingerprints): Promise<CryptoManifest> {
+  async recordBootstrap(
+    fingerprints: CryptoDeviceKeyFingerprints,
+  ): Promise<CryptoManifest> {
     if (this.#identity === undefined) {
       throw this.#failure("invalid-input", this.manifestPath);
     }
@@ -399,7 +448,9 @@ export class PrivateCryptoStateStore {
   }
 
   /** Attest only the already matching local key pair after successful SAS. */
-  async recordSasVerification(fingerprints: CryptoDeviceKeyFingerprints): Promise<CryptoManifest> {
+  async recordSasVerification(
+    fingerprints: CryptoDeviceKeyFingerprints,
+  ): Promise<CryptoManifest> {
     if (this.#manifest === undefined || !this.#manifest.bootstrapCompleted) {
       throw this.#failure("manifest-incomplete", this.manifestPath);
     }
@@ -476,9 +527,10 @@ export class PrivateCryptoStateStore {
       await this.#inject("directory-fsync");
       await syncDirectory(this.#stateDir);
     } catch (error) {
-      const failure = error instanceof CryptoStateError
-        ? error
-        : this.#failure(stage, this.manifestPath);
+      const failure =
+        error instanceof CryptoStateError
+          ? error
+          : this.#failure(stage, this.manifestPath);
       emitFailure(this.#diagnostics, failure);
       throw failure;
     } finally {
@@ -493,13 +545,19 @@ export class PrivateCryptoStateStore {
     await this.#faultInjector?.(point);
   }
 
-  #failure(category: CryptoStateFailureCategory, path: string): CryptoStateError {
+  #failure(
+    category: CryptoStateFailureCategory,
+    path: string,
+  ): CryptoStateError {
     return new CryptoStateError(category, path);
   }
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const run = this.#tail.then(operation, operation);
-    this.#tail = run.then(() => {}, () => {});
+    this.#tail = run.then(
+      () => {},
+      () => {},
+    );
     return run;
   }
 }
@@ -555,17 +613,23 @@ async function readManifest(path: string): Promise<CryptoManifest | undefined> {
   }
 }
 
-function parseManifest(value: unknown, path = "crypto-state.json"): CryptoManifest {
-  if (!isRecord(value) || !hasExactKeys(value, [
-    "schemaVersion",
-    "homeserver",
-    "userId",
-    "deviceId",
-    "ed25519Fingerprint",
-    "curve25519Fingerprint",
-    "bootstrapCompleted",
-    "sasVerified",
-  ])) {
+function parseManifest(
+  value: unknown,
+  path = "crypto-state.json",
+): CryptoManifest {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "homeserver",
+      "userId",
+      "deviceId",
+      "ed25519Fingerprint",
+      "curve25519Fingerprint",
+      "bootstrapCompleted",
+      "sasVerified",
+    ])
+  ) {
     throw new CryptoStateError("manifest-corrupt", path);
   }
   if (value.schemaVersion !== CRYPTO_MANIFEST_SCHEMA_VERSION) {
@@ -666,9 +730,11 @@ async function validateDatabaseTree(
     try {
       stat = await fs.lstat(child);
     } catch (error) {
-      if (isNodeError(error, "ENOENT") &&
-          child === join(root, NODE_INDEXEDDB_SNAPSHOT_TEMP_FILE) &&
-          attempt < DATABASE_VALIDATION_MAX_ATTEMPTS) {
+      if (
+        isNodeError(error, "ENOENT") &&
+        child === join(root, NODE_INDEXEDDB_SNAPSHOT_TEMP_FILE) &&
+        attempt < DATABASE_VALIDATION_MAX_ATTEMPTS
+      ) {
         // Node IndexedDB publishes snapshots by renaming this exact temporary
         // path. A directory listing can retain the old entry after that rename
         // and make its subsequent lstat() legitimately return ENOENT. Retry a
@@ -728,7 +794,9 @@ function validateManifestStat(stat: Stats, path: string): void {
     validatePrivateStateFileMetadata(stat);
   } catch (error) {
     if (error instanceof ConfigurationError) {
-      const category = error.message.includes("regular files") ? "unsafe-path" : "permissions";
+      const category = error.message.includes("regular files")
+        ? "unsafe-path"
+        : "permissions";
       throw new CryptoStateError(category, path);
     }
     throw new CryptoStateError("read", path);
@@ -752,13 +820,20 @@ async function assertManifestTargetSafe(path: string): Promise<void> {
 
 function assertDerivedPaths(stateDir: string, paths: CryptoStatePaths): void {
   const expected = cryptoStatePaths(stateDir);
-  if (resolve(paths.databasePath) !== resolve(expected.databasePath) ||
-      resolve(paths.manifestPath) !== resolve(expected.manifestPath)) {
+  if (
+    resolve(paths.databasePath) !== resolve(expected.databasePath) ||
+    resolve(paths.manifestPath) !== resolve(expected.manifestPath)
+  ) {
     throw new CryptoStateError("unsafe-path", paths.manifestPath);
   }
   for (const path of [paths.databasePath, paths.manifestPath]) {
     const within = relative(stateDir, path);
-    if (!isAbsolute(path) || within === ".." || within.startsWith(".." + "/") || within.startsWith(".." + "\\")) {
+    if (
+      !isAbsolute(path) ||
+      within === ".." ||
+      within.startsWith(".." + "/") ||
+      within.startsWith(".." + "\\")
+    ) {
       throw new CryptoStateError("unsafe-path", path);
     }
   }
@@ -790,12 +865,17 @@ async function syncDirectory(path: string): Promise<void> {
 }
 
 function isSafeFingerprint(value: string): boolean {
-  return value.length > 0 && value.length <= 512 &&
+  return (
+    value.length > 0 &&
+    value.length <= 512 &&
     // eslint-disable-next-line no-control-regex -- fingerprints reject ASCII controls
-    !/[\s\u0000-\u001F\u007F]/u.test(value);
+    !/[\s\u0000-\u001F\u007F]/u.test(value)
+  );
 }
 
-function recoveryActionFor(category: CryptoStateFailureCategory): CryptoStateRecoveryAction {
+function recoveryActionFor(
+  category: CryptoStateFailureCategory,
+): CryptoStateRecoveryAction {
   switch (category) {
     case "manifest-absent":
     case "manifest-incomplete": {
@@ -842,7 +922,10 @@ function recoveryGuidanceFor(action: CryptoStateRecoveryAction): string {
   }
 }
 
-function emitFailure(diagnostics: DiagnosticSink | undefined, failure: CryptoStateError): void {
+function emitFailure(
+  diagnostics: DiagnosticSink | undefined,
+  failure: CryptoStateError,
+): void {
   emitDiagnostic(diagnostics, "error", "private-crypto-state-failure", {
     path: failure.statePath,
     category: failure.category,

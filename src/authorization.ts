@@ -12,8 +12,6 @@ import { isValidMatrixEventId } from "./matrix-validation.js";
 import { hasOwn, isRecord } from "./object-validation.js";
 import { utf8ByteLength } from "./text-utils.js";
 
-
-
 export interface InReplyToRelation {
   readonly eventId: MatrixEventId;
 }
@@ -59,7 +57,8 @@ export interface InboundAuthorizationOptions {
   readonly clock?: Clock;
 }
 
-export type InboundAuthorizationConfig = InboundAuthorizationOptions | BridgeConfig;
+export type InboundAuthorizationConfig =
+  InboundAuthorizationOptions | BridgeConfig;
 
 export interface AcceptedInboundDecision {
   readonly accepted: true;
@@ -84,9 +83,7 @@ export interface OversizedInboundDecision {
 }
 
 export type InboundAuthorizationDecision =
-  | AcceptedInboundDecision
-  | RejectedInboundDecision
-  | OversizedInboundDecision;
+  AcceptedInboundDecision | RejectedInboundDecision | OversizedInboundDecision;
 
 interface ResolvedAuthorizationOptions {
   readonly allowedRooms: ReadonlySet<MatrixRoomId>;
@@ -108,7 +105,10 @@ function stringValue(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function iterableToSet(values: Iterable<string>, name: string): ReadonlySet<string> {
+function iterableToSet(
+  values: Iterable<string>,
+  name: string,
+): ReadonlySet<string> {
   if (typeof values === "string" || values === null || values === undefined) {
     throw new TypeError(`${name} must be an iterable of strings`);
   }
@@ -198,9 +198,10 @@ function diagnosticSinkFor(
   return limited;
 }
 
-function relationFromContent(
-  content: RecordLike,
-): { readonly relation?: { readonly eventId: MatrixEventId }; readonly valid: boolean } {
+function relationFromContent(content: RecordLike): {
+  readonly relation?: { readonly eventId: MatrixEventId };
+  readonly valid: boolean;
+} {
   if (!hasOwn(content, "m.relates_to")) {
     return { valid: true };
   }
@@ -225,7 +226,10 @@ function relationFromContent(
   return { valid: true, relation: { eventId } };
 }
 
-function hasExactlyOwnKeys(value: RecordLike, expected: readonly string[]): boolean {
+function hasExactlyOwnKeys(
+  value: RecordLike,
+  expected: readonly string[],
+): boolean {
   const keys = Reflect.ownKeys(value);
   return (
     keys.length === expected.length &&
@@ -314,11 +318,15 @@ function isStateEvent(event: RecordLike): boolean {
 
 export class InboundAuthorizer {
   readonly #options: ResolvedAuthorizationOptions;
+
   readonly #diagnostics: DiagnosticSink | undefined;
 
   constructor(options: InboundAuthorizationConfig) {
     this.#options = resolveOptions(options);
-    this.#diagnostics = diagnosticSinkFor(this.#options.diagnostics, this.#options.clock);
+    this.#diagnostics = diagnosticSinkFor(
+      this.#options.diagnostics,
+      this.#options.clock,
+    );
   }
 
   authorize(event: InboundMatrixEvent): InboundAuthorizationDecision {
@@ -327,11 +335,17 @@ export class InboundAuthorizer {
       return this.#reject(event, INBOUND_REJECTION_REASONS.invalidContent);
     }
 
-    if (typeof record.roomId !== "string" || !this.#options.allowedRooms.has(record.roomId)) {
+    if (
+      typeof record.roomId !== "string" ||
+      !this.#options.allowedRooms.has(record.roomId)
+    ) {
       return this.#reject(event, INBOUND_REJECTION_REASONS.roomNotAllowed);
     }
 
-    if (typeof record.sender !== "string" || record.sender === this.#options.bridgeUserId) {
+    if (
+      typeof record.sender !== "string" ||
+      record.sender === this.#options.bridgeUserId
+    ) {
       return typeof record.sender === "string"
         ? this.#reject(event, INBOUND_REJECTION_REASONS.selfEvent)
         : this.#reject(event, INBOUND_REJECTION_REASONS.senderNotAllowed);
@@ -346,7 +360,8 @@ export class InboundAuthorizer {
     if (record.isRedacted !== false) {
       return this.#reject(event, INBOUND_REJECTION_REASONS.redacted);
     }
-    const wireEncrypted = record.isEncrypted === true || record.isPlaintext === false;
+    const wireEncrypted =
+      record.isEncrypted === true || record.isPlaintext === false;
     if (this.#options.encryption === "required") {
       if (record.isEncrypted !== true || record.isDecrypted !== true) {
         return this.#reject(event, INBOUND_REJECTION_REASONS.encrypted);
@@ -355,7 +370,10 @@ export class InboundAuthorizer {
       return this.#reject(event, INBOUND_REJECTION_REASONS.encrypted);
     }
     if (record.type !== "m.room.message" || isStateEvent(record)) {
-      return this.#reject(event, INBOUND_REJECTION_REASONS.unsupportedEventType);
+      return this.#reject(
+        event,
+        INBOUND_REJECTION_REASONS.unsupportedEventType,
+      );
     }
     if (!isValidMatrixEventId(record.eventId)) {
       return this.#reject(event, INBOUND_REJECTION_REASONS.invalidEventId);
@@ -379,9 +397,10 @@ export class InboundAuthorizer {
       return this.#reject(event, INBOUND_REJECTION_REASONS.invalidRelation);
     }
 
-    const body = relation.relation === undefined
-      ? content.body
-      : stripReplyFallback(content.body);
+    const body =
+      relation.relation === undefined
+        ? content.body
+        : stripReplyFallback(content.body);
     if (body.trim().length === 0) {
       return this.#reject(event, INBOUND_REJECTION_REASONS.emptyBody);
     }
@@ -403,7 +422,9 @@ export class InboundAuthorizer {
       eventId: record.eventId,
       sender: record.sender,
       body,
-      ...(relation.relation === undefined ? {} : { inReplyTo: relation.relation }),
+      ...(relation.relation === undefined
+        ? {}
+        : { inReplyTo: relation.relation }),
     };
     return { accepted: true, kind: "accepted", event: normalized };
   }
@@ -417,7 +438,10 @@ export class InboundAuthorizer {
   }
 
   #diagnose(event: unknown, reason: InboundRejectionReason): void {
-    this.#diagnostics?.warn("inbound-rejected", diagnosticFieldsFor(event, reason));
+    this.#diagnostics?.warn(
+      "inbound-rejected",
+      diagnosticFieldsFor(event, reason),
+    );
   }
 }
 
@@ -427,4 +451,4 @@ export function createInboundAuthorizer(
   return new InboundAuthorizer(options);
 }
 
-export {isValidMatrixEventId} from "./matrix-validation.js";
+export { isValidMatrixEventId } from "./matrix-validation.js";

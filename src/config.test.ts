@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,7 +24,9 @@ import {
   validateConfiguration,
 } from "./config.js";
 
-async function withTemporaryRoot<T>(callback: (root: string) => Promise<T>): Promise<T> {
+async function withTemporaryRoot<T>(
+  callback: (root: string) => Promise<T>,
+): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), "matrix-acp-config-"));
   try {
     return await callback(root);
@@ -56,17 +67,26 @@ function validConfigText(
   ].join("\n");
 }
 
-async function expectConfigurationError(action: () => unknown): Promise<ConfigurationError> {
+async function expectConfigurationError(
+  action: () => unknown,
+): Promise<ConfigurationError> {
   try {
     await action();
   } catch (error) {
-    assert.ok(error instanceof ConfigurationError, `expected ConfigurationError, got ${String(error)}`);
+    assert.ok(
+      error instanceof ConfigurationError,
+      `expected ConfigurationError, got ${String(error)}`,
+    );
     return error;
   }
   assert.fail("expected a ConfigurationError");
 }
 
-async function writeToken(path: string, content: string | Uint8Array, mode = 0o400): Promise<void> {
+async function writeToken(
+  path: string,
+  content: string | Uint8Array,
+  mode = 0o400,
+): Promise<void> {
   try {
     await chmod(path, 0o600);
   } catch {
@@ -77,12 +97,17 @@ async function writeToken(path: string, content: string | Uint8Array, mode = 0o4
 }
 
 void test("parses the documented shape and applies every default limit", () => {
-  const config = parseConfigText(validConfigText("/tmp/matrix-acp-config-state"));
+  const config = parseConfigText(
+    validConfigText("/tmp/matrix-acp-config-state"),
+  );
 
   assert.deepEqual(config.limits, DEFAULT_LIMITS);
   assert.equal(config.stateDir, "/tmp/matrix-acp-config-state/state");
   assert.deepEqual(config.matrix.allowedRooms, ["!room:example.test"]);
-  assert.deepEqual(config.matrix.allowedSenders, ["@alice:example.test", "@bob:example.test"]);
+  assert.deepEqual(config.matrix.allowedSenders, [
+    "@alice:example.test",
+    "@bob:example.test",
+  ]);
 });
 
 void test("parses operator-supplied limits and TOML comments", () => {
@@ -127,7 +152,7 @@ void test("rejects duplicate and unknown TOML structure", async () => {
     `${valid}\n[matrix]\n`,
     `${valid}\n[unknown]\nkey = "value"\n`,
     `${valid}\nunknown_key = true\n`,
-    `${valid.replace('encryption = "disabled"', 'encryption = 1')}`,
+    `${valid.replace('encryption = "disabled"', "encryption = 1")}`,
     `${valid.replace('allowed_rooms = ["!room:example.test"]', 'allowed_rooms = ["!room:example.test", 1]')}`,
     `${valid}\n[limits]\nmax_input_bytes = "16384"\n`,
   ]) {
@@ -138,13 +163,21 @@ void test("rejects duplicate and unknown TOML structure", async () => {
 void test("accepts both encryption modes and rejects invalid identifiers or modes", async () => {
   const valid = validConfigText("/tmp/matrix-acp-config-state");
   assert.equal(
-    parseConfigText(valid.replace('encryption = "disabled"', 'encryption = "required"')).matrix.encryption,
+    parseConfigText(
+      valid.replace('encryption = "disabled"', 'encryption = "required"'),
+    ).matrix.encryption,
     "required",
   );
   const invalidSources = [
     valid.replace('user_id = "@bridge:example.test"', 'user_id = "Bridge"'),
-    valid.replace('allowed_rooms = ["!room:example.test"]', 'allowed_rooms = ["#room:example.test"]'),
-    valid.replace('allowed_senders = ["@alice:example.test", "@bob:example.test"]', 'allowed_senders = []'),
+    valid.replace(
+      'allowed_rooms = ["!room:example.test"]',
+      'allowed_rooms = ["#room:example.test"]',
+    ),
+    valid.replace(
+      'allowed_senders = ["@alice:example.test", "@bob:example.test"]',
+      "allowed_senders = []",
+    ),
     valid.replace(
       'allowed_senders = ["@alice:example.test", "@bob:example.test"]',
       'allowed_senders = ["@alice:example.test", "@alice:example.test"]',
@@ -165,8 +198,14 @@ void test("rejects TOML dates where the configuration schema requires scalar val
       `state_dir = ${tomlString("/tmp/matrix-acp-config-state/state")}`,
       "state_dir = 2024-01-01",
     ),
-    valid.replace('homeserver = "https://matrix.example.test"', "homeserver = 2024-01-01"),
-    valid.replace('allowed_rooms = ["!room:example.test"]', "allowed_rooms = [2024-01-01]"),
+    valid.replace(
+      'homeserver = "https://matrix.example.test"',
+      "homeserver = 2024-01-01",
+    ),
+    valid.replace(
+      'allowed_rooms = ["!room:example.test"]',
+      "allowed_rooms = [2024-01-01]",
+    ),
     valid.replace('encryption = "disabled"', "encryption = 2024-01-01"),
     `${valid}\n\n[limits]\nmax_input_bytes = 2024-01-01\n`,
   ];
@@ -189,7 +228,12 @@ void test("accepts safe homeserver URLs and rejects unsafe URL forms", async () 
 
   for (const homeserver of invalidUrls) {
     await expectConfigurationError(() =>
-      parseConfigText(valid.replace('homeserver = "https://matrix.example.test"', `homeserver = ${tomlString(homeserver)}`)),
+      parseConfigText(
+        valid.replace(
+          'homeserver = "https://matrix.example.test"',
+          `homeserver = ${tomlString(homeserver)}`,
+        ),
+      ),
     );
   }
 });
@@ -229,9 +273,19 @@ void test("enforces positive integer, minimum byte, and Node timer bounds", asyn
   }
 
   const maxTimerSource = `${valid}max_turn_seconds = 2147483\nshutdown_grace_seconds = 2147483\nstartup_timeout_seconds = 2147483\nmax_catchup_age_seconds = 2147483\n`;
-  assert.equal(parseConfigText(maxTimerSource).limits.maxTurnSeconds, 2_147_483);
-  assert.equal(parseConfigText(maxTimerSource).limits.maxCatchupAgeSeconds, 2_147_483);
-  assert.equal(parseConfigText(`${valid}max_activity_events_per_message = 1\n`).limits.maxActivityEventsPerMessage, 1);
+  assert.equal(
+    parseConfigText(maxTimerSource).limits.maxTurnSeconds,
+    2_147_483,
+  );
+  assert.equal(
+    parseConfigText(maxTimerSource).limits.maxCatchupAgeSeconds,
+    2_147_483,
+  );
+  assert.equal(
+    parseConfigText(`${valid}max_activity_events_per_message = 1\n`).limits
+      .maxActivityEventsPerMessage,
+    1,
+  );
 });
 
 void test("creates a private state directory and resolves existing ACP cwd once", async () => {
@@ -240,7 +294,9 @@ void test("creates a private state directory and resolves existing ACP cwd once"
     const tokenFile = join(root, "access-token");
     await writeToken(tokenFile, "matrix-token\n");
 
-    const config = await validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile })));
+    const config = await validateConfiguration(
+      parseConfigText(validConfigText(root, { stateDir, tokenFile })),
+    );
     assert.equal(config.stateDir, stateDir);
     assert.equal(config.acp.cwd, root);
     assert.equal(config.matrix.accessTokenFile, tokenFile);
@@ -262,11 +318,19 @@ void test("rejects insecure state, token, and path-component configurations", as
     await writeToken(tokenFile, "matrix-token\n");
 
     await chmod(stateDir, 0o750);
-    await expectConfigurationError(() => validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile }))));
+    await expectConfigurationError(() =>
+      validateConfiguration(
+        parseConfigText(validConfigText(root, { stateDir, tokenFile })),
+      ),
+    );
     await chmod(stateDir, 0o700);
 
     await chmod(tokenFile, 0o640);
-    await expectConfigurationError(() => validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile }))));
+    await expectConfigurationError(() =>
+      validateConfiguration(
+        parseConfigText(validConfigText(root, { stateDir, tokenFile })),
+      ),
+    );
     await chmod(tokenFile, 0o400);
 
     const symlinkParent = join(root, "token-link-parent");
@@ -275,7 +339,14 @@ void test("rejects insecure state, token, and path-component configurations", as
     await writeToken(join(realParent, "token"), "matrix-token\n");
     await symlink(realParent, symlinkParent);
     await expectConfigurationError(() =>
-      validateConfiguration(parseConfigText(validConfigText(root, { stateDir, tokenFile: join(symlinkParent, "token") }))),
+      validateConfiguration(
+        parseConfigText(
+          validConfigText(root, {
+            stateDir,
+            tokenFile: join(symlinkParent, "token"),
+          }),
+        ),
+      ),
     );
 
     const realState = join(root, "real-state");
@@ -283,7 +354,11 @@ void test("rejects insecure state, token, and path-component configurations", as
     await mkdir(realState, { mode: 0o700 });
     await symlink(realState, stateLink);
     await expectConfigurationError(() =>
-      validateConfiguration(parseConfigText(validConfigText(root, { stateDir: stateLink, tokenFile }))),
+      validateConfiguration(
+        parseConfigText(
+          validConfigText(root, { stateDir: stateLink, tokenFile }),
+        ),
+      ),
     );
   });
 });
@@ -315,21 +390,31 @@ void test("accepts only one nonempty token with an optional final LF and redacts
       "token with spaces",
       "token\t",
       "token\r\n",
-      new Uint8Array([0xFF, 0xFE]),
+      new Uint8Array([0xff, 0xfe]),
     ];
 
     for (const [index, content] of invalidContents.entries()) {
       await writeToken(tokenFile, content);
-      const error = await expectConfigurationError(() => readAccessTokenFile(tokenFile));
-      assert.match(error.message, /Matrix access token file|token/iu, `unexpected error for case ${index}`);
+      const error = await expectConfigurationError(() =>
+        readAccessTokenFile(tokenFile),
+      );
+      assert.match(
+        error.message,
+        /Matrix access token file|token/iu,
+        `unexpected error for case ${index}`,
+      );
     }
 
     await writeToken(tokenFile, "very-secret-token ");
-    const redacted = await expectConfigurationError(() => readAccessTokenFile(tokenFile));
+    const redacted = await expectConfigurationError(() =>
+      readAccessTokenFile(tokenFile),
+    );
     assert.doesNotMatch(redacted.message, /very-secret-token/u);
 
     await expectConfigurationError(() =>
-      loadConfigurationText(validConfigText(root, { stateDir: join(root, "state"), tokenFile })),
+      loadConfigurationText(
+        validConfigText(root, { stateDir: join(root, "state"), tokenFile }),
+      ),
     );
     const releasedAfterFailure = await acquireStateLock(join(root, "state"));
     await releasedAfterFailure.release();
@@ -337,7 +422,10 @@ void test("accepts only one nonempty token with an optional final LF and redacts
     await writeToken(tokenFile, "token-without-newline");
     assert.equal(await readAccessTokenFile(tokenFile), "token-without-newline");
     await writeToken(tokenFile, "token-with-final-newline\n");
-    assert.equal(await readAccessTokenFile(tokenFile), "token-with-final-newline");
+    assert.equal(
+      await readAccessTokenFile(tokenFile),
+      "token-with-final-newline",
+    );
   });
 });
 
@@ -348,7 +436,10 @@ void test("creates 0600 state files and exposes reusable lock release", async ()
     try {
       const stateFile = await openPrivateStateFile(stateDir, "session.json");
       try {
-        assert.equal((await lstat(join(stateDir, "session.json"))).mode & 0o7777, 0o600);
+        assert.equal(
+          (await lstat(join(stateDir, "session.json"))).mode & 0o7777,
+          0o600,
+        );
         await stateFile.writeFile("private");
       } finally {
         await stateFile.close();
@@ -363,7 +454,9 @@ void test("creates 0600 state files and exposes reusable lock release", async ()
     }
 
     assert.equal(first.released, true);
-    await expectConfigurationError(() => openPrivateStateFile(stateDir, "session.json"));
+    await expectConfigurationError(() =>
+      openPrivateStateFile(stateDir, "session.json"),
+    );
     const second = await acquireStateLock(stateDir);
     await second.release();
   });

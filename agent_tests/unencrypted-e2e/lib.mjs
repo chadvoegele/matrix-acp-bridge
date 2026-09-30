@@ -1,20 +1,19 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  readEnvironment as readSharedEnvironment,
-} from "../e2e-support/common.mjs";
+import { readEnvironment as readSharedEnvironment } from "../e2e-support/common.mjs";
 
 export const testDir = dirname(fileURLToPath(import.meta.url));
+
 export const defaultEnvironmentPath = join(testDir, "environment.json");
 
-
-export const readEnvironment = (path = defaultEnvironmentPath) => readSharedEnvironment(path, {
-  roleKeys: {
-    bridge: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
-    sender: ["userId", "deviceId", "tokenFile"],
-  },
-});
+export const readEnvironment = (path = defaultEnvironmentPath) =>
+  readSharedEnvironment(path, {
+    roleKeys: {
+      bridge: ["userId", "deviceId", "tokenFile", "stateDir", "configFile"],
+      sender: ["userId", "deviceId", "tokenFile"],
+    },
+  });
 
 export function makeConfig(environment) {
   // eslint-disable-next-line unicorn/consistent-function-scoping -- helper is local to config rendering
@@ -39,4 +38,8 @@ shutdown_grace_seconds = 30
 `;
 }
 
-export {readToken, repoRoot, writePrivateFile} from "../e2e-support/common.mjs";
+export {
+  readToken,
+  repoRoot,
+  writePrivateFile,
+} from "../e2e-support/common.mjs";

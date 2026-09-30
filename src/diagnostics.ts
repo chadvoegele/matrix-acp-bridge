@@ -5,7 +5,9 @@ import type { Clock } from "./clock.js";
 import type { Unsubscribe } from "./cancellation.js";
 
 export type DiagnosticLevel = "debug" | "info" | "warn" | "error";
+
 export type DiagnosticValue = string | number | boolean | null;
+
 export type DiagnosticFields = Readonly<Record<string, DiagnosticValue>>;
 
 export interface DiagnosticRecord {
@@ -80,6 +82,7 @@ function orderedFields(fields: DiagnosticFields): DiagnosticFields {
  */
 export class StderrDiagnosticSink implements DiagnosticSink {
   readonly #clock: Clock;
+
   readonly #writeLine: DiagnosticWriter;
 
   constructor(options: StderrDiagnosticSinkOptions = {}) {
@@ -87,7 +90,11 @@ export class StderrDiagnosticSink implements DiagnosticSink {
     this.#writeLine = options.writeLine ?? defaultWriter;
   }
 
-  emit(level: DiagnosticLevel, event: string, fields: DiagnosticFields = {}): void {
+  emit(
+    level: DiagnosticLevel,
+    event: string,
+    fields: DiagnosticFields = {},
+  ): void {
     const record: DiagnosticRecord = {
       timestamp: new Date(this.#clock.now()).toISOString(),
       level,
@@ -170,9 +177,13 @@ function rateLimitKey(fields: DiagnosticFields): string | undefined {
  */
 export class RateLimitedDiagnosticSink implements DiagnosticSink {
   readonly #delegate: DiagnosticSink;
+
   readonly #clock: Clock;
+
   readonly #burst: number;
+
   readonly #refillIntervalMs: number;
+
   readonly #buckets = new Map<string, DiagnosticBucket>();
 
   constructor(
@@ -191,7 +202,11 @@ export class RateLimitedDiagnosticSink implements DiagnosticSink {
     );
   }
 
-  emit(level: DiagnosticLevel, event: string, fields: DiagnosticFields = {}): void {
+  emit(
+    level: DiagnosticLevel,
+    event: string,
+    fields: DiagnosticFields = {},
+  ): void {
     const key = rateLimitKey(fields);
     if (key === undefined) {
       this.#delegate.emit(level, event, fields);

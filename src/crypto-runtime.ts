@@ -15,14 +15,23 @@ import type { CryptoManifest } from "./crypto-state.js";
 export const SAS_VERIFICATION_METHOD = "m.sas.v1" as const;
 
 export const CRYPTO_DATABASE_DIRECTORY = "matrix-crypto" as const;
+
 export const CRYPTO_MANIFEST_FILE = "crypto-state.json" as const;
+
 export const CRYPTO_MANIFEST_SCHEMA_VERSION = 1 as const;
+
 export const CRYPTO_TTY_PATH = "/dev/tty" as const;
 
 /** Return the only two bridge-defined paths beneath a validated state dir. */
 export function cryptoStatePaths(stateDir: string): CryptoStatePaths {
-  if (typeof stateDir !== "string" || stateDir.length === 0 || !stateDir.startsWith("/")) {
-    throw new TypeError("Crypto state paths require an absolute state directory");
+  if (
+    typeof stateDir !== "string" ||
+    stateDir.length === 0 ||
+    !stateDir.startsWith("/")
+  ) {
+    throw new TypeError(
+      "Crypto state paths require an absolute state directory",
+    );
   }
   return {
     databasePath: join(stateDir, CRYPTO_DATABASE_DIRECTORY),
@@ -40,16 +49,25 @@ export class CryptoContractError extends Error {
 }
 
 /** Validate a command against the ordinary, already parsed Matrix config. */
-export function validateCryptoCommand(command: CryptoCommand, matrix: MatrixConfig): void {
+export function validateCryptoCommand(
+  command: CryptoCommand,
+  matrix: MatrixConfig,
+): void {
   if (matrix.encryption !== "required") {
-    throw new CryptoContractError("Crypto commands require matrix.encryption = \"required\"");
+    throw new CryptoContractError(
+      'Crypto commands require matrix.encryption = "required"',
+    );
   }
   if (command.kind === "verify") {
     if (!isValidMatrixDeviceId(command.deviceId)) {
-      throw new CryptoContractError("The verification target device ID is invalid");
+      throw new CryptoContractError(
+        "The verification target device ID is invalid",
+      );
     }
     if (command.deviceId === matrix.deviceId) {
-      throw new CryptoContractError("The verification target device must differ from the bridge device");
+      throw new CryptoContractError(
+        "The verification target device must differ from the bridge device",
+      );
     }
   }
 }
@@ -99,10 +117,12 @@ export function cryptoManifestMatches(
   matrix: Pick<MatrixConfig, "homeserver" | "userId" | "deviceId">,
   fingerprints: CryptoDeviceKeyFingerprints,
 ): boolean {
-  return manifest.schemaVersion === CRYPTO_MANIFEST_SCHEMA_VERSION &&
+  return (
+    manifest.schemaVersion === CRYPTO_MANIFEST_SCHEMA_VERSION &&
     manifest.homeserver === matrix.homeserver &&
     manifest.userId === matrix.userId &&
     manifest.deviceId === matrix.deviceId &&
     manifest.ed25519Fingerprint === fingerprints.ed25519Fingerprint &&
-    manifest.curve25519Fingerprint === fingerprints.curve25519Fingerprint;
+    manifest.curve25519Fingerprint === fingerprints.curve25519Fingerprint
+  );
 }

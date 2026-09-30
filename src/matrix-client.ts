@@ -12,10 +12,21 @@ import { systemClock } from "./clock.js";
 import type { Clock } from "./clock.js";
 import { RateLimitedDiagnosticSink } from "./diagnostics.js";
 import { isValidMatrixEventId } from "./matrix-validation.js";
-import { configureNodeIndexedDb as configureNodeIndexedDatabase, flushNodeIndexedDb as flushNodeIndexedDatabase } from "./node-indexeddb.js";
-import { isRecord, numberProperty, stringProperty } from "./object-validation.js";
+import {
+  configureNodeIndexedDb as configureNodeIndexedDatabase,
+  flushNodeIndexedDb as flushNodeIndexedDatabase,
+} from "./node-indexeddb.js";
+import {
+  isRecord,
+  numberProperty,
+  stringProperty,
+} from "./object-validation.js";
 import type { BridgeConfig, MatrixConfig } from "./config.js";
-import type { DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
+import type {
+  DiagnosticSink,
+  FatalError,
+  FatalErrorListener,
+} from "./diagnostics.js";
 import type { Unsubscribe } from "./cancellation.js";
 
 import type {
@@ -31,14 +42,21 @@ import type { MatrixSafeHtml } from "./matrix-html.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
 export type { BridgeConfig, MatrixConfig } from "./config.js";
+
 export type { FatalError, FatalErrorListener } from "./diagnostics.js";
+
 export type { Unsubscribe } from "./cancellation.js";
+
 export { matrixHtml } from "./matrix-html.js";
+
 export type { MatrixSafeHtml } from "./matrix-html.js";
 
 export type MatrixRoomId = string;
+
 export type MatrixUserId = string;
+
 export type MatrixEventId = string;
+
 export type MatrixDeviceId = string;
 
 export interface MatrixHtmlMessage {
@@ -57,12 +75,7 @@ export interface MatrixIdentity {
 
 /** Normalized lifecycle phases exposed by the Matrix verification adapter. */
 export type CryptoVerificationRequestPhase =
-  | "unsent"
-  | "requested"
-  | "ready"
-  | "started"
-  | "cancelled"
-  | "done";
+  "unsent" | "requested" | "ready" | "started" | "cancelled" | "done";
 
 /** SDK-independent handle for one to-device verification request. */
 export interface CryptoVerificationRequestHandle {
@@ -79,7 +92,9 @@ export interface CryptoVerificationRequestHandle {
   supportsMethod(method: string): boolean;
   /** Fires when the request phase, capabilities, or verifier changes. */
   onChange(listener: () => void): Unsubscribe;
-  startVerification(method: typeof SAS_VERIFICATION_METHOD): Promise<CryptoSasVerifier>;
+  startVerification(
+    method: typeof SAS_VERIFICATION_METHOD,
+  ): Promise<CryptoSasVerifier>;
   cancel(): Promise<void>;
 }
 
@@ -110,6 +125,7 @@ export interface MatrixDecryptedEvent {
 }
 
 export type MatrixDecryptionListener = (event: MatrixDecryptedEvent) => void;
+
 export type MatrixDecryptionFailureListener = (
   failure: CryptoFailureClassification,
   metadata: Readonly<{
@@ -146,7 +162,9 @@ export interface MatrixSyncBatch {
   readonly rooms: readonly MatrixSyncRoomBatch[];
 }
 
-export type MatrixSyncBatchListener = (batch: MatrixSyncBatch) => void | Promise<void>;
+export type MatrixSyncBatchListener = (
+  batch: MatrixSyncBatch,
+) => void | Promise<void>;
 
 export interface MatrixSyncStartOptions {
   /** Keep Matrix event intake closed for one-shot crypto readiness operations. */
@@ -194,7 +212,11 @@ export interface MatrixReadReceipt {
 }
 
 export interface MatrixTypingAdapter {
-  sendTyping(roomId: MatrixRoomId, isTyping: boolean, timeoutMs: number): Promise<void>;
+  sendTyping(
+    roomId: MatrixRoomId,
+    isTyping: boolean,
+    timeoutMs: number,
+  ): Promise<void>;
 }
 
 export interface MatrixReceiptAdapter {
@@ -202,7 +224,8 @@ export interface MatrixReceiptAdapter {
 }
 
 /** Required ephemeral-operation contract for the Matrix adapter. */
-export interface MatrixEphemeralAdapter extends MatrixTypingAdapter, MatrixReceiptAdapter {}
+export interface MatrixEphemeralAdapter
+  extends MatrixTypingAdapter, MatrixReceiptAdapter {}
 
 /** Matrix surface used by BridgeCoordinator after sync composition is set up. */
 export interface MatrixBridgeAdapter {
@@ -212,7 +235,11 @@ export interface MatrixBridgeAdapter {
   /** Sends safe HTML text or an edit; returns the event ID to use for later edits. */
   sendHtmlMessage?(message: MatrixHtmlMessage): Promise<MatrixEventId>;
   /** Send typing state for an active ACP turn. */
-  sendTyping?(roomId: MatrixRoomId, isTyping: boolean, timeoutMs: number): Promise<void>;
+  sendTyping?(
+    roomId: MatrixRoomId,
+    isTyping: boolean,
+    timeoutMs: number,
+  ): Promise<void>;
   /** Sends the unthreaded `m.read` receipt for the supplied event. */
   sendReadReceipt?(roomId: MatrixRoomId, eventId: MatrixEventId): Promise<void>;
   stop(): Promise<void>;
@@ -246,21 +273,21 @@ export interface MatrixCryptoVerificationAdapter extends MatrixCryptoAdapter {
    * Refresh and validate one exact remote device in the Rust crypto store.
    * A false result means the homeserver did not provide that exact device.
    */
-  refreshDeviceKeys(userId: MatrixUserId, deviceId: MatrixDeviceId): Promise<boolean>;
+  refreshDeviceKeys(
+    userId: MatrixUserId,
+    deviceId: MatrixDeviceId,
+  ): Promise<boolean>;
   requestDeviceVerification(
     userId: MatrixUserId,
     deviceId: MatrixDeviceId,
   ): Promise<CryptoVerificationRequestHandle>;
-  onVerificationRequest(listener: (request: CryptoVerificationRequestHandle) => void): Unsubscribe;
+  onVerificationRequest(
+    listener: (request: CryptoVerificationRequestHandle) => void,
+  ): Unsubscribe;
 }
 
 export type MatrixSyncState =
-  | "ERROR"
-  | "PREPARED"
-  | "STOPPED"
-  | "SYNCING"
-  | "CATCHUP"
-  | "RECONNECTING";
+  "ERROR" | "PREPARED" | "STOPPED" | "SYNCING" | "CATCHUP" | "RECONNECTING";
 
 export interface MatrixSyncStateChange {
   readonly state: MatrixSyncState;
@@ -325,32 +352,49 @@ export interface MatrixSdkClientLike {
     readonly useIndexedDB?: boolean;
     readonly cryptoDatabasePrefix?: string;
   }): Promise<void>;
-  getCrypto?(): {
-    getOwnDeviceKeys(): Promise<unknown>;
-    isEncryptionEnabledInRoom?(roomId: string): Promise<boolean>;
-    getUserDeviceInfo?(
-      userIds: string[],
-      downloadUncached?: boolean,
-    ): Promise<unknown>;
-    processDeviceLists?(deviceLists: {
-      readonly changed?: readonly string[];
-      readonly left?: readonly string[];
-    }): Promise<void>;
-    onSyncCompleted?(
-      syncState: { readonly nextSyncToken?: string },
-    ): void | Promise<void>;
-    requestDeviceVerification?(userId: string, deviceId: string): Promise<unknown>;
-    getVerificationRequestsToDeviceInProgress?(userId: string): readonly unknown[];
-  } | undefined;
+  getCrypto?():
+    | {
+        getOwnDeviceKeys(): Promise<unknown>;
+        isEncryptionEnabledInRoom?(roomId: string): Promise<boolean>;
+        getUserDeviceInfo?(
+          userIds: string[],
+          downloadUncached?: boolean,
+        ): Promise<unknown>;
+        processDeviceLists?(deviceLists: {
+          readonly changed?: readonly string[];
+          readonly left?: readonly string[];
+        }): Promise<void>;
+        onSyncCompleted?(syncState: {
+          readonly nextSyncToken?: string;
+        }): void | Promise<void>;
+        requestDeviceVerification?(
+          userId: string,
+          deviceId: string,
+        ): Promise<unknown>;
+        getVerificationRequestsToDeviceInProgress?(
+          userId: string,
+        ): readonly unknown[];
+      }
+    | undefined;
   getRoom(roomId: string): MatrixSdkRoomLike | null | undefined;
   getJoinedRooms?(): Promise<{ readonly joined_rooms: readonly string[] }>;
-  roomState?(roomId: string): Promise<readonly {
-    readonly type?: string;
-    readonly content?: unknown;
-    readonly state_key?: string;
-  }[]>;
-  sendTyping?(roomId: string, isTyping: boolean, timeoutMs: number): Promise<unknown>;
-  sendReadReceipt?(event: unknown, receiptType?: string, unthreaded?: boolean): Promise<unknown>;
+  roomState?(roomId: string): Promise<
+    readonly {
+      readonly type?: string;
+      readonly content?: unknown;
+      readonly state_key?: string;
+    }[]
+  >;
+  sendTyping?(
+    roomId: string,
+    isTyping: boolean,
+    timeoutMs: number,
+  ): Promise<unknown>;
+  sendReadReceipt?(
+    event: unknown,
+    receiptType?: string,
+    unthreaded?: boolean,
+  ): Promise<unknown>;
   sendReadReceiptById?(roomId: string, eventId: string): Promise<unknown>;
   sendMessage(
     roomId: string,
@@ -428,8 +472,11 @@ function normalizedPublicFingerprint(value: unknown): string | undefined {
     return undefined;
   }
   const normalized = value.trim();
-  // eslint-disable-next-line no-control-regex -- fingerprints reject Unicode controls
-  if (normalized.length === 0 || /[\u0000-\u001F\u007F\u0080-\u009F\u2028\u2029]/u.test(normalized)) {
+  if (
+    normalized.length === 0 ||
+    // eslint-disable-next-line no-control-regex -- fingerprints reject Unicode controls
+    /[\u0000-\u001F\u007F\u0080-\u009F\u2028\u2029]/u.test(normalized)
+  ) {
     return undefined;
   }
   return normalized;
@@ -447,12 +494,19 @@ export interface MatrixSdkCryptoAdapterOptions {
 
 export class MatrixSdkCryptoAdapter implements MatrixCryptoVerificationAdapter {
   readonly #client: MatrixSdkClientLike;
+
   readonly #useNodeIndexedDb: boolean;
+
   #closed = false;
+
   #userId: string | undefined;
+
   #usesNodeIndexedDb = false;
 
-  constructor(client: MatrixSdkClientLike, options: MatrixSdkCryptoAdapterOptions = {}) {
+  constructor(
+    client: MatrixSdkClientLike,
+    options: MatrixSdkCryptoAdapterOptions = {},
+  ) {
     this.#client = client;
     this.#useNodeIndexedDb = options.useNodeIndexedDb === true;
   }
@@ -466,7 +520,9 @@ export class MatrixSdkCryptoAdapter implements MatrixCryptoVerificationAdapter {
     }
     if (this.#useNodeIndexedDb) {
       await configureNodeIndexedDatabase(options.state.databasePath);
-      this.#usesNodeIndexedDb = (globalThis as unknown as Record<string, unknown>).indexedDB !== undefined;
+      this.#usesNodeIndexedDb =
+        (globalThis as unknown as Record<string, unknown>).indexedDB !==
+        undefined;
     }
     await this.#client.initRustCrypto({
       useIndexedDB: true,
@@ -483,10 +539,14 @@ export class MatrixSdkCryptoAdapter implements MatrixCryptoVerificationAdapter {
     if (crypto === undefined) {
       throw new Error("Rust crypto is not initialized");
     }
-    const keys = await crypto.getOwnDeviceKeys() as MatrixSdkOwnDeviceKeysLike;
+    const keys =
+      (await crypto.getOwnDeviceKeys()) as MatrixSdkOwnDeviceKeysLike;
     const ed25519Fingerprint = normalizedPublicFingerprint(keys?.ed25519);
     const curve25519Fingerprint = normalizedPublicFingerprint(keys?.curve25519);
-    if (ed25519Fingerprint === undefined || curve25519Fingerprint === undefined) {
+    if (
+      ed25519Fingerprint === undefined ||
+      curve25519Fingerprint === undefined
+    ) {
       throw new Error("Rust crypto returned invalid public device keys");
     }
     return { ed25519Fingerprint, curve25519Fingerprint };
@@ -576,9 +636,9 @@ export class MatrixSdkCryptoAdapter implements MatrixCryptoVerificationAdapter {
       }
     };
     this.#client.on("crypto.verificationRequestReceived", wrapped);
-    const existing = this.#client.getCrypto?.()?.getVerificationRequestsToDeviceInProgress?.(
-      this.#userId ?? "",
-    );
+    const existing = this.#client
+      .getCrypto?.()
+      ?.getVerificationRequestsToDeviceInProgress?.(this.#userId ?? "");
     if (existing !== undefined) {
       for (const request of existing) {
         queueMicrotask(() => wrapped(request));
@@ -587,7 +647,10 @@ export class MatrixSdkCryptoAdapter implements MatrixCryptoVerificationAdapter {
     return () => {
       active = false;
       if (this.#client.off === undefined) {
-        this.#client.removeListener?.("crypto.verificationRequestReceived", wrapped);
+        this.#client.removeListener?.(
+          "crypto.verificationRequestReceived",
+          wrapped,
+        );
       } else {
         this.#client.off("crypto.verificationRequestReceived", wrapped);
       }
@@ -595,7 +658,11 @@ export class MatrixSdkCryptoAdapter implements MatrixCryptoVerificationAdapter {
   }
 }
 
-function hasExactDevice(value: unknown, userId: string, deviceId: string): boolean {
+function hasExactDevice(
+  value: unknown,
+  userId: string,
+  deviceId: string,
+): boolean {
   if (!(value instanceof Map)) {
     return false;
   }
@@ -604,7 +671,11 @@ function hasExactDevice(value: unknown, userId: string, deviceId: string): boole
     return false;
   }
   const device = (devices as Map<unknown, unknown>).get(deviceId);
-  if (!isRecord(device) || device.userId !== userId || device.deviceId !== deviceId) {
+  if (
+    !isRecord(device) ||
+    device.userId !== userId ||
+    device.deviceId !== deviceId
+  ) {
     return false;
   }
   const keys = device.keys;
@@ -612,9 +683,15 @@ function hasExactDevice(value: unknown, userId: string, deviceId: string): boole
     return false;
   }
   const ed25519Key = (keys as Map<unknown, unknown>).get(`ed25519:${deviceId}`);
-  const curve25519Key = (keys as Map<unknown, unknown>).get(`curve25519:${deviceId}`);
-  return typeof ed25519Key === "string" && ed25519Key.length > 0 &&
-    typeof curve25519Key === "string" && curve25519Key.length > 0;
+  const curve25519Key = (keys as Map<unknown, unknown>).get(
+    `curve25519:${deviceId}`,
+  );
+  return (
+    typeof ed25519Key === "string" &&
+    ed25519Key.length > 0 &&
+    typeof curve25519Key === "string" &&
+    curve25519Key.length > 0
+  );
 }
 
 export const createMatrixCryptoAdapter = (
@@ -633,7 +710,10 @@ interface MatrixSdkVerificationRequestLike {
   accept?(): Promise<void>;
   on?(event: string, listener: (...args: unknown[]) => void): unknown;
   off?(event: string, listener: (...args: unknown[]) => void): unknown;
-  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(
+    event: string,
+    listener: (...args: unknown[]) => void,
+  ): unknown;
   startVerification?(method: string): Promise<unknown>;
   cancel?(parameters?: unknown): Promise<void>;
 }
@@ -656,7 +736,10 @@ interface MatrixSdkSasCallbacksLike {
 interface MatrixSdkVerifierLike {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   off?(event: string, listener: (...args: unknown[]) => void): unknown;
-  removeListener?(event: string, listener: (...args: unknown[]) => void): unknown;
+  removeListener?(
+    event: string,
+    listener: (...args: unknown[]) => void,
+  ): unknown;
   verify(): Promise<void>;
   cancel?(error: Error): void;
 }
@@ -665,7 +748,11 @@ class MatrixSdkSasVerifier implements CryptoSasVerifier {
   readonly #verifier: MatrixSdkVerifierLike;
 
   constructor(verifier: unknown) {
-    if (!isRecord(verifier) || typeof verifier.verify !== "function" || typeof verifier.on !== "function") {
+    if (
+      !isRecord(verifier) ||
+      typeof verifier.verify !== "function" ||
+      typeof verifier.on !== "function"
+    ) {
       throw new Error("Matrix SAS verifier is invalid");
     }
     this.#verifier = verifier as unknown as MatrixSdkVerifierLike;
@@ -673,8 +760,12 @@ class MatrixSdkSasVerifier implements CryptoSasVerifier {
 
   onShowSas(listener: (sas: CryptoSasCallbacks) => void): Unsubscribe {
     const wrapped = (value: unknown): void => {
-      if (!isRecord(value) || typeof value.confirm !== "function" ||
-          typeof value.mismatch !== "function" || typeof value.cancel !== "function") {
+      if (
+        !isRecord(value) ||
+        typeof value.confirm !== "function" ||
+        typeof value.mismatch !== "function" ||
+        typeof value.cancel !== "function"
+      ) {
         return;
       }
       const raw = value as unknown as MatrixSdkSasCallbacksLike;
@@ -715,6 +806,7 @@ class MatrixSdkSasVerifier implements CryptoSasVerifier {
 
 class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
   readonly #request: MatrixSdkVerificationRequestLike;
+
   readonly #binding: MatrixSdkVerificationRequestBinding | undefined;
 
   constructor(request: unknown, binding?: MatrixSdkVerificationRequestBinding) {
@@ -728,13 +820,13 @@ class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
   get userId(): string {
     return typeof this.#request.otherUserId === "string"
       ? this.#request.otherUserId
-      : this.#binding?.userId ?? "";
+      : (this.#binding?.userId ?? "");
   }
 
   get deviceId(): string {
     return typeof this.#request.otherDeviceId === "string"
       ? this.#request.otherDeviceId
-      : this.#binding?.deviceId ?? "";
+      : (this.#binding?.deviceId ?? "");
   }
 
   get initiatedByMe(): boolean {
@@ -774,7 +866,9 @@ class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
   }
 
   get chosenMethod(): string | undefined {
-    return typeof this.#request.chosenMethod === "string" ? this.#request.chosenMethod : undefined;
+    return typeof this.#request.chosenMethod === "string"
+      ? this.#request.chosenMethod
+      : undefined;
   }
 
   get verifier(): CryptoSasVerifier | undefined {
@@ -786,7 +880,9 @@ class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
 
   supportsMethod(method: string): boolean {
     if (this.#request.otherPartySupportsMethod === undefined) {
-      throw new Error("Matrix verification request capability checks are unavailable");
+      throw new Error(
+        "Matrix verification request capability checks are unavailable",
+      );
     }
     try {
       return this.#request.otherPartySupportsMethod(method);
@@ -808,7 +904,9 @@ class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
 
   onChange(listener: () => void): Unsubscribe {
     if (this.#request.on === undefined) {
-      throw new Error("Matrix verification request change events are unavailable");
+      throw new Error(
+        "Matrix verification request change events are unavailable",
+      );
     }
     const wrapped = (): void => listener();
     try {
@@ -825,12 +923,16 @@ class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
     };
   }
 
-  async startVerification(method: typeof SAS_VERIFICATION_METHOD): Promise<CryptoSasVerifier> {
+  async startVerification(
+    method: typeof SAS_VERIFICATION_METHOD,
+  ): Promise<CryptoSasVerifier> {
     if (this.#request.startVerification === undefined) {
       throw new Error("Matrix verification request cannot start SAS");
     }
     try {
-      return new MatrixSdkSasVerifier(await this.#request.startVerification(method));
+      return new MatrixSdkSasVerifier(
+        await this.#request.startVerification(method),
+      );
     } catch {
       throw new Error("Matrix SAS verification could not be started");
     }
@@ -841,7 +943,9 @@ class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
       throw new Error("Matrix verification request cannot be cancelled");
     }
     try {
-      await this.#request.cancel({ reason: "Manual SAS verification cancelled" });
+      await this.#request.cancel({
+        reason: "Manual SAS verification cancelled",
+      });
     } catch {
       throw new Error("Matrix verification request cancellation failed");
     }
@@ -855,6 +959,7 @@ class MatrixSdkVerificationRequest implements CryptoVerificationRequestHandle {
  */
 export class MatrixAdapterError extends Error {
   readonly operation: MatrixOperation;
+
   readonly failure: MatrixFailureClassification;
 
   constructor(
@@ -910,12 +1015,24 @@ interface MatrixSdkLogger {
 }
 
 const silentMatrixSdkLogger: MatrixSdkLogger = {
-  trace() { /* Matrix diagnostics are disabled for the ACP process. */ },
-  debug() { /* Matrix diagnostics are disabled for the ACP process. */ },
-  info() { /* Matrix diagnostics are disabled for the ACP process. */ },
-  warn() { /* Matrix diagnostics are disabled for the ACP process. */ },
-  error() { /* Matrix diagnostics are disabled for the ACP process. */ },
-  log() { /* Matrix diagnostics are disabled for the ACP process. */ },
+  trace() {
+    /* Matrix diagnostics are disabled for the ACP process. */
+  },
+  debug() {
+    /* Matrix diagnostics are disabled for the ACP process. */
+  },
+  info() {
+    /* Matrix diagnostics are disabled for the ACP process. */
+  },
+  warn() {
+    /* Matrix diagnostics are disabled for the ACP process. */
+  },
+  error() {
+    /* Matrix diagnostics are disabled for the ACP process. */
+  },
+  log() {
+    /* Matrix diagnostics are disabled for the ACP process. */
+  },
   getChild() {
     return silentMatrixSdkLogger;
   },
@@ -935,7 +1052,9 @@ function silenceMatrixSdkRootLogger(): void {
 }
 
 function own(value: MatrixErrorRecord, key: string): unknown {
-  return Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined;
+  return Object.prototype.hasOwnProperty.call(value, key)
+    ? value[key]
+    : undefined;
 }
 
 function property(value: MatrixErrorRecord, key: string): unknown {
@@ -948,7 +1067,11 @@ function retryDelayFromError(error: unknown): number | undefined {
     if (typeof getRetryAfterMs === "function") {
       try {
         const result = (getRetryAfterMs as () => unknown).call(error);
-        if (typeof result === "number" && Number.isFinite(result) && result >= 0) {
+        if (
+          typeof result === "number" &&
+          Number.isFinite(result) &&
+          result >= 0
+        ) {
           return result;
         }
       } catch {
@@ -959,7 +1082,11 @@ function retryDelayFromError(error: unknown): number | undefined {
 
     const data = property(error, "data");
     const retryAfterMs = numberProperty(data, "retry_after_ms");
-    if (retryAfterMs !== undefined && Number.isInteger(retryAfterMs) && retryAfterMs >= 0) {
+    if (
+      retryAfterMs !== undefined &&
+      Number.isInteger(retryAfterMs) &&
+      retryAfterMs >= 0
+    ) {
       return retryAfterMs;
     }
 
@@ -968,7 +1095,10 @@ function retryDelayFromError(error: unknown): number | undefined {
       const get = property(headers, "get");
       if (typeof get === "function") {
         try {
-          const value = (get as (name: string) => unknown).call(headers, "Retry-After");
+          const value = (get as (name: string) => unknown).call(
+            headers,
+            "Retry-After",
+          );
           const parsed = parseRetryAfterHeader(value);
           if (parsed !== undefined) {
             return parsed;
@@ -1018,10 +1148,16 @@ export function classifyMatrixError(
   error: unknown,
   attempts = 0,
 ): MatrixFailureClassification {
-  const httpStatus = numberProperty(error, "httpStatus", "statusCode", "status");
+  const httpStatus = numberProperty(
+    error,
+    "httpStatus",
+    "statusCode",
+    "status",
+  );
   const data = isRecord(error) ? own(error, "data") : undefined;
   const errcode =
-    stringProperty(error, "errcode", "errorCode") ?? stringProperty(data, "errcode");
+    stringProperty(error, "errcode", "errorCode") ??
+    stringProperty(data, "errcode");
   const name = stringProperty(error, "name");
   const errorCode = stringProperty(error, "code");
   const sdkDelay = sdkRetryDelay(error, Math.max(0, attempts));
@@ -1049,7 +1185,9 @@ export function classifyMatrixError(
     name === "AbortError" ||
     name === "TimeoutError" ||
     errorCode === "ETIMEDOUT";
-  const retryable = !explicitlyPermanent && (isTransientStatus || isTransientTimeout || sdkRetryable);
+  const retryable =
+    !explicitlyPermanent &&
+    (isTransientStatus || isTransientTimeout || sdkRetryable);
   const normalizedSdkRetryable = explicitlyPermanent ? false : sdkRetryable;
   const kind = retryable ? "transient" : "permanent";
 
@@ -1065,9 +1203,7 @@ export function classifyMatrixError(
 
   const retryAfterMs =
     retryDelayFromError(error) ??
-    (sdkDelay >= 0
-      ? sdkDelay
-      : 1000 * 2 ** Math.min(Math.max(0, attempts), 4));
+    (sdkDelay >= 0 ? sdkDelay : 1000 * 2 ** Math.min(Math.max(0, attempts), 4));
   return {
     kind,
     retryable,
@@ -1090,11 +1226,17 @@ function transientFailure(): MatrixFailureClassification {
 function looksLikeCryptoFailure(error: unknown): boolean {
   const record = isRecord(error) ? error : undefined;
   const code = stringProperty(record, "code", "errcode", "errorCode", "name");
-  if (code !== undefined && /crypto|encrypt|olm|megolm|room.?key|device.?key/iu.test(code)) {
+  if (
+    code !== undefined &&
+    /crypto|encrypt|olm|megolm|room.?key|device.?key/iu.test(code)
+  ) {
     return true;
   }
   const message = stringProperty(record, "message");
-  return message !== undefined && /crypto|encrypt|olm|megolm|room.?key|device.?key/iu.test(message);
+  return (
+    message !== undefined &&
+    /crypto|encrypt|olm|megolm|room.?key|device.?key/iu.test(message)
+  );
 }
 
 function matrixConfigFrom(config: MatrixConfig | BridgeConfig): MatrixConfig {
@@ -1104,7 +1246,9 @@ function matrixConfigFrom(config: MatrixConfig | BridgeConfig): MatrixConfig {
   return config;
 }
 
-function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClientLike {
+function defaultClientFactory(
+  options: MatrixClientCreateOptions,
+): MatrixSdkClientLike {
   let client: MatrixSdkClientLike | undefined;
   let loading: Promise<MatrixSdkClientLike> | undefined;
   const subscriptions: SdkSubscription[] = [];
@@ -1181,7 +1325,9 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
       return client?.getRoom(roomId);
     },
     getJoinedRooms() {
-      return load().then((loaded) => loaded.getJoinedRooms?.() ?? { joined_rooms: [] });
+      return load().then(
+        (loaded) => loaded.getJoinedRooms?.() ?? { joined_rooms: [] },
+      );
     },
     roomState(roomId) {
       return load().then((loaded) => loaded.roomState?.(roomId) ?? []);
@@ -1259,46 +1405,80 @@ interface SdkSubscription {
 
 export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   readonly #config: MatrixConfig;
+
   readonly #client: MatrixSdkClientLike;
+
   readonly #crypto: MatrixCryptoAdapter | undefined;
+
   readonly #diagnostics: DiagnosticSink | undefined;
+
   readonly #clock: Clock;
+
   readonly #configuredRooms: ReadonlySet<string>;
+
   readonly #initialSyncLimit: number;
 
   #lifecycle: Lifecycle = "idle";
+
   #intakeStopped = false;
+
   #intakeEnabled = true;
+
   #prepared = false;
+
   #fatalEmitted = false;
+
   #sdkStopped = false;
+
   #cryptoInitialized = false;
+
   #cryptoClosed = false;
+
   #lastSyncState: MatrixSyncState | null = null;
 
   readonly #syncStateListeners = new Set<MatrixSyncStateListener>();
+
   readonly #syncBatchListeners = new Set<MatrixSyncBatchListener>();
+
   readonly #fatalListeners = new Set<FatalErrorListener>();
+
   readonly #decryptedListeners = new Set<MatrixDecryptionListener>();
-  readonly #decryptionFailureListeners = new Set<MatrixDecryptionFailureListener>();
+
+  readonly #decryptionFailureListeners =
+    new Set<MatrixDecryptionFailureListener>();
+
   readonly #sdkSubscriptions: SdkSubscription[] = [];
+
   readonly #eventIds = new Set<string>();
+
   readonly #eventOrder: string[] = [];
+
   readonly #encryptedEvents = new Map<string, EncryptedEventRecord>();
+
   readonly #eventContexts = new Map<string, EventContext>();
+
   readonly #validatedRooms = new Map<string, boolean>();
+
   readonly #pendingBatchEvents: InboundMatrixEvent[] = [];
+
   readonly #pendingBatchLimitedRooms = new Set<string>();
 
   #firstBatch = true;
+
   #nextEventOrder = 0;
+
   #syncBatchInFlight = false;
+
   #pendingBatchReady = false;
+
   #outage: MatrixOutage | undefined;
 
   #resolvePrepared: (() => void) | undefined;
+
   #rejectPrepared: ((error: unknown) => void) | undefined;
+
   #startPromise: Promise<void> | undefined;
+
   #stopPromise: Promise<void> | undefined;
 
   constructor(
@@ -1319,13 +1499,17 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
 
     this.#configuredRooms = new Set(this.#config.allowedRooms);
-    this.#initialSyncLimit = "limits" in config ? config.limits.initialSyncTimelineLimit : 100;
-    this.#diagnostics = options.diagnostics === undefined || options.diagnostics instanceof RateLimitedDiagnosticSink
-      ? options.diagnostics
-      : new RateLimitedDiagnosticSink(options.diagnostics);
+    this.#initialSyncLimit =
+      "limits" in config ? config.limits.initialSyncTimelineLimit : 100;
+    this.#diagnostics =
+      options.diagnostics === undefined ||
+      options.diagnostics instanceof RateLimitedDiagnosticSink
+        ? options.diagnostics
+        : new RateLimitedDiagnosticSink(options.diagnostics);
     this.#clock = options.clock ?? systemClock;
     const factory = options.clientFactory ?? defaultClientFactory;
-    this.#client = options.client ??
+    this.#client =
+      options.client ??
       factory({
         baseUrl: this.#config.homeserver,
         accessToken,
@@ -1336,11 +1520,15 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
           ? { verificationMethods: [SAS_VERIFICATION_METHOD] }
           : {}),
       });
-    this.#crypto = this.#config.encryption === "required"
-      ? options.cryptoAdapter ?? createMatrixCryptoAdapter(this.#client, {
-        useNodeIndexedDb: options.client === undefined && options.clientFactory === undefined,
-      })
-      : undefined;
+    this.#crypto =
+      this.#config.encryption === "required"
+        ? (options.cryptoAdapter ??
+          createMatrixCryptoAdapter(this.#client, {
+            useNodeIndexedDb:
+              options.client === undefined &&
+              options.clientFactory === undefined,
+          }))
+        : undefined;
   }
 
   /** The SDK client is intentionally not exposed outside the adapter. */
@@ -1353,7 +1541,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     try {
       response = await this.#client.whoami();
     } catch (error) {
-      throw this.#operationError("whoami", error, "Matrix identity request failed");
+      throw this.#operationError(
+        "whoami",
+        error,
+        "Matrix identity request failed",
+      );
     }
 
     if (!isRecord(response)) {
@@ -1365,8 +1557,12 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
     const userId = own(response, "user_id");
     const deviceId = own(response, "device_id");
-    if (typeof userId !== "string" || userId.length === 0 ||
-        typeof deviceId !== "string" || deviceId.length === 0) {
+    if (
+      typeof userId !== "string" ||
+      userId.length === 0 ||
+      typeof deviceId !== "string" ||
+      deviceId.length === 0
+    ) {
       throw new MatrixAdapterError(
         "whoami",
         "Matrix identity response is missing a user or device ID",
@@ -1418,7 +1614,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
 
   /** Obtain only the normalized public keys needed by the bridge manifest. */
   async getDeviceKeyFingerprints(): Promise<CryptoDeviceKeyFingerprints> {
-    if (this.#config.encryption !== "required" || this.#crypto === undefined || !this.#cryptoInitialized) {
+    if (
+      this.#config.encryption !== "required" ||
+      this.#crypto === undefined ||
+      !this.#cryptoInitialized
+    ) {
       throw new MatrixAdapterError(
         "start",
         "Matrix Rust crypto is not initialized",
@@ -1441,8 +1641,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     if (
       this.#config.encryption !== "required" ||
       this.#crypto === undefined ||
-      typeof (this.#crypto as Partial<MatrixCryptoVerificationAdapter>).requestDeviceVerification !== "function" ||
-      typeof (this.#crypto as Partial<MatrixCryptoVerificationAdapter>).onVerificationRequest !== "function"
+      typeof (this.#crypto as Partial<MatrixCryptoVerificationAdapter>)
+        .requestDeviceVerification !== "function" ||
+      typeof (this.#crypto as Partial<MatrixCryptoVerificationAdapter>)
+        .onVerificationRequest !== "function"
     ) {
       throw new MatrixAdapterError(
         "start",
@@ -1494,19 +1696,23 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return this.#startPromise;
     }
     if (this.#lifecycle === "stopped") {
-      return Promise.reject(new MatrixAdapterError(
-        "start",
-        "The Matrix adapter has been stopped",
-        permanentFailure(),
-      ));
+      return Promise.reject(
+        new MatrixAdapterError(
+          "start",
+          "The Matrix adapter has been stopped",
+          permanentFailure(),
+        ),
+      );
     }
 
     if (this.#config.encryption === "required" && !this.#cryptoInitialized) {
-      return Promise.reject(new MatrixAdapterError(
-        "start",
-        "Matrix Rust crypto must be initialized before sync",
-        permanentFailure(),
-      ));
+      return Promise.reject(
+        new MatrixAdapterError(
+          "start",
+          "Matrix Rust crypto must be initialized before sync",
+          permanentFailure(),
+        ),
+      );
     }
 
     this.#lifecycle = "starting";
@@ -1530,11 +1736,13 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     this.#encryptedEvents.clear();
     this.#eventContexts.clear();
     if (this.#lifecycle === "starting") {
-      this.#rejectPrepared?.(new MatrixAdapterError(
-        "start",
-        "Matrix intake stopped during startup",
-        permanentFailure(),
-      ));
+      this.#rejectPrepared?.(
+        new MatrixAdapterError(
+          "start",
+          "Matrix intake stopped during startup",
+          permanentFailure(),
+        ),
+      );
       this.#rejectPrepared = undefined;
       this.#resolvePrepared = undefined;
     }
@@ -1561,38 +1769,79 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   }
 
   async sendHtmlMessage(message: MatrixHtmlMessage): Promise<MatrixEventId> {
-    if (!isRecord(message) || typeof message.roomId !== "string" ||
-      typeof message.transactionId !== "string" || message.transactionId.length === 0 ||
-      typeof message.body !== "string" || typeof message.formattedBody !== "string" ||
+    if (
+      !isRecord(message) ||
+      typeof message.roomId !== "string" ||
+      typeof message.transactionId !== "string" ||
+      message.transactionId.length === 0 ||
+      typeof message.body !== "string" ||
+      typeof message.formattedBody !== "string" ||
       message.formattedBody.length === 0 ||
       (message.targetEventId !== undefined &&
-        (typeof message.targetEventId !== "string" || !isValidMatrixEventId(message.targetEventId)))) {
-      throw new MatrixAdapterError("send_message", "The Matrix HTML message is invalid", permanentFailure());
+        (typeof message.targetEventId !== "string" ||
+          !isValidMatrixEventId(message.targetEventId)))
+    ) {
+      throw new MatrixAdapterError(
+        "send_message",
+        "The Matrix HTML message is invalid",
+        permanentFailure(),
+      );
     }
     const content = matrixHtmlContent(message, message.targetEventId);
-    const response = await this.#sendTextContent(message.roomId, content, message.transactionId);
+    const response = await this.#sendTextContent(
+      message.roomId,
+      content,
+      message.transactionId,
+    );
     if (message.targetEventId !== undefined) return message.targetEventId;
     if (!isRecord(response) || !isValidMatrixEventId(response.event_id)) {
-      throw new MatrixAdapterError("send_message", "Matrix send returned no event ID", permanentFailure());
+      throw new MatrixAdapterError(
+        "send_message",
+        "Matrix send returned no event ID",
+        permanentFailure(),
+      );
     }
     return response.event_id;
   }
 
-  async #sendTextContent(roomId: MatrixRoomId, content: Readonly<Record<string, unknown>>, transactionId: string): Promise<unknown> {
+  async #sendTextContent(
+    roomId: MatrixRoomId,
+    content: Readonly<Record<string, unknown>>,
+    transactionId: string,
+  ): Promise<unknown> {
     if (this.#lifecycle === "stopped") {
-      throw new MatrixAdapterError("send_message", "The Matrix adapter has been stopped", permanentFailure());
+      throw new MatrixAdapterError(
+        "send_message",
+        "The Matrix adapter has been stopped",
+        permanentFailure(),
+      );
     }
     if (!this.#configuredRooms.has(roomId)) {
-      throw new MatrixAdapterError("send_message", "The Matrix response room is not configured", permanentFailure());
+      throw new MatrixAdapterError(
+        "send_message",
+        "The Matrix response room is not configured",
+        permanentFailure(),
+      );
     }
-    if (this.#config.encryption === "required" && this.#validatedRooms.get(roomId) !== true) {
-      throw this.#fatalEncryptionSend("Required Matrix encryption is not ready for this room");
+    if (
+      this.#config.encryption === "required" &&
+      this.#validatedRooms.get(roomId) !== true
+    ) {
+      throw this.#fatalEncryptionSend(
+        "Required Matrix encryption is not ready for this room",
+      );
     }
     try {
       return await this.#client.sendMessage(roomId, content, transactionId);
     } catch (error) {
-      if (this.#config.encryption === "required" && looksLikeCryptoFailure(error)) {
-        throw this.#fatalEncryptionSend("Matrix encrypted message delivery failed", error);
+      if (
+        this.#config.encryption === "required" &&
+        looksLikeCryptoFailure(error)
+      ) {
+        throw this.#fatalEncryptionSend(
+          "Matrix encrypted message delivery failed",
+          error,
+        );
       }
       throw this.#operationError(
         "send_message",
@@ -1602,14 +1851,22 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
   }
 
-  async sendTyping(roomId: string, isTyping: boolean, timeoutMs: number): Promise<void> {
+  async sendTyping(
+    roomId: string,
+    isTyping: boolean,
+    timeoutMs: number,
+  ): Promise<void> {
     if (this.#client.sendTyping === undefined) {
       return;
     }
     try {
       await this.#client.sendTyping(roomId, isTyping, timeoutMs);
     } catch (error) {
-      throw this.#operationError("send_message", error, "Matrix typing update failed");
+      throw this.#operationError(
+        "send_message",
+        error,
+        "Matrix typing update failed",
+      );
     }
   }
 
@@ -1625,7 +1882,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         await this.#client.sendReadReceipt(event, "m.read", true);
       }
     } catch (error) {
-      throw this.#operationError("send_message", error, "Matrix read receipt failed");
+      throw this.#operationError(
+        "send_message",
+        error,
+        "Matrix read receipt failed",
+      );
     }
   }
 
@@ -1667,9 +1928,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     let sdkStart: Promise<void> | undefined;
 
     try {
-      sdkStart = Promise.resolve().then(() => this.#client.startClient({
-        initialSyncLimit: this.#initialSyncLimit,
-      }));
+      sdkStart = Promise.resolve().then(() =>
+        this.#client.startClient({
+          initialSyncLimit: this.#initialSyncLimit,
+        }),
+      );
       sdkStart.catch((error: unknown) => {
         this.#rejectPrepared?.(
           this.#startError(error, "Matrix sync failed to start"),
@@ -1700,16 +1963,20 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         void this.#emitPendingBatch().catch(() => {});
       }
     } catch (error) {
-      const normalized = error instanceof MatrixAdapterError
-        ? error
-        : this.#operationError("start", error, "Matrix startup failed");
+      const normalized =
+        error instanceof MatrixAdapterError
+          ? error
+          : this.#operationError("start", error, "Matrix startup failed");
       this.stopIntake();
       this.#detachSdkListeners();
       this.#stopSdkClient();
       this.#lifecycle = "stopped";
       if (!this.#fatalEmitted) {
         this.#emitFatal({
-          code: normalized.failure.kind === "transient" ? "matrix_transport" : "startup",
+          code:
+            normalized.failure.kind === "transient"
+              ? "matrix_transport"
+              : "startup",
           message: normalized.message,
         });
       }
@@ -1734,10 +2001,16 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     this.#addSdkListener(SDK_EVENTS.timeline, this.#handleTimelineEvent);
     this.#addSdkListener(SDK_EVENTS.timelineReset, this.#handleTimelineReset);
     this.#addSdkListener(SDK_EVENTS.sync, this.#handleSyncState);
-    this.#addSdkListener(SDK_EVENTS.syncUnexpectedError, this.#handleSyncUnexpectedError);
+    this.#addSdkListener(
+      SDK_EVENTS.syncUnexpectedError,
+      this.#handleSyncUnexpectedError,
+    );
     this.#addSdkListener(SDK_EVENTS.myMembership, this.#handleRoomMembership);
     this.#addSdkListener(SDK_EVENTS.roomState, this.#handleRoomStateEvent);
-    this.#addSdkListener(SDK_EVENTS.memberMembership, this.#handleMemberMembership);
+    this.#addSdkListener(
+      SDK_EVENTS.memberMembership,
+      this.#handleMemberMembership,
+    );
   }
 
   #addSdkListener(event: string, listener: SdkListener): void {
@@ -1750,7 +2023,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       const subscription = this.#sdkSubscriptions.pop()!;
       try {
         if (this.#client.off === undefined) {
-          this.#client.removeListener?.(subscription.event, subscription.listener);
+          this.#client.removeListener?.(
+            subscription.event,
+            subscription.listener,
+          );
         } else {
           this.#client.off(subscription.event, subscription.listener);
         }
@@ -1783,7 +2059,9 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     if (data?.limited === true && typeof roomId === "string") {
       this.#pendingBatchLimitedRooms.add(roomId);
     }
-    const eventId = this.#readEventId(args[0] as MatrixSdkEventLike | undefined);
+    const eventId = this.#readEventId(
+      args[0] as MatrixSdkEventLike | undefined,
+    );
     if (eventId !== undefined) {
       this.#rememberEventContext(eventId, {
         isLive:
@@ -1796,7 +2074,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     // During the first SDK response, Room.timeline is also a valid source of
     // initial history. After the initial batch has been classified, historical
     // timeline callbacks are outside the adapter intake boundary.
-    if ((toStartOfTimeline === true || data?.liveEvent === false) && !this.#firstBatch) {
+    if (
+      (toStartOfTimeline === true || data?.liveEvent === false) &&
+      !this.#firstBatch
+    ) {
       return;
     }
     this.#handleInboundSdkEvent(args[0]);
@@ -1814,23 +2095,32 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return;
     }
     this.#syncBatchInFlight = true;
-    const outageSnapshot = this.#outage === undefined ? undefined : {
-      startedAt: this.#outage.startedAt,
-      failureCount: this.#outage.failureCount,
-    };
+    const outageSnapshot =
+      this.#outage === undefined
+        ? undefined
+        : {
+            startedAt: this.#outage.startedAt,
+            failureCount: this.#outage.failureCount,
+          };
     const phase = this.#firstBatch ? "initial" : "incremental";
     const events = this.#pendingBatchEvents.splice(0);
-    events.sort((left, right) => this.#eventOrderFor(left) - this.#eventOrderFor(right));
-    const terminalEventIds = phase === "initial"
-      ? this.#closeInitialEncryptedEvents()
-      : new Map<string, string[]>();
+    events.sort(
+      (left, right) => this.#eventOrderFor(left) - this.#eventOrderFor(right),
+    );
+    const terminalEventIds =
+      phase === "initial"
+        ? this.#closeInitialEncryptedEvents()
+        : new Map<string, string[]>();
     const limitedRooms = new Set(this.#pendingBatchLimitedRooms);
     this.#pendingBatchLimitedRooms.clear();
-    const rooms = new Map<string, {
-      timeline: InboundMatrixEvent[];
-      terminalEventIds: string[];
-      limited: boolean;
-    }>();
+    const rooms = new Map<
+      string,
+      {
+        timeline: InboundMatrixEvent[];
+        terminalEventIds: string[];
+        limited: boolean;
+      }
+    >();
     for (const event of events) {
       let room = rooms.get(event.roomId);
       if (room === undefined) {
@@ -1858,7 +2148,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
     for (const roomId of limitedRooms) {
       if (!rooms.has(roomId)) {
-        rooms.set(roomId, { timeline: [], terminalEventIds: [], limited: true });
+        rooms.set(roomId, {
+          timeline: [],
+          terminalEventIds: [],
+          limited: true,
+        });
       }
     }
     const batch = {
@@ -1866,7 +2160,9 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       rooms: [...rooms.entries()].map(([roomId, room]) => ({
         roomId,
         timeline: room.timeline,
-        ...(room.terminalEventIds.length === 0 ? {} : { terminalEventIds: room.terminalEventIds }),
+        ...(room.terminalEventIds.length === 0
+          ? {}
+          : { terminalEventIds: room.terminalEventIds }),
         limited: room.limited,
       })),
     } satisfies MatrixSyncBatch;
@@ -1903,7 +2199,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return;
     }
     const encryptedRecord = this.#encryptedEvents.get(eventId);
-    if (encryptedRecord?.status === "completed" || encryptedRecord?.status === "omitted") {
+    if (
+      encryptedRecord?.status === "completed" ||
+      encryptedRecord?.status === "omitted"
+    ) {
       return;
     }
     let context = this.#eventContexts.get(eventId);
@@ -2055,7 +2354,9 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     const originServerTs = (() => {
       try {
         const timestamp = event.getTs?.();
-        return typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp >= 0
+        return typeof timestamp === "number" &&
+          Number.isSafeInteger(timestamp) &&
+          timestamp >= 0
           ? timestamp
           : undefined;
       } catch {
@@ -2090,10 +2391,12 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   #hasAuthenticatedClearContent(event: MatrixSdkEventLike): boolean {
     try {
       const clearContent = event.getClearContent?.();
-      return event.isEncrypted() &&
+      return (
+        event.isEncrypted() &&
         !this.#isDecryptionFailure(event) &&
         clearContent !== undefined &&
-        clearContent !== null;
+        clearContent !== null
+      );
     } catch {
       return false;
     }
@@ -2117,23 +2420,25 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       if (event.isDecryptionFailure?.() === true) {
         return true;
       }
-      if (event.decryptionFailureReason !== undefined && event.decryptionFailureReason !== null) {
+      if (
+        event.decryptionFailureReason !== undefined &&
+        event.decryptionFailureReason !== null
+      ) {
         return true;
       }
       // Older SDK event shims expose only the synthetic clear content after a
       // failed attempt. Never treat that diagnostic payload as authenticated
       // application content.
       const clearContent = event.getClearContent?.();
-      return isRecord(clearContent) && clearContent.msgtype === "m.bad.encrypted";
+      return (
+        isRecord(clearContent) && clearContent.msgtype === "m.bad.encrypted"
+      );
     } catch {
       return true;
     }
   }
 
-  #emitDecryptionFailure(
-    event: MatrixSdkEventLike,
-    eventId: string,
-  ): void {
+  #emitDecryptionFailure(event: MatrixSdkEventLike, eventId: string): void {
     let roomId: string | undefined;
     let sender: string | undefined;
     try {
@@ -2170,14 +2475,17 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     context: Omit<EventContext, "order">,
   ): EventContext {
     const previous = this.#eventContexts.get(eventId);
-    const next = previous === undefined ? {
-      ...context,
-      order: ++this.#nextEventOrder,
-    } : {
-      order: previous.order,
-      isLive: previous.isLive && context.isLive,
-      isInitial: previous.isInitial || context.isInitial,
-    };
+    const next =
+      previous === undefined
+        ? {
+            ...context,
+            order: ++this.#nextEventOrder,
+          }
+        : {
+            order: previous.order,
+            isLive: previous.isLive && context.isLive,
+            isInitial: previous.isInitial || context.isInitial,
+          };
     this.#eventContexts.set(eventId, next);
     while (this.#eventContexts.size > 10_000) {
       const oldest = this.#eventContexts.keys().next().value;
@@ -2316,7 +2624,9 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       this.#emitDiagnostic("warn", "matrix-connection-lost", {
         kind: failure.kind,
         startupCompleted: this.#prepared,
-        ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }),
+        ...(failure.httpStatus === undefined
+          ? {}
+          : { httpStatus: failure.httpStatus }),
         ...(failure.errcode === undefined ? {} : { errcode: failure.errcode }),
       });
     }
@@ -2324,7 +2634,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     // The SDK owns retry timing. A sparse count-based notice is only an
     // observation of a prolonged outage; it never schedules or accelerates a
     // retry of its own.
-    if (this.#outage.failureCount === 2 || this.#outage.failureCount % 5 === 0) {
+    if (
+      this.#outage.failureCount === 2 ||
+      this.#outage.failureCount % 5 === 0
+    ) {
       this.#emitDiagnostic("warn", "matrix-reconnect-retry", {
         failureCount: this.#outage.failureCount,
         elapsedMs: Math.max(0, this.#clock.now() - this.#outage.startedAt),
@@ -2333,7 +2646,8 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   }
 
   #restoreConnectionAfterBatch(
-    expected: { readonly startedAt: number; readonly failureCount: number } | undefined,
+    expected:
+      { readonly startedAt: number; readonly failureCount: number } | undefined,
   ): void {
     const outage = this.#outage;
     if (
@@ -2376,10 +2690,12 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     this.#lastSyncState = state;
     const data = isRecord(args[2]) ? args[2] : undefined;
     const nextSyncToken = stringProperty(data, "nextSyncToken", "next_batch");
-    if (nextSyncToken !== undefined &&
-        (state === SDK_SYNC_STATES.prepared ||
-          state === SDK_SYNC_STATES.syncing ||
-          state === SDK_SYNC_STATES.catchup)) {
+    if (
+      nextSyncToken !== undefined &&
+      (state === SDK_SYNC_STATES.prepared ||
+        state === SDK_SYNC_STATES.syncing ||
+        state === SDK_SYNC_STATES.catchup)
+    ) {
       this.#pendingBatchReady = true;
     }
     const joinedRooms = data === undefined ? undefined : own(data, "rooms");
@@ -2387,17 +2703,22 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       const joined = own(joinedRooms, "join");
       if (isRecord(joined)) {
         for (const [roomId, roomData] of Object.entries(joined)) {
-          if (isRecord(roomData) && isRecord(own(roomData, "timeline")) &&
-              own(own(roomData, "timeline") as MatrixErrorRecord, "limited") === true) {
+          if (
+            isRecord(roomData) &&
+            isRecord(own(roomData, "timeline")) &&
+            own(own(roomData, "timeline") as MatrixErrorRecord, "limited") ===
+              true
+          ) {
             this.#pendingBatchLimitedRooms.add(roomId);
           }
         }
       }
     }
     const rawFailure = data === undefined ? undefined : own(data, "error");
-    const failure = state === SDK_SYNC_STATES.reconnecting || state === SDK_SYNC_STATES.error
-      ? this.#classifySyncStateFailure(state, rawFailure)
-      : undefined;
+    const failure =
+      state === SDK_SYNC_STATES.reconnecting || state === SDK_SYNC_STATES.error
+        ? this.#classifySyncStateFailure(state, rawFailure)
+        : undefined;
     const change: MatrixSyncStateChange = {
       state,
       previousState: previousState ?? null,
@@ -2417,11 +2738,13 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       !this.#intakeStopped &&
       !this.#fatalEmitted
     ) {
-      this.#handleStartupOrRuntimeFailure(new MatrixAdapterError(
-        "start",
-        "Matrix sync response did not establish a next sync token",
-        permanentFailure(),
-      ));
+      this.#handleStartupOrRuntimeFailure(
+        new MatrixAdapterError(
+          "start",
+          "Matrix sync response did not establish a next sync token",
+          permanentFailure(),
+        ),
+      );
       return;
     }
 
@@ -2433,7 +2756,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       return;
     }
     if (state === SDK_SYNC_STATES.stopped) {
-      if (this.#intakeStopped || this.#sdkStopped || this.#lifecycle === "stopped") {
+      if (
+        this.#intakeStopped ||
+        this.#sdkStopped ||
+        this.#lifecycle === "stopped"
+      ) {
         return;
       }
       const error = new MatrixAdapterError(
@@ -2453,7 +2780,8 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       }
     }
     if (
-      (state === SDK_SYNC_STATES.syncing || state === SDK_SYNC_STATES.catchup) &&
+      (state === SDK_SYNC_STATES.syncing ||
+        state === SDK_SYNC_STATES.catchup) &&
       this.#lifecycle === "ready"
     ) {
       void this.#emitPendingBatch().catch(() => {});
@@ -2505,11 +2833,13 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     if (!this.#prepared || this.#intakeStopped) {
       return;
     }
-    const member = args[1] as {
-      readonly roomId?: string;
-      readonly userId?: string;
-      readonly membership?: string;
-    } | undefined;
+    const member = args[1] as
+      | {
+          readonly roomId?: string;
+          readonly userId?: string;
+          readonly membership?: string;
+        }
+      | undefined;
     if (
       member?.userId !== this.#config.userId ||
       typeof member.roomId !== "string" ||
@@ -2580,7 +2910,11 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   async #assertRequiredRuntimeEncryption(roomId: string): Promise<void> {
     try {
       const room = this.#client.getRoom(roomId);
-      if (room === null || room === undefined || room.getMyMembership() !== "join") {
+      if (
+        room === null ||
+        room === undefined ||
+        room.getMyMembership() !== "join"
+      ) {
         throw new Error("room membership invariant");
       }
       const encrypted = room.hasEncryptionStateEvent();
@@ -2588,9 +2922,12 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       if (crypto === undefined) {
         throw new Error("crypto invariant");
       }
-      if (crypto.isEncryptionEnabledInRoom !== undefined && !await crypto.isEncryptionEnabledInRoom(roomId)) {
-          throw new Error("room crypto state invariant");
-        }
+      if (
+        crypto.isEncryptionEnabledInRoom !== undefined &&
+        !(await crypto.isEncryptionEnabledInRoom(roomId))
+      ) {
+        throw new Error("room crypto state invariant");
+      }
       if (!encrypted) {
         throw new Error("room encryption invariant");
       }
@@ -2608,28 +2945,43 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     if (this.#client.getJoinedRooms !== undefined) {
       try {
         const response = await this.#client.getJoinedRooms();
-        if (!isRecord(response) || !Array.isArray(response.joined_rooms) ||
-            response.joined_rooms.some((roomId) => typeof roomId !== "string")) {
+        if (
+          !isRecord(response) ||
+          !Array.isArray(response.joined_rooms) ||
+          response.joined_rooms.some((roomId) => typeof roomId !== "string")
+        ) {
           throw new Error("invalid joined-room response");
         }
         joinedRooms = new Set(response.joined_rooms as string[]);
       } catch (error) {
-        throw this.#operationError("start", error, "Matrix room validation failed");
+        throw this.#operationError(
+          "start",
+          error,
+          "Matrix room validation failed",
+        );
       }
     }
     const rooms: MatrixConfiguredRoomState[] = [];
     for (const roomId of this.#configuredRooms) {
       if (joinedRooms !== undefined && !joinedRooms.has(roomId)) {
-        throw this.#startupInvariant(`Configured Matrix room ${roomId} is not joined`);
+        throw this.#startupInvariant(
+          `Configured Matrix room ${roomId} is not joined`,
+        );
       }
       let room: MatrixSdkRoomLike | null | undefined;
       try {
         room = this.#client.getRoom(roomId);
       } catch (error) {
-        throw this.#operationError("start", error, "Matrix room validation failed");
+        throw this.#operationError(
+          "start",
+          error,
+          "Matrix room validation failed",
+        );
       }
       if (room === null || room === undefined) {
-        throw this.#startupInvariant(`Configured Matrix room ${roomId} is not joined`);
+        throw this.#startupInvariant(
+          `Configured Matrix room ${roomId} is not joined`,
+        );
       }
       let membership: string | undefined;
       let encrypted: boolean;
@@ -2637,17 +2989,31 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
         membership = room.getMyMembership();
         encrypted = room.hasEncryptionStateEvent();
       } catch (error) {
-        throw this.#operationError("start", error, "Matrix room validation failed");
+        throw this.#operationError(
+          "start",
+          error,
+          "Matrix room validation failed",
+        );
       }
       if (membership !== "join") {
-        throw this.#startupInvariant(`Configured Matrix room ${roomId} is not joined`);
+        throw this.#startupInvariant(
+          `Configured Matrix room ${roomId} is not joined`,
+        );
       }
       if (this.#client.roomState !== undefined) {
         try {
           const state = await this.#client.roomState(roomId);
-          encrypted = encrypted || state.some((event) => event.type === SDK_EVENT_TYPES.roomEncryption);
+          encrypted =
+            encrypted ||
+            state.some(
+              (event) => event.type === SDK_EVENT_TYPES.roomEncryption,
+            );
         } catch (error) {
-          throw this.#operationError("start", error, "Matrix room validation failed");
+          throw this.#operationError(
+            "start",
+            error,
+            "Matrix room validation failed",
+          );
         }
       }
       if (this.#config.encryption === "required") {
@@ -2657,8 +3023,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
             throw new Error("Rust crypto is unavailable");
           }
           if (crypto?.isEncryptionEnabledInRoom !== undefined) {
-            if (!await crypto.isEncryptionEnabledInRoom(roomId)) {
-              throw this.#startupInvariant(`Configured Matrix room ${roomId} is not encrypted`);
+            if (!(await crypto.isEncryptionEnabledInRoom(roomId))) {
+              throw this.#startupInvariant(
+                `Configured Matrix room ${roomId} is not encrypted`,
+              );
             }
             encrypted = true;
           }
@@ -2666,13 +3034,21 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
           if (error instanceof MatrixAdapterError) {
             throw error;
           }
-          throw this.#operationError("start", error, "Matrix room validation failed");
+          throw this.#operationError(
+            "start",
+            error,
+            "Matrix room validation failed",
+          );
         }
         if (!encrypted) {
-          throw this.#startupInvariant(`Configured Matrix room ${roomId} is not encrypted`);
+          throw this.#startupInvariant(
+            `Configured Matrix room ${roomId} is not encrypted`,
+          );
         }
       } else if (encrypted) {
-        throw this.#startupInvariant(`Configured Matrix room ${roomId} is encrypted`);
+        throw this.#startupInvariant(
+          `Configured Matrix room ${roomId} is encrypted`,
+        );
       }
       this.#validatedRooms.set(roomId, encrypted);
       rooms.push({ roomId, membership, encrypted });
@@ -2686,6 +3062,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     }
     return this.#operationError("start", error, message);
   }
+
   #startupInvariant(message: string): MatrixAdapterError {
     const error = new MatrixAdapterError("start", message, permanentFailure());
     this.#emitFatal({ code: "matrix_invariant", message });

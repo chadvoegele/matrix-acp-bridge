@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { RateLimitedDiagnosticSink, StderrDiagnosticSink } from "./diagnostics.js";
+import {
+  RateLimitedDiagnosticSink,
+  StderrDiagnosticSink,
+} from "./diagnostics.js";
 import { FakeClock } from "./test-support/fake-clock.js";
 
 void test("structured diagnostics are deterministic and use the injected stderr writer", () => {
@@ -33,7 +36,9 @@ void test("structured diagnostics are deterministic and use the injected stderr 
 
 void test("diagnostics expose scalar fields only", () => {
   const lines: string[] = [];
-  const diagnostics = new StderrDiagnosticSink({ writeLine: (line) => lines.push(line) });
+  const diagnostics = new StderrDiagnosticSink({
+    writeLine: (line) => lines.push(line),
+  });
 
   diagnostics.info("startup", { rooms: 2, encryption: "disabled" });
 

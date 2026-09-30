@@ -18,14 +18,15 @@ import {
   type MatrixSdkEventLike,
   type MatrixSdkRoomLike,
 } from "./matrix-client.js";
-import { DEFAULT_LIMITS, type BridgeConfig, type MatrixConfig } from "./config.js";
+import {
+  DEFAULT_LIMITS,
+  type BridgeConfig,
+  type MatrixConfig,
+} from "./config.js";
 import { matrixHtmlContentBytes } from "./matrix-message-content.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
-import type {
-  InboundMatrixEvent,
-  MatrixSyncBatch,
-} from "./matrix-client.js";
+import type { InboundMatrixEvent, MatrixSyncBatch } from "./matrix-client.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 
 const ROOM_ID = "!room:example.org";
@@ -66,42 +67,68 @@ type Listener = (...args: unknown[]) => void;
 
 class FakeSdkClient implements MatrixSdkClientLike {
   readonly listeners = new Map<string, Set<Listener>>();
+
   readonly rooms = new Map<string, MatrixSdkRoomLike>();
+
   readonly sent: Array<{
     readonly roomId: string;
     readonly content: Readonly<Record<string, unknown>>;
     readonly transactionId: string | undefined;
   }> = [];
-  readonly typing: Array<{ readonly roomId: string; readonly isTyping: boolean; readonly timeoutMs: number }> = [];
+
+  readonly typing: Array<{
+    readonly roomId: string;
+    readonly isTyping: boolean;
+    readonly timeoutMs: number;
+  }> = [];
+
   readonly receipts: Array<{
     readonly event: unknown;
     readonly receiptType: string | undefined;
     readonly unthreaded: boolean | undefined;
   }> = [];
+
   whoamiResponse: unknown = {
     user_id: BRIDGE_USER_ID,
     device_id: "BRIDGE-DEVICE",
   };
+
   whoamiError: unknown;
+
   startError: unknown;
+
   sendError: unknown;
+
   startClientAction: (() => void | Promise<void>) | undefined;
+
   startClientOptions: { readonly initialSyncLimit?: number } | undefined;
+
   startCalls = 0;
+
   stopCalls = 0;
+
   joinedRoomsOverride: readonly string[] | undefined;
+
   roomStateOverride: readonly { readonly type?: string }[] | undefined;
-  cryptoInitOptions: {
-    readonly useIndexedDB?: boolean;
-    readonly cryptoDatabasePrefix?: string;
-  } | undefined = undefined;
+
+  cryptoInitOptions:
+    | {
+        readonly useIndexedDB?: boolean;
+        readonly cryptoDatabasePrefix?: string;
+      }
+    | undefined = undefined;
+
   cryptoInitialized = false;
+
   ownDeviceKeys: unknown = {
     ed25519: "ed25519-public",
     curve25519: "curve25519-public",
   };
+
   encryptionEnabledInRoom = true;
+
   verificationRequest: unknown;
+
   verificationRequests: readonly unknown[] = [];
 
   on(event: string, listener: Listener): void {
@@ -118,7 +145,7 @@ class FakeSdkClient implements MatrixSdkClientLike {
   }
 
   emit(event: string, ...args: unknown[]): void {
-    for (const listener of (this.listeners.get(event) ?? [])) {
+    for (const listener of this.listeners.get(event) ?? []) {
       listener(...args);
     }
   }
@@ -130,7 +157,9 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return this.whoamiResponse;
   }
 
-  async startClient(options?: { readonly initialSyncLimit?: number }): Promise<void> {
+  async startClient(options?: {
+    readonly initialSyncLimit?: number;
+  }): Promise<void> {
     this.startCalls += 1;
     this.startClientOptions = options;
     if (this.startError !== undefined) {
@@ -151,20 +180,30 @@ class FakeSdkClient implements MatrixSdkClientLike {
     this.cryptoInitialized = true;
   }
 
-  getCrypto(): {
-    getOwnDeviceKeys(): Promise<unknown>;
-    isEncryptionEnabledInRoom(roomId: string): Promise<boolean>;
-    requestDeviceVerification?(userId: string, deviceId: string): Promise<unknown>;
-    getVerificationRequestsToDeviceInProgress?(userId: string): readonly unknown[];
-  } | undefined {
+  getCrypto():
+    | {
+        getOwnDeviceKeys(): Promise<unknown>;
+        isEncryptionEnabledInRoom(roomId: string): Promise<boolean>;
+        requestDeviceVerification?(
+          userId: string,
+          deviceId: string,
+        ): Promise<unknown>;
+        getVerificationRequestsToDeviceInProgress?(
+          userId: string,
+        ): readonly unknown[];
+      }
+    | undefined {
     if (!this.cryptoInitialized) {
       return undefined;
     }
     return {
       getOwnDeviceKeys: async () => this.ownDeviceKeys,
-      isEncryptionEnabledInRoom: async (_roomId: string) => this.encryptionEnabledInRoom,
-      requestDeviceVerification: async (_userId: string, _deviceId: string) => this.verificationRequest,
-      getVerificationRequestsToDeviceInProgress: (_userId: string) => this.verificationRequests,
+      isEncryptionEnabledInRoom: async (_roomId: string) =>
+        this.encryptionEnabledInRoom,
+      requestDeviceVerification: async (_userId: string, _deviceId: string) =>
+        this.verificationRequest,
+      getVerificationRequestsToDeviceInProgress: (_userId: string) =>
+        this.verificationRequests,
     };
   }
 
@@ -172,11 +211,15 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return this.rooms.get(roomId) ?? null;
   }
 
-  async getJoinedRooms(): Promise<{ readonly joined_rooms: readonly string[] }> {
+  async getJoinedRooms(): Promise<{
+    readonly joined_rooms: readonly string[];
+  }> {
     return { joined_rooms: this.joinedRoomsOverride ?? [...this.rooms.keys()] };
   }
 
-  async roomState(_roomId: string): Promise<readonly { readonly type?: string }[]> {
+  async roomState(
+    _roomId: string,
+  ): Promise<readonly { readonly type?: string }[]> {
     return this.roomStateOverride ?? [];
   }
 
@@ -192,11 +235,19 @@ class FakeSdkClient implements MatrixSdkClientLike {
     return { event_id: "$sent:example.org" };
   }
 
-  async sendTyping(roomId: string, isTyping: boolean, timeoutMs: number): Promise<void> {
+  async sendTyping(
+    roomId: string,
+    isTyping: boolean,
+    timeoutMs: number,
+  ): Promise<void> {
     this.typing.push({ roomId, isTyping, timeoutMs });
   }
 
-  async sendReadReceipt(event: unknown, receiptType?: string, unthreaded?: boolean): Promise<void> {
+  async sendReadReceipt(
+    event: unknown,
+    receiptType?: string,
+    unthreaded?: boolean,
+  ): Promise<void> {
     this.receipts.push({ event, receiptType, unthreaded });
   }
 }
@@ -215,11 +266,17 @@ function room(
 
 class RustVerificationRequestDouble {
   readonly otherUserId = "@trusted:example.org";
+
   readonly otherDeviceId = "TRUSTED01";
+
   readonly initiatedByMe = true;
+
   phase = 2;
+
   readonly listeners = new Map<string, Set<() => void>>();
+
   methodsRead = false;
+
   acceptCalls = 0;
 
   get methods(): never {
@@ -251,7 +308,7 @@ class RustVerificationRequestDouble {
   }
 
   emit(event: string): void {
-    for (const listener of (this.listeners.get(event) ?? [])) {
+    for (const listener of this.listeners.get(event) ?? []) {
       listener();
     }
   }
@@ -298,7 +355,9 @@ function readyClient(): FakeSdkClient {
   const client = new FakeSdkClient();
   client.rooms.set(ROOM_ID, room());
   client.startClientAction = () => {
-    client.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "initial-cursor" });
+    client.emit(SDK_SYNC, "PREPARED", null, {
+      nextSyncToken: "initial-cursor",
+    });
   };
   return client;
 }
@@ -323,10 +382,18 @@ function captureDiagnostics(
     emit(_level, eventName, fields = {}) {
       records.push({ event: eventName, fields });
     },
-    debug() { /* no-op */ },
-    info() { /* no-op */ },
-    warn() { /* no-op */ },
-    error() { /* no-op */ },
+    debug() {
+      /* no-op */
+    },
+    info() {
+      /* no-op */
+    },
+    warn() {
+      /* no-op */
+    },
+    error() {
+      /* no-op */
+    },
   };
 }
 
@@ -343,7 +410,9 @@ interface RealSdkHttpHarness {
   readonly syncResponses: number;
 }
 
-function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): RealSdkHttpHarness {
+function createRealSdkHttpHarness(
+  options: RealSdkHttpHarnessOptions = {},
+): RealSdkHttpHarness {
   const syncRequests: URL[] = [];
   let syncResponses = 0;
 
@@ -367,7 +436,13 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
       body = { capabilities: {} };
     } else if (url.pathname.endsWith("/pushrules/")) {
       body = {
-        global: { override: [], content: [], room: [], sender: [], underride: [] },
+        global: {
+          override: [],
+          content: [],
+          room: [],
+          sender: [],
+          underride: [],
+        },
         device: {},
         account: {},
       };
@@ -376,11 +451,13 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
     } else if (url.pathname.endsWith("/joined_rooms")) {
       body = { joined_rooms: [ROOM_ID] };
     } else if (url.pathname.endsWith("/state")) {
-      body = [{
-        type: "m.room.member",
-        state_key: BRIDGE_USER_ID,
-        content: { membership: "join" },
-      }];
+      body = [
+        {
+          type: "m.room.member",
+          state_key: BRIDGE_USER_ID,
+          content: { membership: "join" },
+        },
+      ];
     } else if (url.pathname.endsWith("/sync")) {
       syncRequests.push(url);
       const requestNumber = syncRequests.length;
@@ -399,25 +476,37 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
             join: {
               [ROOM_ID]: {
                 state: {
-                  events: [{
-                    event_id: `$member-${syncResponses}:example.org`,
-                    room_id: ROOM_ID,
-                    sender: BRIDGE_USER_ID,
-                    type: "m.room.member",
-                    state_key: BRIDGE_USER_ID,
-                    content: { membership: "join" },
-                  }],
+                  events: [
+                    {
+                      event_id: `$member-${syncResponses}:example.org`,
+                      room_id: ROOM_ID,
+                      sender: BRIDGE_USER_ID,
+                      type: "m.room.member",
+                      state_key: BRIDGE_USER_ID,
+                      content: { membership: "join" },
+                    },
+                  ],
                 },
                 timeline: {
-                  events: syncResponses === 1 ? [{
-                    event_id: "$offline:example.org",
-                    room_id: ROOM_ID,
-                    sender: ALICE,
-                    type: options.encryptedInitial ? "m.room.encrypted" : "m.room.message",
-                    content: options.encryptedInitial
-                      ? { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "not-forwarded" }
-                      : { msgtype: "m.text", body: "offline prompt" },
-                  }] : [],
+                  events:
+                    syncResponses === 1
+                      ? [
+                          {
+                            event_id: "$offline:example.org",
+                            room_id: ROOM_ID,
+                            sender: ALICE,
+                            type: options.encryptedInitial
+                              ? "m.room.encrypted"
+                              : "m.room.message",
+                            content: options.encryptedInitial
+                              ? {
+                                  algorithm: "m.megolm.v1.aes-sha2",
+                                  ciphertext: "not-forwarded",
+                                }
+                              : { msgtype: "m.text", body: "offline prompt" },
+                          },
+                        ]
+                      : [],
                   limited: false,
                 },
               },
@@ -447,20 +536,32 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
 
 let realSdkFetchLock: Promise<void> = Promise.resolve();
 
-async function withFetch<T>(fetch: typeof globalThis.fetch, action: () => Promise<T>): Promise<T> {
+async function withFetch<T>(
+  fetch: typeof globalThis.fetch,
+  action: () => Promise<T>,
+): Promise<T> {
   const previous = realSdkFetchLock;
   let release!: () => void;
-  realSdkFetchLock = new Promise<void>((resolve) => { release = resolve; });
+  realSdkFetchLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   await previous;
   const previousFetch = globalThis.fetch;
   const previousSetTimeout = globalThis.setTimeout;
   globalThis.fetch = fetch;
-  globalThis.setTimeout = ((...args: Parameters<typeof globalThis.setTimeout>) => {
+  globalThis.setTimeout = ((
+    ...args: Parameters<typeof globalThis.setTimeout>
+  ) => {
     const timer = previousSetTimeout(...args);
     const delay = args[1];
-    if (typeof delay === "number" && delay >= 10_000 &&
-        typeof timer === "object" && timer !== null && "unref" in timer &&
-        typeof timer.unref === "function") {
+    if (
+      typeof delay === "number" &&
+      delay >= 10_000 &&
+      typeof timer === "object" &&
+      timer !== null &&
+      "unref" in timer &&
+      typeof timer.unref === "function"
+    ) {
       timer.unref();
     }
     return timer;
@@ -475,10 +576,10 @@ async function withFetch<T>(fetch: typeof globalThis.fetch, action: () => Promis
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(
-    JSON.stringify(body),
-    { status, headers: { "content-type": "application/json" } },
-  );
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 void test("constructs a token-authenticated client with the configured device", () => {
@@ -513,7 +614,14 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
   const previousFetch = globalThis.fetch;
   let requestCount = 0;
   let sdkLogCalls = 0;
-  const consoleMethods = ["debug", "error", "info", "log", "trace", "warn"] as const;
+  const consoleMethods = [
+    "debug",
+    "error",
+    "info",
+    "log",
+    "trace",
+    "warn",
+  ] as const;
   const previousConsoleMethods = new Map<
     (typeof consoleMethods)[number],
     Console[(typeof consoleMethods)[number]]
@@ -538,7 +646,8 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
       userId: BRIDGE_USER_ID,
       deviceId: "BRIDGE-DEVICE",
     });
-    const { logger: matrixSdkRootLogger } = await import("matrix-js-sdk/lib/logger.js");
+    const { logger: matrixSdkRootLogger } =
+      await import("matrix-js-sdk/lib/logger.js");
     matrixSdkRootLogger.debug("root logger must not enter ACP stdout");
     matrixSdkRootLogger
       .getChild("[MatrixRTCSession !room:example.org m.call#ROOM]")
@@ -563,18 +672,26 @@ void test("real SDK initial startup omits since, applies the initial limit, and 
   const batches: MatrixSyncBatch[] = [];
   await withFetch(harness.fetch, async () => {
     const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
-    adapter.onSyncBatch((batch) => { batches.push(batch); });
+    adapter.onSyncBatch((batch) => {
+      batches.push(batch);
+    });
     await adapter.whoAmI();
     await adapter.start();
     assert.equal(harness.syncResponses >= 1, true);
     assert.equal(harness.syncRequests[0]?.searchParams.has("since"), false);
-    assert.equal(harness.syncRequests[0]?.searchParams.has("_cacheBuster"), true);
-    const filter = JSON.parse(harness.syncRequests[0]?.searchParams.get("filter") ?? "{}") as {
+    assert.equal(
+      harness.syncRequests[0]?.searchParams.has("_cacheBuster"),
+      true,
+    );
+    const filter = JSON.parse(
+      harness.syncRequests[0]?.searchParams.get("filter") ?? "{}",
+    ) as {
       room?: { timeline?: { limit?: number } };
     };
     assert.equal(filter.room?.timeline?.limit, 100);
     assert.equal(
-      batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
+      batches
+        .flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
         .some((event) => event.content.body === "offline prompt"),
       true,
     );
@@ -590,7 +707,9 @@ void test("real SDK startup uses the SDK next_batch boundary for later requests"
   const batches: MatrixSyncBatch[] = [];
   await withFetch(harness.fetch, async () => {
     const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
-    adapter.onSyncBatch((batch) => { batches.push(batch); });
+    adapter.onSyncBatch((batch) => {
+      batches.push(batch);
+    });
     await adapter.whoAmI();
     await adapter.start();
     const firstSync = harness.syncRequests[0];
@@ -599,7 +718,8 @@ void test("real SDK startup uses the SDK next_batch boundary for later requests"
     assert.equal(secondSync?.searchParams.get("since"), "next-1");
     assert.equal(batches[0]?.phase, "initial");
     assert.equal(
-      batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
+      batches
+        .flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
         .filter((event) => event.content.body === "offline prompt").length,
       1,
     );
@@ -613,12 +733,15 @@ void test("real SDK encrypted initial events remain outside disabled-mode intake
   const batches: MatrixSyncBatch[] = [];
   await withFetch(harness.fetch, async () => {
     const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
-    adapter.onSyncBatch((batch) => { batches.push(batch); });
+    adapter.onSyncBatch((batch) => {
+      batches.push(batch);
+    });
     await adapter.whoAmI();
     await adapter.start();
     assert.equal(batches[0]?.phase, "initial");
     assert.equal(
-      batches.flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
+      batches
+        .flatMap((batch) => batch.rooms.flatMap((room) => room.timeline))
         .some((event) => event.eventId === "$offline:example.org"),
       false,
     );
@@ -633,7 +756,9 @@ void test("real SDK retries failed initial sync requests without switching to in
     await adapter.whoAmI();
     await adapter.start();
     assert.deepEqual(
-      harness.syncRequests.slice(0, 3).map((request) => request.searchParams.get("since")),
+      harness.syncRequests
+        .slice(0, 3)
+        .map((request) => request.searchParams.get("since")),
       [null, null, null],
     );
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
@@ -649,12 +774,18 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
   let releaseNextSync: (() => void) | undefined;
 
   const fetch: typeof globalThis.fetch = async (input) => {
-    const inputUrl = typeof input === "string"
-      ? input
-      : (input instanceof URL ? input.href : input.url);
+    const inputUrl =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
     const url = new URL(inputUrl);
     if (url.pathname.endsWith("/whoami")) {
-      return jsonResponse({ user_id: BRIDGE_USER_ID, device_id: "BRIDGE-DEVICE" });
+      return jsonResponse({
+        user_id: BRIDGE_USER_ID,
+        device_id: "BRIDGE-DEVICE",
+      });
     }
     if (url.pathname.endsWith("/versions")) {
       return jsonResponse({ versions: ["r0.6.0"] });
@@ -664,7 +795,13 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
     }
     if (url.pathname.endsWith("/pushrules/")) {
       return jsonResponse({
-        global: { override: [], content: [], room: [], sender: [], underride: [] },
+        global: {
+          override: [],
+          content: [],
+          room: [],
+          sender: [],
+          underride: [],
+        },
         device: {},
         account: {},
       });
@@ -676,11 +813,13 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
       return jsonResponse({ joined_rooms: [ROOM_ID] });
     }
     if (url.pathname.endsWith("/state")) {
-      return jsonResponse([{
-        type: "m.room.member",
-        state_key: BRIDGE_USER_ID,
-        content: { membership: "join" },
-      }]);
+      return jsonResponse([
+        {
+          type: "m.room.member",
+          state_key: BRIDGE_USER_ID,
+          content: { membership: "join" },
+        },
+      ]);
     }
     if (url.pathname.endsWith("/sync")) {
       syncRequests.push(url);
@@ -691,23 +830,28 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
       }
       if (runtimeMode && runtimeFailures < 3) {
         runtimeFailures += 1;
-        return jsonResponse({ errcode: "M_UNKNOWN", error: "temporary failure" }, 503);
+        return jsonResponse(
+          { errcode: "M_UNKNOWN", error: "temporary failure" },
+          503,
+        );
       }
       successfulSyncs += 1;
       return jsonResponse({
         next_batch: `runtime-next-${successfulSyncs}`,
-      rooms: {
+        rooms: {
           join: {
             [ROOM_ID]: {
               state: {
-                events: [{
-                  event_id: "$member:example.org",
-                  room_id: ROOM_ID,
-                  sender: BRIDGE_USER_ID,
-                  type: "m.room.member",
-                  state_key: BRIDGE_USER_ID,
-                  content: { membership: "join" },
-                }],
+                events: [
+                  {
+                    event_id: "$member:example.org",
+                    room_id: ROOM_ID,
+                    sender: BRIDGE_USER_ID,
+                    type: "m.room.member",
+                    state_key: BRIDGE_USER_ID,
+                    content: { membership: "join" },
+                  },
+                ],
               },
               timeline: { events: [], limited: false },
             },
@@ -725,7 +869,10 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
   Math.random = () => 0;
   try {
     await withFetch(fetch, async () => {
-      const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+      const records: Array<{
+        readonly event: string;
+        readonly fields: DiagnosticFields;
+      }> = [];
       const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token", {
         diagnostics: captureDiagnostics(records),
       });
@@ -744,18 +891,37 @@ void test("real SDK keeps runtime retry ownership through three failed syncs aft
           releaseNextSync = undefined;
           release();
         }
-        for (let turn = 0; turn < 100 && !records.some((record) => record.event === "matrix-connection-restored"); turn += 1) {
+        for (
+          let turn = 0;
+          turn < 100 &&
+          !records.some(
+            (record) => record.event === "matrix-connection-restored",
+          );
+          turn += 1
+        ) {
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
         assert.equal(runtimeFailures, 3);
         assert.equal(fatal.length, 0);
         assert.deepEqual(
-          syncRequests.slice(0, 5).map((request) => request.searchParams.get("since")),
-          [null, "runtime-next-1", "runtime-next-1", "runtime-next-1", "runtime-next-1"],
+          syncRequests
+            .slice(0, 5)
+            .map((request) => request.searchParams.get("since")),
+          [
+            null,
+            "runtime-next-1",
+            "runtime-next-1",
+            "runtime-next-1",
+            "runtime-next-1",
+          ],
         );
         assert.deepEqual(
           records.map((record) => record.event),
-          ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
+          [
+            "matrix-connection-lost",
+            "matrix-reconnect-retry",
+            "matrix-connection-restored",
+          ],
         );
       } finally {
         await adapter.stop();
@@ -783,15 +949,24 @@ void test("returns strict whoami identity data and validates configured IDs", as
   await assert.rejects(
     () => adapter.whoAmI(),
     (error: unknown) =>
-      error instanceof MatrixAdapterError && /missing a user or device/u.test(error.message),
+      error instanceof MatrixAdapterError &&
+      /missing a user or device/u.test(error.message),
   );
 
   assert.throws(
-    () => assertMatrixIdentity({ userId: "@wrong:example.org", deviceId: "BRIDGE-DEVICE" }, CONFIG),
+    () =>
+      assertMatrixIdentity(
+        { userId: "@wrong:example.org", deviceId: "BRIDGE-DEVICE" },
+        CONFIG,
+      ),
     /does not match the configured user ID/u,
   );
   assert.throws(
-    () => assertMatrixIdentity({ userId: BRIDGE_USER_ID, deviceId: "WRONG" }, CONFIG),
+    () =>
+      assertMatrixIdentity(
+        { userId: BRIDGE_USER_ID, deviceId: "WRONG" },
+        CONFIG,
+      ),
     /does not match the configured device ID/u,
   );
 });
@@ -828,7 +1003,10 @@ void test("Rust verification adapter uses phase/capability events without readin
   fake.cryptoInitialized = true;
   fake.verificationRequest = raw;
   const adapter = createMatrixCryptoAdapter(fake);
-  const request = await adapter.requestDeviceVerification("@trusted:example.org", "TRUSTED01");
+  const request = await adapter.requestDeviceVerification(
+    "@trusted:example.org",
+    "TRUSTED01",
+  );
 
   assert.equal(request.phase, "requested");
   assert.equal(request.supportsMethod("m.sas.v1"), false);
@@ -879,7 +1057,10 @@ void test("required mode admits late decryption once and rejects plaintext", asy
     ...event({
       eventId: "$late-decryption:example.org",
       encrypted: true,
-      content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "never-exposed" },
+      content: {
+        algorithm: "m.megolm.v1.aes-sha2",
+        ciphertext: "never-exposed",
+      },
     }),
     getClearContent: () => clearContent,
     getClearType: () => "m.room.message",
@@ -889,7 +1070,9 @@ void test("required mode admits late decryption once and rejects plaintext", asy
   clearContent = { msgtype: "m.text", body: "decrypted" };
   fake.emit(SDK_EVENT, encrypted);
   fake.emit(SDK_EVENT, encrypted);
-  fake.emit(SDK_SYNC, "SYNCING", "PREPARED", { nextSyncToken: "late-decryption-cursor" });
+  fake.emit(SDK_SYNC, "SYNCING", "PREPARED", {
+    nextSyncToken: "late-decryption-cursor",
+  });
   assert.equal(received.length, 1);
   const delivered = received.at(0);
   assert.ok(delivered);
@@ -897,10 +1080,13 @@ void test("required mode admits late decryption once and rejects plaintext", asy
   assert.equal(delivered.isEncrypted, true);
   assert.equal(delivered.isDecrypted, true);
 
-  fake.emit(SDK_EVENT, event({
-    eventId: "$plaintext-in-required:example.org",
-    content: { msgtype: "m.text", body: "must-reject" },
-  }));
+  fake.emit(
+    SDK_EVENT,
+    event({
+      eventId: "$plaintext-in-required:example.org",
+      content: { msgtype: "m.text", body: "must-reject" },
+    }),
+  );
   assert.equal(received.length, 1);
   await adapter.stop();
 });
@@ -913,7 +1099,10 @@ void test("closes global-only encrypted initial sync at the batch cutoff", async
     ...event({
       eventId: "$global-only-catch-up:example.org",
       encrypted: true,
-      content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "not-forwarded" },
+      content: {
+        algorithm: "m.megolm.v1.aes-sha2",
+        ciphertext: "not-forwarded",
+      },
     }),
     getClearContent: () => clearContent,
     getClearType: () => "m.room.message",
@@ -924,29 +1113,41 @@ void test("closes global-only encrypted initial sync at the batch cutoff", async
     fake.emit(SDK_EVENT, encrypted);
     fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "initial-cursor" });
   };
-  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const records: Array<{
+    readonly event: string;
+    readonly fields: DiagnosticFields;
+  }> = [];
   const batches: MatrixSyncBatch[] = [];
   const adapter = createMatrixClientAdapter(REQUIRED_CONFIG, "access-token", {
     client: fake,
     diagnostics: captureDiagnostics(records),
   });
   await adapter.initializeCrypto(CRYPTO_STATE);
-  adapter.onSyncBatch((batch) => { batches.push(batch); });
+  adapter.onSyncBatch((batch) => {
+    batches.push(batch);
+  });
   await adapter.start();
 
-  assert.deepEqual(batches[0]?.rooms, [{
-    roomId: ROOM_ID,
-    timeline: [],
-    terminalEventIds: ["$global-only-catch-up:example.org"],
-    limited: false,
-  }]);
-  const omission = records.find((record) => record.event === "matrix-encrypted-initial-event-omitted");
+  assert.deepEqual(batches[0]?.rooms, [
+    {
+      roomId: ROOM_ID,
+      timeline: [],
+      terminalEventIds: ["$global-only-catch-up:example.org"],
+      limited: false,
+    },
+  ]);
+  const omission = records.find(
+    (record) => record.event === "matrix-encrypted-initial-event-omitted",
+  );
   assert.deepEqual(omission?.fields, {
     reason: "decryption_pending_at_initial_sync_cutoff",
     phase: "initial",
     count: 1,
   });
-  assert.doesNotMatch(JSON.stringify(omission), /global-only-catch-up|room:example|alice|not-forwarded/u);
+  assert.doesNotMatch(
+    JSON.stringify(omission),
+    /global-only-catch-up|room:example|alice|not-forwarded/u,
+  );
 
   clearContent = { msgtype: "m.text", body: "late catch-up" };
   fake.emit("Event.decrypted", encrypted);
@@ -978,8 +1179,12 @@ void test("keeps initial decrypted events in Matrix timeline order after out-of-
     getClearType: () => "m.room.message",
   } satisfies MatrixSdkEventLike;
   fake.startClientAction = () => {
-    fake.emit(SDK_TIMELINE, first, undefined, false, false, { liveEvent: true });
-    fake.emit(SDK_TIMELINE, second, undefined, false, false, { liveEvent: true });
+    fake.emit(SDK_TIMELINE, first, undefined, false, false, {
+      liveEvent: true,
+    });
+    fake.emit(SDK_TIMELINE, second, undefined, false, false, {
+      liveEvent: true,
+    });
     fake.emit(SDK_EVENT, first);
     fake.emit(SDK_EVENT, second);
     secondClear = { msgtype: "m.text", body: "second" };
@@ -991,7 +1196,9 @@ void test("keeps initial decrypted events in Matrix timeline order after out-of-
   const batches: MatrixSyncBatch[] = [];
   const adapter = requiredAdapterFor(fake);
   await adapter.initializeCrypto(CRYPTO_STATE);
-  adapter.onSyncBatch((batch) => { batches.push(batch); });
+  adapter.onSyncBatch((batch) => {
+    batches.push(batch);
+  });
   await adapter.start();
 
   assert.deepEqual(
@@ -1020,12 +1227,17 @@ void test("preserves already-decrypted first-sync encrypted history after PREPAR
   const batches: MatrixSyncBatch[] = [];
   const adapter = requiredAdapterFor(fake);
   await adapter.initializeCrypto(CRYPTO_STATE);
-  adapter.onSyncBatch((batch) => { batches.push(batch); });
+  adapter.onSyncBatch((batch) => {
+    batches.push(batch);
+  });
   await adapter.start();
   fake.emit("Event.decrypted", encrypted);
 
   assert.equal(batches[0]?.phase, "initial");
-  assert.equal(batches[0]?.rooms[0]?.timeline[0]?.eventId, "$initial-clear:example.org");
+  assert.equal(
+    batches[0]?.rooms[0]?.timeline[0]?.eventId,
+    "$initial-clear:example.org",
+  );
   assert.equal(batches[0]?.rooms[0]?.timeline[0]?.isLive, false);
   await adapter.stop();
 });
@@ -1050,17 +1262,21 @@ void test("suppresses unresolved first-sync ciphertext after the initial cutoff"
   const adapter = requiredAdapterFor(fake);
   await adapter.initializeCrypto(CRYPTO_STATE);
   const batches: MatrixSyncBatch[] = [];
-  adapter.onSyncBatch((batch) => { batches.push(batch); });
+  adapter.onSyncBatch((batch) => {
+    batches.push(batch);
+  });
   await adapter.start();
 
   clearContent = { msgtype: "m.text", body: "history must stay hidden" };
   fake.emit("Event.decrypted", encrypted);
-  assert.deepEqual(batches[0]?.rooms, [{
-    roomId: ROOM_ID,
-    timeline: [],
-    terminalEventIds: ["$initial-ciphertext:example.org"],
-    limited: false,
-  }]);
+  assert.deepEqual(batches[0]?.rooms, [
+    {
+      roomId: ROOM_ID,
+      timeline: [],
+      terminalEventIds: ["$initial-ciphertext:example.org"],
+      limited: false,
+    },
+  ]);
   await adapter.stop();
 });
 
@@ -1088,34 +1304,61 @@ void test("bounds encrypted pending state and removes SDK retry listeners on sto
   await adapter.start();
   fake.emit(SDK_EVENT, oldest);
   for (let index = 1; index <= 10_000; index += 1) {
-    fake.emit(SDK_EVENT, event({
-      eventId: `$pending-${index}:example.org`,
-      encrypted: true,
-      content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: `ciphertext-${index}` },
-    }));
+    fake.emit(
+      SDK_EVENT,
+      event({
+        eventId: `$pending-${index}:example.org`,
+        encrypted: true,
+        content: {
+          algorithm: "m.megolm.v1.aes-sha2",
+          ciphertext: `ciphertext-${index}`,
+        },
+      }),
+    );
   }
-  oldestClear = { msgtype: "m.text", body: "oldest retried after bounded eviction" };
+  oldestClear = {
+    msgtype: "m.text",
+    body: "oldest retried after bounded eviction",
+  };
   fake.emit("Event.decrypted", oldest);
-  fake.emit(SDK_SYNC, "SYNCING", "PREPARED", { nextSyncToken: "pending-cursor" });
-  assert.deepEqual(received.map((inbound) => inbound.content.body), ["oldest retried after bounded eviction"]);
+  fake.emit(SDK_SYNC, "SYNCING", "PREPARED", {
+    nextSyncToken: "pending-cursor",
+  });
+  assert.deepEqual(
+    received.map((inbound) => inbound.content.body),
+    ["oldest retried after bounded eviction"],
+  );
 
   await adapter.stop();
   fake.emit("Event.decrypted", oldest);
-  assert.deepEqual(received.map((inbound) => inbound.content.body), ["oldest retried after bounded eviction"]);
-  assert.equal([...fake.listeners.values()].reduce((count, listeners) => count + listeners.size, 0), 0);
+  assert.deepEqual(
+    received.map((inbound) => inbound.content.body),
+    ["oldest retried after bounded eviction"],
+  );
+  assert.equal(
+    [...fake.listeners.values()].reduce(
+      (count, listeners) => count + listeners.size,
+      0,
+    ),
+    0,
+  );
 });
 
 void test("suppresses SDK decryption-failure clear content and reports metadata only", async () => {
   const fake = readyClient();
   fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
-  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const records: Array<{
+    readonly event: string;
+    readonly fields: DiagnosticFields;
+  }> = [];
   const adapter = createMatrixClientAdapter(REQUIRED_CONFIG, "access-token", {
     client: fake,
     diagnostics: captureDiagnostics(records),
   });
   await adapter.initializeCrypto(CRYPTO_STATE);
   const received: InboundMatrixEvent[] = [];
-  const failures: Array<{ readonly eventId: string; readonly reason: string }> = [];
+  const failures: Array<{ readonly eventId: string; readonly reason: string }> =
+    [];
   adapter.onSyncBatch((batch) => {
     for (const room of batch.rooms) {
       received.push(...room.timeline);
@@ -1130,7 +1373,10 @@ void test("suppresses SDK decryption-failure clear content and reports metadata 
     ...event({
       eventId: "$undecryptable:example.org",
       encrypted: true,
-      content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "secret-ciphertext" },
+      content: {
+        algorithm: "m.megolm.v1.aes-sha2",
+        ciphertext: "secret-ciphertext",
+      },
       clearContent: { msgtype: "m.bad.encrypted", body: "sdk error details" },
     }),
     isDecryptionFailure: () => true,
@@ -1138,14 +1384,21 @@ void test("suppresses SDK decryption-failure clear content and reports metadata 
   fake.emit(SDK_EVENT, failed);
 
   assert.deepEqual(received, []);
-  assert.deepEqual(failures, [{ eventId: "$undecryptable:example.org", reason: "decryption_failed" }]);
-  const diagnostic = records.find((record) => record.event === "matrix-decryption-failed");
+  assert.deepEqual(failures, [
+    { eventId: "$undecryptable:example.org", reason: "decryption_failed" },
+  ]);
+  const diagnostic = records.find(
+    (record) => record.event === "matrix-decryption-failed",
+  );
   assert.deepEqual(diagnostic?.fields, {
     reason: "decryption_failed",
     phase: "decryption",
     count: 1,
   });
-  assert.doesNotMatch(JSON.stringify(diagnostic), /undecryptable|room:example|alice|secret-ciphertext|sdk error details/u);
+  assert.doesNotMatch(
+    JSON.stringify(diagnostic),
+    /undecryptable|room:example|alice|secret-ciphertext|sdk error details/u,
+  );
   await adapter.stop();
 });
 
@@ -1163,47 +1416,67 @@ void test("does not admit asynchronous first-sync history after the initial cuto
     getClearType: () => "m.room.message",
   } satisfies MatrixSdkEventLike;
   fake.startClientAction = () => {
-    fake.emit(SDK_TIMELINE, encrypted, undefined, false, false, { liveEvent: true });
+    fake.emit(SDK_TIMELINE, encrypted, undefined, false, false, {
+      liveEvent: true,
+    });
     fake.emit(SDK_EVENT, encrypted);
     fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "initial-cursor" });
   };
   const batches: MatrixSyncBatch[] = [];
   const adapter = requiredAdapterFor(fake);
   await adapter.initializeCrypto(CRYPTO_STATE);
-  adapter.onSyncBatch((batch) => { batches.push(batch); });
+  adapter.onSyncBatch((batch) => {
+    batches.push(batch);
+  });
   await adapter.start();
 
-  assert.deepEqual(batches, [{
-    phase: "initial",
-    rooms: [{
-      roomId: ROOM_ID,
-      timeline: [],
-      terminalEventIds: ["$catch-up-late:example.org"],
-      limited: false,
-    }],
-  }]);
+  assert.deepEqual(batches, [
+    {
+      phase: "initial",
+      rooms: [
+        {
+          roomId: ROOM_ID,
+          timeline: [],
+          terminalEventIds: ["$catch-up-late:example.org"],
+          limited: false,
+        },
+      ],
+    },
+  ]);
   clearContent = { msgtype: "m.text", body: "too late" };
   fake.emit(SDK_EVENT, encrypted);
-  assert.deepEqual(batches, [{
-    phase: "initial",
-    rooms: [{
-      roomId: ROOM_ID,
-      timeline: [],
-      terminalEventIds: ["$catch-up-late:example.org"],
-      limited: false,
-    }],
-  }]);
+  assert.deepEqual(batches, [
+    {
+      phase: "initial",
+      rooms: [
+        {
+          roomId: ROOM_ID,
+          timeline: [],
+          terminalEventIds: ["$catch-up-late:example.org"],
+          limited: false,
+        },
+      ],
+    },
+  ]);
   await adapter.stop();
 });
 
 void test("preserves initial sync events, buffers post-ready events, and preserves order", async () => {
   const fake = readyClient();
   const initial = event({ eventId: "$initial:example.org" });
-  const firstLive = event({ eventId: "$first:example.org", content: { msgtype: "m.text", body: "first" } });
-  const secondLive = event({ eventId: "$second:example.org", content: { msgtype: "m.text", body: "second" } });
+  const firstLive = event({
+    eventId: "$first:example.org",
+    content: { msgtype: "m.text", body: "first" },
+  });
+  const secondLive = event({
+    eventId: "$second:example.org",
+    content: { msgtype: "m.text", body: "second" },
+  });
   const history = event({ eventId: "$history:example.org" });
   fake.startClientAction = () => {
-    fake.emit(SDK_TIMELINE, initial, undefined, false, false, { liveEvent: false });
+    fake.emit(SDK_TIMELINE, initial, undefined, false, false, {
+      liveEvent: false,
+    });
     fake.emit(SDK_SYNC, "PREPARED", null, { nextSyncToken: "initial-cursor" });
   };
 
@@ -1217,16 +1490,21 @@ void test("preserves initial sync events, buffers post-ready events, and preserv
   await adapter.start();
 
   fake.emit(SDK_EVENT, firstLive);
-  fake.emit(SDK_TIMELINE, firstLive, undefined, false, false, { liveEvent: true });
-  fake.emit(SDK_TIMELINE, secondLive, undefined, false, false, { liveEvent: true });
-  fake.emit(SDK_TIMELINE, history, undefined, false, false, { liveEvent: false });
+  fake.emit(SDK_TIMELINE, firstLive, undefined, false, false, {
+    liveEvent: true,
+  });
+  fake.emit(SDK_TIMELINE, secondLive, undefined, false, false, {
+    liveEvent: true,
+  });
+  fake.emit(SDK_TIMELINE, history, undefined, false, false, {
+    liveEvent: false,
+  });
   fake.emit(SDK_SYNC, "SYNCING", "PREPARED", { nextSyncToken: "live-cursor" });
 
-  assert.deepEqual(received.map((inbound) => inbound.eventId), [
-    "$initial:example.org",
-    "$first:example.org",
-    "$second:example.org",
-  ]);
+  assert.deepEqual(
+    received.map((inbound) => inbound.eventId),
+    ["$initial:example.org", "$first:example.org", "$second:example.org"],
+  );
   assert.equal(received[0]?.isLive, false);
   assert.equal(received[1]?.isLive, true);
   assert.equal(received[1]?.isPlaintext, true);
@@ -1238,14 +1516,20 @@ void test("preserves initial sync events, buffers post-ready events, and preserv
     sender: "@untrusted:example.org",
   });
   fake.emit(SDK_EVENT, outsideAllowlist);
-  fake.emit(SDK_SYNC, "SYNCING", "SYNCING", { nextSyncToken: "outside-cursor" });
+  fake.emit(SDK_SYNC, "SYNCING", "SYNCING", {
+    nextSyncToken: "outside-cursor",
+  });
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(received.at(-1)?.roomId, OTHER_ROOM_ID);
 });
 
 void test("passes the configured initial sync limit to the SDK", async () => {
   const fake = readyClient();
-  const adapter = createMatrixClientAdapter(CONFIG_WITH_INITIAL_LIMIT, "access-token", { client: fake });
+  const adapter = createMatrixClientAdapter(
+    CONFIG_WITH_INITIAL_LIMIT,
+    "access-token",
+    { client: fake },
+  );
   await adapter.start();
   assert.deepEqual(fake.startClientOptions, { initialSyncLimit: 7 });
   await adapter.stop();
@@ -1273,10 +1557,12 @@ void test("treats a malformed runtime sync boundary as fatal", async () => {
   await adapter.start();
 
   fake.emit(SDK_SYNC, "SYNCING", "SYNCING", {});
-  assert.deepEqual(fatal, [{
-    code: "matrix_transport",
-    message: "Matrix sync response did not establish a next sync token",
-  }]);
+  assert.deepEqual(fatal, [
+    {
+      code: "matrix_transport",
+      message: "Matrix sync response did not establish a next sync token",
+    },
+  ]);
   await adapter.stop();
 });
 
@@ -1348,7 +1634,12 @@ void test("signals runtime room invariants but ignores other users' membership",
   const leftAdapter = adapterFor(leftClient);
   leftAdapter.onFatalError((error) => leftFatal.push(error));
   await leftAdapter.start();
-  leftClient.emit(SDK_MY_MEMBERSHIP, leftClient.rooms.get(ROOM_ID), "leave", "join");
+  leftClient.emit(
+    SDK_MY_MEMBERSHIP,
+    leftClient.rooms.get(ROOM_ID),
+    "leave",
+    "join",
+  );
   leftClient.emit(
     SDK_MEMBER_MEMBERSHIP,
     event({
@@ -1374,13 +1665,18 @@ void test("required mode treats a runtime crypto room-state mismatch as fatal", 
   fake.encryptionEnabledInRoom = false;
   fake.emit(
     SDK_ROOM_STATE,
-    event({ type: "m.room.encryption", eventId: "$runtime-encryption:example.org" }),
+    event({
+      type: "m.room.encryption",
+      eventId: "$runtime-encryption:example.org",
+    }),
   );
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(fatal, [{
-    code: "matrix_invariant",
-    message: `Configured Matrix room ${ROOM_ID} is no longer encrypted`,
-  }]);
+  assert.deepEqual(fatal, [
+    {
+      code: "matrix_invariant",
+      message: `Configured Matrix room ${ROOM_ID} is no longer encrypted`,
+    },
+  ]);
   await adapter.stop();
 });
 
@@ -1402,16 +1698,18 @@ void test("sends only one ordinary top-level text event with the supplied transa
   } as unknown as RenderedMatrixPart;
 
   await adapter.sendMessage(part);
-  assert.deepEqual(fake.sent, [{
-    roomId: ROOM_ID,
-    content: {
-      msgtype: "m.text",
-      body: "reply",
-      format: "org.matrix.custom.html",
-      formatted_body: "<p>reply</p>",
+  assert.deepEqual(fake.sent, [
+    {
+      roomId: ROOM_ID,
+      content: {
+        msgtype: "m.text",
+        body: "reply",
+        format: "org.matrix.custom.html",
+        formatted_body: "<p>reply</p>",
+      },
+      transactionId: "mab1_transaction",
     },
-    transactionId: "mab1_transaction",
-  }]);
+  ]);
 });
 
 void test("sends Markdown as the standard Matrix formatted-body representation", async () => {
@@ -1439,27 +1737,55 @@ void test("sends Markdown as the standard Matrix formatted-body representation",
 void test("sends escaped HTML and edits the returned event with stable transaction IDs", async () => {
   const fake = readyClient();
   const adapter = adapterFor(fake);
-  const formattedBody = matrixHtml`<p>${"<unsafe & quoted \"text\" '"}</p>`;
-  const initial = { roomId: ROOM_ID, transactionId: "html-initial", body: "<unsafe & quoted>", formattedBody };
+  const formattedBody = matrixHtml`<p>${'<unsafe & quoted "text" \''}</p>`;
+  const initial = {
+    roomId: ROOM_ID,
+    transactionId: "html-initial",
+    body: "<unsafe & quoted>",
+    formattedBody,
+  };
   const eventId = await adapter.sendHtmlMessage(initial);
   assert.equal(eventId, "$sent:example.org");
-  assert.deepEqual(fake.sent[0], { roomId: ROOM_ID, transactionId: "html-initial", content: {
-    msgtype: "m.text", body: "<unsafe & quoted>", format: "org.matrix.custom.html",
-    formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
-  } });
+  assert.deepEqual(fake.sent[0], {
+    roomId: ROOM_ID,
+    transactionId: "html-initial",
+    content: {
+      msgtype: "m.text",
+      body: "<unsafe & quoted>",
+      format: "org.matrix.custom.html",
+      formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
+    },
+  });
 
-  const edit = { ...initial, transactionId: "html-edit", body: "updated", targetEventId: eventId };
+  const edit = {
+    ...initial,
+    transactionId: "html-edit",
+    body: "updated",
+    targetEventId: eventId,
+  };
   fake.sendError = { httpStatus: 503 };
-  await assert.rejects(() => adapter.sendHtmlMessage(edit), (error: unknown) =>
-    error instanceof MatrixAdapterError && error.failure.retryable);
+  await assert.rejects(
+    () => adapter.sendHtmlMessage(edit),
+    (error: unknown) =>
+      error instanceof MatrixAdapterError && error.failure.retryable,
+  );
   fake.sendError = undefined;
   assert.equal(await adapter.sendHtmlMessage(edit), eventId);
-  assert.deepEqual(fake.sent.slice(1).map((send) => send.transactionId), ["html-edit", "html-edit"]);
+  assert.deepEqual(
+    fake.sent.slice(1).map((send) => send.transactionId),
+    ["html-edit", "html-edit"],
+  );
   assert.deepEqual(fake.sent[2]?.content, {
-    msgtype: "m.text", body: "* updated", format: "org.matrix.custom.html",
+    msgtype: "m.text",
+    body: "* updated",
+    format: "org.matrix.custom.html",
     formatted_body: "* <p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
-    "m.new_content": { msgtype: "m.text", body: "updated", format: "org.matrix.custom.html",
-      formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>" },
+    "m.new_content": {
+      msgtype: "m.text",
+      body: "updated",
+      format: "org.matrix.custom.html",
+      formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
+    },
     "m.relates_to": { rel_type: "m.replace", event_id: eventId },
   });
 });
@@ -1470,9 +1796,18 @@ void test("HTML edit byte accounting matches the wire payload at the message-siz
   const targetEventId = `$${"x".repeat(254)}`;
   const formattedBody = matrixHtml`<p>😀 &amp; result</p>`;
   const limit = DEFAULT_LIMITS.maxMatrixMessageBytes;
-  const overhead = matrixHtmlContentBytes({ body: "", formattedBody }, targetEventId);
+  const overhead = matrixHtmlContentBytes(
+    { body: "", formattedBody },
+    targetEventId,
+  );
   const body = "x".repeat(Math.floor((limit - overhead) / 2));
-  const message = { roomId: ROOM_ID, transactionId: "limit-edit", body, formattedBody, targetEventId };
+  const message = {
+    roomId: ROOM_ID,
+    transactionId: "limit-edit",
+    body,
+    formattedBody,
+    targetEventId,
+  };
 
   await adapter.sendHtmlMessage(message);
   const content = fake.sent[0]?.content;
@@ -1481,32 +1816,58 @@ void test("HTML edit byte accounting matches the wire payload at the message-siz
   assert(wireBytes <= limit && wireBytes >= limit - 1);
   assert.equal(content?.formatted_body, `* ${formattedBody}`);
   // One extra ASCII character occurs in both the outer and replacement body.
-  assert(matrixHtmlContentBytes({ ...message, body: `${body}x` }, targetEventId) > limit);
+  assert(
+    matrixHtmlContentBytes({ ...message, body: `${body}x` }, targetEventId) >
+      limit,
+  );
 });
 
 void test("Matrix HTML wire content preserves an indented result disclosure on send and edit", async () => {
   const fake = readyClient();
   const adapter = adapterFor(fake);
   const formattedBody = matrixHtml`<p>🔧 Read(file)</p><blockquote><details><summary><code>first</code></summary><pre><code>first&#10;second</code></pre></details></blockquote>`;
-  const message = { roomId: ROOM_ID, transactionId: "result-send", body: "[completed] 🔧 Read(file)\nfirst", formattedBody };
+  const message = {
+    roomId: ROOM_ID,
+    transactionId: "result-send",
+    body: "[completed] 🔧 Read(file)\nfirst",
+    formattedBody,
+  };
   const eventId = await adapter.sendHtmlMessage(message);
-  await adapter.sendHtmlMessage({ ...message, transactionId: "result-edit", targetEventId: eventId });
+  await adapter.sendHtmlMessage({
+    ...message,
+    transactionId: "result-edit",
+    targetEventId: eventId,
+  });
   assert.equal(fake.sent[0]?.content.formatted_body, formattedBody);
   assert.equal(fake.sent[1]?.content.formatted_body, `* ${formattedBody}`);
   assert.deepEqual(fake.sent[1]?.content["m.new_content"], {
-    msgtype: "m.text", body: message.body, format: "org.matrix.custom.html", formatted_body: formattedBody,
+    msgtype: "m.text",
+    body: message.body,
+    format: "org.matrix.custom.html",
+    formatted_body: formattedBody,
   });
 });
 
 void test("HTML sends enforce configured rooms and required encryption", async () => {
   const fake = readyClient();
   const adapter = adapterFor(fake);
-  const message = { roomId: OTHER_ROOM_ID, transactionId: "html-other", body: "text", formattedBody: matrixHtml`<p>text</p>` };
-  await assert.rejects(() => adapter.sendHtmlMessage(message), /not configured/u);
+  const message = {
+    roomId: OTHER_ROOM_ID,
+    transactionId: "html-other",
+    body: "text",
+    formattedBody: matrixHtml`<p>text</p>`,
+  };
+  await assert.rejects(
+    () => adapter.sendHtmlMessage(message),
+    /not configured/u,
+  );
   assert.equal(fake.sent.length, 0);
 
   const required = requiredAdapterFor(fake);
-  await assert.rejects(() => required.sendHtmlMessage({ ...message, roomId: ROOM_ID }), /encryption is not ready/u);
+  await assert.rejects(
+    () => required.sendHtmlMessage({ ...message, roomId: ROOM_ID }),
+    /encryption is not ready/u,
+  );
   assert.equal(fake.sent.length, 0);
 });
 
@@ -1531,10 +1892,25 @@ void test("required outbound responses use the validated SDK encryption path and
 
   const fatal: FatalErrorRecord[] = [];
   adapter.onFatalError((error) => fatal.push(error));
-  fake.sendError = { name: "RustCryptoError", message: "private encryption failure" };
-  await assert.rejects(() => adapter.sendMessage({ ...part, transactionId: "mab1_no_plaintext_fallback" }), /encrypted message delivery failed/u);
+  fake.sendError = {
+    name: "RustCryptoError",
+    message: "private encryption failure",
+  };
+  await assert.rejects(
+    () =>
+      adapter.sendMessage({
+        ...part,
+        transactionId: "mab1_no_plaintext_fallback",
+      }),
+    /encrypted message delivery failed/u,
+  );
   assert.equal(fake.sent.length, 2);
-  assert.deepEqual(fatal, [{ code: "matrix_invariant", message: "Matrix encrypted message delivery failed" }]);
+  assert.deepEqual(fatal, [
+    {
+      code: "matrix_invariant",
+      message: "Matrix encrypted message delivery failed",
+    },
+  ]);
   await adapter.stop();
 });
 
@@ -1543,7 +1919,8 @@ void test("sends 30-second typing updates and an unthreaded m.read receipt", asy
   const eventObject = { id: "$read:example.org" };
   fake.rooms.set(ROOM_ID, {
     ...room(),
-    findEventById: (eventId: string) => eventId === "$read:example.org" ? eventObject : undefined,
+    findEventById: (eventId: string) =>
+      eventId === "$read:example.org" ? eventObject : undefined,
   });
   const adapter = adapterFor(fake);
 
@@ -1555,11 +1932,13 @@ void test("sends 30-second typing updates and an unthreaded m.read receipt", asy
     { roomId: ROOM_ID, isTyping: true, timeoutMs: 30_000 },
     { roomId: ROOM_ID, isTyping: false, timeoutMs: 30_000 },
   ]);
-  assert.deepEqual(fake.receipts, [{
-    event: eventObject,
-    receiptType: "m.read",
-    unthreaded: true,
-  }]);
+  assert.deepEqual(fake.receipts, [
+    {
+      event: eventObject,
+      receiptType: "m.read",
+      unthreaded: true,
+    },
+  ]);
 });
 
 void test("normalizes retryability and server retry-delay metadata without retrying", async () => {
@@ -1587,7 +1966,10 @@ void test("normalizes retryability and server retry-delay metadata without retry
   assert.equal(abortedRequest.kind, "transient");
   assert.equal(abortedRequest.retryable, true);
 
-  const forbidden = classifyMatrixError({ httpStatus: 403, errcode: "M_FORBIDDEN" });
+  const forbidden = classifyMatrixError({
+    httpStatus: 403,
+    errcode: "M_FORBIDDEN",
+  });
   assert.equal(forbidden.kind, "permanent");
   assert.equal(forbidden.retryable, false);
 
@@ -1595,15 +1977,16 @@ void test("normalizes retryability and server retry-delay metadata without retry
   fake.sendError = { httpStatus: 503 };
   const adapter = adapterFor(fake);
   await assert.rejects(
-    () => adapter.sendMessage({
-      roomId: ROOM_ID,
-      inboundEventId: "$inbound:example.org",
-      responseKind: "error",
-      partNumber: 1,
-      partCount: 1,
-      transactionId: "mab1_retry-once",
-      content: { msgtype: "m.text", body: "reply" },
-    }),
+    () =>
+      adapter.sendMessage({
+        roomId: ROOM_ID,
+        inboundEventId: "$inbound:example.org",
+        responseKind: "error",
+        partNumber: 1,
+        partCount: 1,
+        transactionId: "mab1_retry-once",
+        content: { msgtype: "m.text", body: "reply" },
+      }),
     (error: unknown) =>
       error instanceof MatrixAdapterError &&
       error.failure.kind === "transient" &&
@@ -1633,13 +2016,18 @@ void test("exposes reconnect state without taking over SDK backoff and shuts dow
   await adapter.stop();
   assert.equal(fake.stopCalls, 1);
   assert.equal(adapter.lifecycle, "stopped");
-  assert.equal([...fake.listeners.values()].reduce((count, set) => count + set.size, 0), 0);
+  assert.equal(
+    [...fake.listeners.values()].reduce((count, set) => count + set.size, 0),
+    0,
+  );
 });
 
 void test("permanent initial sync errors reject startup immediately", async () => {
   const fake = readyClient();
   fake.startClientAction = () => {
-    fake.emit(SDK_SYNC, "ERROR", null, { error: { errcode: "M_UNKNOWN_TOKEN" } });
+    fake.emit(SDK_SYNC, "ERROR", null, {
+      error: { errcode: "M_UNKNOWN_TOKEN" },
+    });
   };
   const fatal: FatalErrorRecord[] = [];
   const adapter = adapterFor(fake);
@@ -1656,11 +2044,18 @@ void test("permanent initial sync errors reject startup immediately", async () =
 
 void test("transient reconnecting and error states do not reject startup", async () => {
   const fake = readyClient();
-  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const records: Array<{
+    readonly event: string;
+    readonly fields: DiagnosticFields;
+  }> = [];
   fake.startClientAction = () => {
     fake.emit(SDK_SYNC, "RECONNECTING", null, { error: { httpStatus: 503 } });
-    fake.emit(SDK_SYNC, "ERROR", "RECONNECTING", { error: { httpStatus: 503 } });
-    fake.emit(SDK_SYNC, "PREPARED", "ERROR", { nextSyncToken: "startup-recovered" });
+    fake.emit(SDK_SYNC, "ERROR", "RECONNECTING", {
+      error: { httpStatus: 503 },
+    });
+    fake.emit(SDK_SYNC, "PREPARED", "ERROR", {
+      nextSyncToken: "startup-recovered",
+    });
   };
   const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
     client: fake,
@@ -1671,11 +2066,14 @@ void test("transient reconnecting and error states do not reject startup", async
 
   await adapter.start();
   assert.deepEqual(fatal, []);
-  assert.deepEqual(records.map((record) => record.event), [
-    "matrix-connection-lost",
-    "matrix-reconnect-retry",
-    "matrix-connection-restored",
-  ]);
+  assert.deepEqual(
+    records.map((record) => record.event),
+    [
+      "matrix-connection-lost",
+      "matrix-reconnect-retry",
+      "matrix-connection-restored",
+    ],
+  );
   assert.equal(records[0]?.fields.startupCompleted, false);
   assert.equal(records[0]?.fields.httpStatus, 503);
   await adapter.stop();
@@ -1683,40 +2081,60 @@ void test("transient reconnecting and error states do not reject startup", async
 
 void test("runtime transient failures, including repeated SDK error states, preserve the adapter and restore once", async () => {
   const fake = readyClient();
-  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const records: Array<{
+    readonly event: string;
+    readonly fields: DiagnosticFields;
+  }> = [];
   const batches: MatrixSyncBatch[] = [];
   const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
     client: fake,
     diagnostics: captureDiagnostics(records),
   });
-  adapter.onSyncBatch((batch) => { batches.push(batch); });
+  adapter.onSyncBatch((batch) => {
+    batches.push(batch);
+  });
   const fatal: FatalErrorRecord[] = [];
   adapter.onFatalError((error) => fatal.push(error));
   await adapter.start();
 
-  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", {
+    error: { httpStatus: 503 },
+  });
   fake.emit(SDK_SYNC, "ERROR", "RECONNECTING", { error: { httpStatus: 503 } });
   fake.emit(SDK_SYNC, "ERROR", "ERROR", { error: { httpStatus: 503 } });
   assert.deepEqual(fatal, []);
   assert.equal(fake.stopCalls, 0);
 
-  fake.emit(SDK_EVENT, event({ eventId: "$recovered:example.org", content: {
-    msgtype: "m.text",
-    body: "after recovery",
-  } }));
-  fake.emit(SDK_SYNC, "SYNCING", "ERROR", { nextSyncToken: "recovered-cursor" });
+  fake.emit(
+    SDK_EVENT,
+    event({
+      eventId: "$recovered:example.org",
+      content: {
+        msgtype: "m.text",
+        body: "after recovery",
+      },
+    }),
+  );
+  fake.emit(SDK_SYNC, "SYNCING", "ERROR", {
+    nextSyncToken: "recovered-cursor",
+  });
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(batches.length, 2);
   assert.deepEqual(
-    batches[1]?.rooms.flatMap((room) => room.timeline).map((item) => item.eventId),
+    batches[1]?.rooms
+      .flatMap((room) => room.timeline)
+      .map((item) => item.eventId),
     ["$recovered:example.org"],
   );
-  assert.deepEqual(records.map((record) => record.event), [
-    "matrix-connection-lost",
-    "matrix-reconnect-retry",
-    "matrix-connection-restored",
-  ]);
+  assert.deepEqual(
+    records.map((record) => record.event),
+    [
+      "matrix-connection-lost",
+      "matrix-reconnect-retry",
+      "matrix-connection-restored",
+    ],
+  );
   const diagnosticText = JSON.stringify(records);
   assert.equal(diagnosticText.includes("https://"), false);
   assert.equal(diagnosticText.includes("recovered-cursor"), false);
@@ -1730,11 +2148,16 @@ void test("runtime transient failures, including repeated SDK error states, pres
 
 void test("does not clear an outage when another failure arrives during durable batch handling", async () => {
   const fake = readyClient();
-  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const records: Array<{
+    readonly event: string;
+    readonly fields: DiagnosticFields;
+  }> = [];
   let releaseBatch: (() => void) | undefined;
   let batchStarted: (() => void) | undefined;
   let batchCount = 0;
-  const batchEntered = new Promise<void>((resolve) => { batchStarted = resolve; });
+  const batchEntered = new Promise<void>((resolve) => {
+    batchStarted = resolve;
+  });
   const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
     client: fake,
     diagnostics: captureDiagnostics(records),
@@ -1743,24 +2166,41 @@ void test("does not clear an outage when another failure arrives during durable 
     batchCount += 1;
     if (batchCount === 2) {
       batchStarted?.();
-      await new Promise<void>((resolve) => { releaseBatch = resolve; });
+      await new Promise<void>((resolve) => {
+        releaseBatch = resolve;
+      });
     }
   });
   await adapter.start();
 
-  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
-  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "first-recovery" });
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", {
+    error: { httpStatus: 503 },
+  });
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", {
+    nextSyncToken: "first-recovery",
+  });
   await batchEntered;
-  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", {
+    error: { httpStatus: 503 },
+  });
   releaseBatch?.();
   await new Promise<void>((resolve) => setImmediate(resolve));
 
-  assert.equal(records.some((record) => record.event === "matrix-connection-restored"), false);
-  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "second-recovery" });
+  assert.equal(
+    records.some((record) => record.event === "matrix-connection-restored"),
+    false,
+  );
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", {
+    nextSyncToken: "second-recovery",
+  });
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(
     records.map((record) => record.event),
-    ["matrix-connection-lost", "matrix-reconnect-retry", "matrix-connection-restored"],
+    [
+      "matrix-connection-lost",
+      "matrix-reconnect-retry",
+      "matrix-connection-restored",
+    ],
   );
   assert.equal(records.at(-1)?.fields.failureCount, 2);
   await adapter.stop();
@@ -1773,18 +2213,25 @@ void test("sync.unexpectedError remains fatal during runtime", async () => {
   adapter.onFatalError((error) => fatal.push(error));
   await adapter.start();
 
-  fake.emit("sync.unexpectedError", new Error("unsafe local processing failure"));
-  assert.deepEqual(fatal, [{
-    code: "matrix_transport",
-    message: "Matrix sync failed during local processing",
-  }]);
+  fake.emit(
+    "sync.unexpectedError",
+    new Error("unsafe local processing failure"),
+  );
+  assert.deepEqual(fatal, [
+    {
+      code: "matrix_transport",
+      message: "Matrix sync failed during local processing",
+    },
+  ]);
   await adapter.stop();
 });
 
 void test("permanent authentication and unsolicited stop states remain fatal", async () => {
   const authFailure = readyClient();
   authFailure.startClientAction = () => {
-    authFailure.emit(SDK_SYNC, "ERROR", null, { error: { errcode: "M_UNKNOWN_TOKEN" } });
+    authFailure.emit(SDK_SYNC, "ERROR", null, {
+      error: { errcode: "M_UNKNOWN_TOKEN" },
+    });
   };
   const authAdapter = adapterFor(authFailure);
   const authFatal: FatalErrorRecord[] = [];
@@ -1799,24 +2246,33 @@ void test("permanent authentication and unsolicited stop states remain fatal", a
   stoppedAdapter.onFatalError((error) => stoppedFatal.push(error));
   await stoppedAdapter.start();
   stopped.emit(SDK_SYNC, "STOPPED", "SYNCING");
-  assert.deepEqual(stoppedFatal, [{
-    code: "matrix_transport",
-    message: "Matrix sync stopped unexpectedly",
-  }]);
+  assert.deepEqual(stoppedFatal, [
+    {
+      code: "matrix_transport",
+      message: "Matrix sync stopped unexpectedly",
+    },
+  ]);
   await stoppedAdapter.stop();
 });
 
 void test("shutdown during a transient outage emits no false restoration", async () => {
   const fake = readyClient();
-  const records: Array<{ readonly event: string; readonly fields: DiagnosticFields }> = [];
+  const records: Array<{
+    readonly event: string;
+    readonly fields: DiagnosticFields;
+  }> = [];
   const adapter = createMatrixClientAdapter(CONFIG, "access-token", {
     client: fake,
     diagnostics: captureDiagnostics(records),
   });
   await adapter.start();
-  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", { error: { httpStatus: 503 } });
+  fake.emit(SDK_SYNC, "RECONNECTING", "SYNCING", {
+    error: { httpStatus: 503 },
+  });
   await adapter.stop();
-  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", { nextSyncToken: "late-cursor" });
+  fake.emit(SDK_SYNC, "SYNCING", "RECONNECTING", {
+    nextSyncToken: "late-cursor",
+  });
   assert.deepEqual(
     records.map((record) => record.event),
     ["matrix-connection-lost"],

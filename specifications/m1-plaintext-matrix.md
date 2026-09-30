@@ -209,7 +209,7 @@ Startup is fail-fast and occurs in this order:
 5. Require the Matrix account to be joined to every configured room. A missing,
    left, or mistyped room fails startup rather than silently disabling it.
 6. Require every configured room to be unencrypted when `encryption =
-   "disabled"`. In Milestone 3, require every configured room to be encrypted
+"disabled"`. In Milestone 3, require every configured room to be encrypted
    when `encryption = "required"`. There is no mixed mode.
 7. Enable ACP dispatch and drain the buffered live events in room order.
 
@@ -332,17 +332,17 @@ Every user-facing response is one or more ordinary top-level
 `m.in_reply_to`, or `m.thread`, and do not include a quoted reply fallback.
 Use these exact texts and stable response kinds:
 
-| Outcome | Response kind | Exact text when no agent text exists |
-| --- | --- | --- |
-| Successful empty turn | `empty` | `The agent returned no text.` |
-| Queue full | `busy` | `The room queue is full. Try again later.` |
-| Oversized input | `oversized` | `Your message is too large.` |
-| Timeout | `timeout` | `[agent timed out]` |
-| Token limit | `max_tokens` | `[agent reached its token limit]` |
-| Turn-request limit | `max_turn_requests` | `[agent reached its turn-request limit]` |
-| Refusal | `refusal` | `[agent refused the request]` |
-| Cancelled | `cancelled` | `[agent cancelled the request]` |
-| Nonfatal agent/protocol error | `error` | `[agent error]` |
+| Outcome                       | Response kind       | Exact text when no agent text exists       |
+| ----------------------------- | ------------------- | ------------------------------------------ |
+| Successful empty turn         | `empty`             | `The agent returned no text.`              |
+| Queue full                    | `busy`              | `The room queue is full. Try again later.` |
+| Oversized input               | `oversized`         | `Your message is too large.`               |
+| Timeout                       | `timeout`           | `[agent timed out]`                        |
+| Token limit                   | `max_tokens`        | `[agent reached its token limit]`          |
+| Turn-request limit            | `max_turn_requests` | `[agent reached its turn-request limit]`   |
+| Refusal                       | `refusal`           | `[agent refused the request]`              |
+| Cancelled                     | `cancelled`         | `[agent cancelled the request]`            |
+| Nonfatal agent/protocol error | `error`             | `[agent error]`                            |
 
 Successful nonempty `end_turn` output uses response kind `agent`. For other
 stop reasons, join collected text and the exact status with `\n\n`; status text

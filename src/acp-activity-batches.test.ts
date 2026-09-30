@@ -10,7 +10,11 @@ function thought(text: string): AcpThoughtActivity {
 }
 
 function batches(maxEvents = 2): AcpActivityBatches {
-  return new AcpActivityBatches({ maxEvents, maxMessageBytes: 4096, measure: matrixHtmlEditContentBytes });
+  return new AcpActivityBatches({
+    maxEvents,
+    maxMessageBytes: 4096,
+    measure: matrixHtmlEditContentBytes,
+  });
 }
 
 void test("event limits collapse the previous batch and preserve event order", () => {
@@ -46,7 +50,10 @@ void test("text boundaries collapse once and later tool updates retain their ori
   assert.deepEqual(presentation.accept(event), [initial]);
   assert.equal(initial.events.length, 1);
   const collapsed = presentation.render(initial);
-  assert.match(collapsed.formattedBody, /<details><summary>Past agent events \(1\)<\/summary>/);
+  assert.match(
+    collapsed.formattedBody,
+    /<details><summary>Past agent events \(1\)<\/summary>/,
+  );
   assert.match(collapsed.formattedBody, /updated &lt;text&gt;/);
   const [next] = presentation.accept(thought("next"));
   assert.equal(next?.index, 1);

@@ -1,5 +1,8 @@
 import { markdownToMatrixHtml } from "./matrix-markdown.js";
-import { matrixHtmlContentBytes, type MatrixHtmlBody } from "./matrix-message-content.js";
+import {
+  matrixHtmlContentBytes,
+  type MatrixHtmlBody,
+} from "./matrix-message-content.js";
 
 export interface MatrixTextChunk {
   readonly rendered: MatrixHtmlBody;
@@ -11,7 +14,11 @@ export function renderMatrixText(body: string): MatrixHtmlBody {
 }
 
 /** Find the next Unicode-safe Markdown chunk that fits a Matrix message. */
-export function renderMatrixTextChunk(characters: readonly string[], offset: number, maxBytes: number): MatrixTextChunk | undefined {
+export function renderMatrixTextChunk(
+  characters: readonly string[],
+  offset: number,
+  maxBytes: number,
+): MatrixTextChunk | undefined {
   let low = 1;
   let high = characters.length - offset;
   let fitting = 0;
@@ -26,5 +33,7 @@ export function renderMatrixTextChunk(characters: readonly string[], offset: num
       low = middle + 1;
     } else high = middle - 1;
   }
-  return rendered === undefined ? undefined : { rendered, nextOffset: offset + fitting };
+  return rendered === undefined
+    ? undefined
+    : { rendered, nextOffset: offset + fitting };
 }

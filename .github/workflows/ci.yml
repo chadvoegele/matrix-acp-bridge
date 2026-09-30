@@ -23,5 +23,5 @@ jobs:
           cache: npm
       - name: Install frozen dependencies
         run: npm ci
-      - name: Verify
+      - name: Verify formatting, lint, types, and tests
         run: npm run check

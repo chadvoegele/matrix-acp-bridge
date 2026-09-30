@@ -21,10 +21,16 @@ test("correlates a session/load result with its request ID", () => {
 test("normalizes a session/load JSON-RPC error to its numeric code", () => {
   const observer = createRestartPersistenceObserver();
   observer.outbound({ id: 1, method: "session/load" });
-  observer.inbound({ id: 1, error: { code: -32_000, message: "private detail" } });
+  observer.inbound({
+    id: 1,
+    error: { code: -32_000, message: "private detail" },
+  });
 
   assert.deepEqual(observer.loadOutcome, { kind: "error", code: -32_000 });
-  assert.equal(describeLoadFailure(observer.loadOutcome), "session/load returned JSON-RPC error code -32000");
+  assert.equal(
+    describeLoadFailure(observer.loadOutcome),
+    "session/load returned JSON-RPC error code -32000",
+  );
 });
 
 test("does not expose an invalid or unnumbered load error", () => {
@@ -40,5 +46,8 @@ test("does not expose an invalid or unnumbered load error", () => {
   observer.outbound({ id: 2, method: "session/load" });
   observer.inbound({ id: 2 });
   assert.deepEqual(observer.loadOutcome, { kind: "invalid" });
-  assert.equal(describeLoadFailure(observer.loadOutcome), "session/load response did not contain a result");
+  assert.equal(
+    describeLoadFailure(observer.loadOutcome),
+    "session/load response did not contain a result",
+  );
 });
