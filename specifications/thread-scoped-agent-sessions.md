@@ -39,9 +39,10 @@ encryption milestones and must also cover verbose ACP output when available.
 
 ### Configuration and compatibility
 
-Add a global `[matrix]` setting, proposed as
-`response_mode = "room" | "thread"`. Omission must select `"room"`; unknown
-values must fail configuration validation.
+Add a global `[matrix]` setting, `response_mode = "room" | "thread"`.
+Omission must select `"room"`; unknown values must fail configuration validation.
+Add `max_queued_turns_per_thread` under `[limits]`, defaulting independently to
+16 even when `max_queued_turns_per_room` is customized.
 
 Room mode must retain current behavior, including room-local `/reset` and
 rejection of inbound thread relations. Thread mode changes both Matrix output
@@ -73,6 +74,11 @@ or replay historical root content. This also applies to `/reset` in an unknown
 thread. A known thread awaiting session creation after admission or reset is
 not an unknown thread; its routing identity must remain recorded.
 
+A top-level message rejected as oversized or busy must receive its applicable
+error in a thread rooted at that message, but must not establish a known-thread
+identity or ACP session. Follow-ups in that thread must receive the unknown-thread
+error; the user must start a new top-level conversation.
+
 ### Outbound messages
 
 All turn-related output must stay in its originating thread: agent text,
@@ -100,8 +106,7 @@ history replay during loading as in the persistence milestone.
 Without `session/load`, old conversation context cannot survive bridge restarts;
 follow-ups in those old threads must receive the unknown-thread error rather
 than silently start a fresh conversation. New top-level messages remain supported.
-Healthy-transport
-stale-session errors must retain the existing fresh-session recovery policy,
+Healthy-transport stale-session errors must retain the existing fresh-session recovery policy,
 but apply only to the affected thread. Protocol or transport failures must not
 be disguised as successful session recovery.
 
@@ -110,7 +115,7 @@ mappings based on age, inactivity, or count. Existing removal of mappings for
 rooms removed from `allowed_rooms` remains applicable, including all thread
 mappings for those rooms. Removing a sender from `allowed_senders` must not
 remove mappings; authorization still gates every inbound message.
-Reset replaces a mapping but does
+Reset clears a session mapping while preserving the thread identity and does
 not request deletion of agent-owned history. Sessions and histories can therefore
 accumulate; retention controls are deferred until needed.
 
@@ -149,7 +154,10 @@ the existing session mapping and discard the current session reference, while
 retaining the thread's known routing identity. Send
 `Agent session reset.` inside that thread only after the state change succeeds.
 The next ordinary prompt must lazily create a fresh session; reset must not
-reuse the old session. No agent-owned history is deleted.
+reuse the old session. When `session/load` is supported, the known-thread identity
+without a session ID must be persisted atomically with removal of the old mapping,
+so restarting before the next prompt still permits fresh-session creation.
+No agent-owned history is deleted.
 
 An authorized exact top-level `/reset` must send the unthreaded response
 `Use /reset inside a thread to reset its agent session.` It must not create a
@@ -166,10 +174,20 @@ room-scoped state must remain usable in room mode; enabling thread mode must
 not assign an old shared room session to any thread. Disabling thread mode must
 not treat a thread session as the room session.
 
-Thread mappings should remain available across mode changes when the agent
-supports loading, so temporarily disabling thread mode does not itself erase
-thread context. The implementation must document the migration and rollback
-policy before changing the durable state schema.
+When the agent supports loading, both room and thread mappings, including
+sessionless known-thread identities, must remain available across mode changes.
+Returning to a mode must resume its retained context without assigning sessions
+from the other mode. Removed-room cleanup still applies to both sets of mappings.
+
+Existing state must migrate automatically, preserving account identity, sync
+recovery state, completed-event IDs, and room sessions. Before replacing state
+with the new schema, create a private pre-migration backup. A failed backup or
+migration must stop startup without overwriting the original state.
+
+Rollback to an older binary requires stopping the bridge and restoring that
+backup; post-migration state changes are lost. Document this procedure. Unsupported
+or invalid state must fail startup with recovery guidance, never silently reset.
+A downgrade/export tool is not required.
 
 ## Verification
 
@@ -197,18 +215,25 @@ policy before changing the durable state schema.
 - Missing `session/load` support causes old threads to return the unknown-thread
   error after restart; new top-level messages still create sessions.
 - Follow-ups after a known thread's reset create a fresh session rather than
-  incorrectly returning the unknown-thread error.
+  incorrectly returning the unknown-thread error, including after a restart
+  between reset and the next prompt when `session/load` is supported.
+- Rejected oversized or busy top-level messages create no known-thread identity
+  or ACP session; follow-ups in their error threads receive the unknown-thread error.
 - No inactivity or age-based cleanup removes persisted mappings. Removing a
   room from `allowed_rooms` prunes its mappings; removing a sender rejects their
   messages without removing mappings.
-- Existing state migration and mode switching never cross-associate sessions.
+- State migration preserves existing recovery state and sessions, creates a
+  private backup, and leaves original state intact on failure. Restore-based
+  rollback is documented and tested; incompatible state is never silently erased.
+- Mode switching retains both sets of mappings and sessionless thread identities
+  when loading is supported, and never cross-associates sessions.
 - Concurrent turns preserve room typing state until the last relevant turn ends.
 - Verify thread display and follow-ups in the Matrix client used for deployment.
 
 ## Open questions
 
-- Confirm the `response_mode` configuration spelling.
-- Define durable-state rollback support and retention across mode changes.
+- Define `max_active_sessions`, including which session lifecycle stages count
+  and how it replaces or coexists with `max_concurrent_prompts`.
 - Decide how future unsolicited MCP messages interact with threaded rooms;
   they remain outside this feature's initial routing scope.
 
