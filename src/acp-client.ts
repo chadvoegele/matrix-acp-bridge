@@ -15,42 +15,28 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import { createCancellationController } from "./cancellation.js";
+import { isAcpUpdateNotification, normalizeAcpUpdateNotification } from "./acp-activity-update.js";
+import type { AcpSessionId, AcpUpdate, AcpUpdateListener } from "./acp-activity-update.js";
 import { createStderrDiagnosticSink } from "./diagnostics.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
 import type { DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
 import { hasOwn, isRecord } from "./object-validation.js";
 import type { AcpConfig, BridgeConfig } from "./config.js";
 
-export type AcpSessionId = string;
-export type AcpMessageId = string;
-
-export type AcpIgnoredUpdateKind =
-  | "user_message_chunk"
-  | "agent_thought_chunk"
-  | "tool_call"
-  | "tool_call_update"
-  | "plan"
-  | "available_commands"
-  | "current_mode_update"
-  | "config_option_update"
-  | "usage_update"
-  | "unknown";
-
-export interface AcpAgentMessageChunk {
-  readonly sessionId: AcpSessionId;
-  readonly kind: "agent_message_chunk";
-  readonly text: string;
-  readonly messageId?: AcpMessageId;
-}
-
-export interface AcpIgnoredUpdate {
-  readonly sessionId: AcpSessionId;
-  readonly kind: AcpIgnoredUpdateKind;
-  readonly messageId?: AcpMessageId;
-}
-
-export type AcpUpdate = AcpAgentMessageChunk | AcpIgnoredUpdate;
-export type AcpUpdateListener = (update: AcpUpdate) => void;
+export { ACP_ACTIVITY_UPDATE_MAX_BYTES } from "./acp-activity-update.js";
+export type {
+  AcpSessionId,
+  AcpMessageId,
+  AcpIgnoredUpdateKind,
+  AcpAgentMessageChunk,
+  AcpIgnoredUpdate,
+  AcpAgentThoughtChunk,
+  AcpToolContent,
+  AcpToolInput,
+  AcpToolCallUpdate,
+  AcpUpdate,
+  AcpUpdateListener,
+} from "./acp-activity-update.js";
 
 export type AcpStopReason =
   | "end_turn"
@@ -505,10 +491,6 @@ function stopReason(value: unknown): AcpStopReason | undefined {
   return undefined;
 }
 
-function messageId(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function startupInfo(value: unknown): string | undefined {
   if (!isRecord(value) || !isRecord(value._meta) || !isRecord(value._meta.piAcp)) {
     return undefined;
@@ -958,11 +940,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
 
     if (message.method === CLIENT_METHODS.session_update) {
-      if (!isRecord(message.params) || typeof message.params.sessionId !== "string") {
-        return false;
-      }
-      return isRecord(message.params.update) &&
-        typeof message.params.update.sessionUpdate === "string";
+      return isAcpUpdateNotification(message.params);
     }
 
     if (message.method === CLIENT_METHODS.session_request_permission) {
@@ -1103,84 +1081,24 @@ export class InheritedStdioAcpClient implements AcpClient {
   }
 
   #handleUpdate(parameters: SessionNotification): void {
-    const update = parameters.update as unknown as Record<string, unknown>;
-    const sessionId = parameters.sessionId;
-    const kind = update.sessionUpdate;
-    const id = messageId(update.messageId);
+    const update = normalizeAcpUpdateNotification(parameters);
+    if (update === undefined) return;
 
-    if (kind === "agent_message_chunk") {
-      const content = update.content;
-      if (!isRecord(content) || content.type !== "text" || typeof content.text !== "string") {
-        return;
-      }
-
-      if (this.#startupInfoBySession.get(sessionId) === content.text) {
+    if (update.kind === "agent_message_chunk") {
+      const { sessionId, text, messageId } = update;
+      if (this.#startupInfoBySession.get(sessionId) === text) {
         // pi-acp emits this prelude once, but it schedules the notification
-        // after session/new.  Consume the marker even when the notification
+        // after session/new. Consume the marker even when the notification
         // wins the race with the first prompt.
         this.#startupInfoBySession.delete(sessionId);
         return;
       }
-
       const groups = this.#activeTurns.get(sessionId);
-      if (groups === undefined) {
-        return;
-      }
-      this.#collectText(groups, content.text, id);
-      const mapped: AcpAgentMessageChunk = {
-        sessionId,
-        kind: "agent_message_chunk",
-        text: content.text,
-        ...(id === undefined ? {} : { messageId: id }),
-      };
-      this.#notifyUpdate(mapped);
-      return;
+      if (groups === undefined) return;
+      this.#collectText(groups, text, messageId);
     }
 
-    const ignoredKind = this.#ignoredUpdateKind(kind);
-    const mapped: AcpIgnoredUpdate = {
-      sessionId,
-      kind: ignoredKind,
-      ...(id === undefined ? {} : { messageId: id }),
-    };
-    this.#notifyUpdate(mapped);
-  }
-
-  #ignoredUpdateKind(value: unknown): AcpIgnoredUpdate["kind"] {
-    switch (value) {
-      case "user_message_chunk": {
-        return "user_message_chunk";
-      }
-      case "agent_thought_chunk": {
-        return "agent_thought_chunk";
-      }
-      case "tool_call": {
-        return "tool_call";
-      }
-      case "tool_call_update": {
-        return "tool_call_update";
-      }
-      case "plan":
-      case "plan_update":
-      case "plan_removed": {
-        return "plan";
-      }
-      case "available_commands_update": {
-        return "available_commands";
-      }
-      case "current_mode_update": {
-        return "current_mode_update";
-      }
-      case "config_option_update": {
-        return "config_option_update";
-      }
-      case "usage_update": {
-        return "usage_update";
-      }
-      default: {
-        return "unknown";
-      }
-    }
+    this.#notifyUpdate(update);
   }
 
   #collectText(groups: TextGroup[], text: string, id: string | undefined): void {

@@ -4,6 +4,7 @@ import { constants as osSignals } from "node:os";
 import { join } from "node:path";
 
 import { readEnvironment, repoRoot, testDir } from "./lib.mjs";
+import { SasBridgeDiagnostics } from "./sas-diagnostics.mjs";
 
 const environmentPath = process.argv[2] ?? join(testDir, "environment.json");
 const environment = await readEnvironment(environmentPath);
@@ -12,7 +13,7 @@ let helper;
 let bridge;
 let helperLines = "";
 let bridgeOutput = "";
-let bridgeDiagnosticLines = "";
+const bridgeDiagnostics = new SasBridgeDiagnostics();
 let helperSas;
 let bridgeDecimal;
 let bridgeEmoji;
@@ -20,7 +21,6 @@ let helperReady = false;
 let helperVerified = false;
 let helperPhase = "starting";
 let bridgePhase = "starting";
-let bridgeFailureReason;
 let confirmed = false;
 let bridgeExit;
 let settled = false;
@@ -37,6 +37,7 @@ const safeReasons = new Set([
   "attempt-failed",
   "verification-failed",
   "unknown",
+  "startup",
 ]);
 
 const safePhases = new Set([
@@ -59,35 +60,11 @@ function safeValue(value, allowed, fallback = "unknown") {
   return typeof value === "string" && allowed.has(value) ? value : fallback;
 }
 
-function safeFailure(side, phase, reason) {
+function safeFailure(side, phase, reason, detail) {
   const safeSide = side === "bridge" || side === "helper" ? side : "unknown";
   const safePhase = safeValue(phase, safePhases);
   const safeReason = safeValue(reason, safeReasons);
-  return new Error(`SAS verification failed on ${safeSide} during ${safePhase} (${safeReason})`);
-}
-
-function parseBridgeDiagnostic(line) {
-  // eslint-disable-next-line no-control-regex -- strip terminal escape sequences
-  const cleanLine = line.replaceAll("\r", "").replaceAll(/\u001B\[[0-?]*[ -/]*[@-~]/gu, "").trim();
-  if (cleanLine.length === 0) return;
-  let record;
-  try {
-    record = JSON.parse(cleanLine);
-  } catch {
-    return;
-  }
-  if (record?.event !== "crypto-verification-failed") return;
-  bridgeFailureReason = safeValue(record.fields?.reason, safeReasons);
-}
-
-function captureBridgeDiagnostics(chunk) {
-  bridgeDiagnosticLines += chunk.toString("utf8");
-  while (bridgeDiagnosticLines.includes("\n")) {
-    const newline = bridgeDiagnosticLines.indexOf("\n");
-    const line = bridgeDiagnosticLines.slice(0, newline);
-    bridgeDiagnosticLines = bridgeDiagnosticLines.slice(newline + 1);
-    parseBridgeDiagnostic(line);
-  }
+  return new Error(`SAS verification failed on ${safeSide} during ${safePhase} (${safeReason})${detail === undefined ? "" : `; ${detail}`}`);
 }
 
 function shellQuote(value) {
@@ -149,19 +126,22 @@ const result = new Promise((resolve, reject) => {
     });
     bridge.stdout.on("data", (chunk) => {
       bridgeOutput = `${bridgeOutput}${chunk.toString("utf8")}`.slice(-65_536);
-      captureBridgeDiagnostics(chunk);
+      bridgeDiagnostics.accept(chunk);
       const decimal = bridgeOutput.match(/SAS decimal: ([0-9]+ [0-9]+ [0-9]+)/u);
       const emoji = bridgeOutput.match(/SAS emoji: (.+?)\r?\n/u);
       if (decimal !== null) bridgeDecimal = decimal[1];
       if (emoji !== null) bridgeEmoji = emoji[1]?.replace(/\r/gu, "");
       check();
     });
-    bridge.stderr.resume();
-    bridge.once("error", () => finish(safeFailure("bridge", bridgePhase, bridgeFailureReason)));
-    bridge.once("exit", (code, _signal) => {
+    bridge.stderr.on("data", (chunk) => { bridgeDiagnostics.stderrSeen ||= chunk.length > 0; });
+    bridge.once("error", () => finish(safeFailure("bridge", bridgePhase, "unknown",
+      `spawn error; ${bridgeDiagnostics.summary()}`)));
+    bridge.once("exit", (code, signal) => {
       bridgeExit = code;
+      bridgeDiagnostics.finish();
       if (code === 0) {check();}
-      else {finish(safeFailure("bridge", bridgePhase, bridgeFailureReason));}
+      else {finish(safeFailure("bridge", bridgePhase, bridgeDiagnostics.reason,
+        bridgeDiagnostics.summary(code, signal)));}
     });
   }
 

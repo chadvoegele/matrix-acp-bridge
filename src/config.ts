@@ -32,6 +32,7 @@ export interface BridgeLimits {
   readonly maxInputBytes: number;
   readonly maxOutputBytes: number;
   readonly maxMatrixMessageBytes: number;
+  readonly maxActivityEventsPerMessage: number;
   readonly maxQueuedTurnsPerRoom: number;
   readonly maxConcurrentPrompts: number;
   readonly maxTurnSeconds: number;
@@ -57,6 +58,7 @@ export const DEFAULT_LIMITS: BridgeLimits = {
   maxInputBytes: 16_384,
   maxOutputBytes: 262_144,
   maxMatrixMessageBytes: 32_768,
+  maxActivityEventsPerMessage: 10,
   maxQueuedTurnsPerRoom: 16,
   maxConcurrentPrompts: 4,
   maxTurnSeconds: 1800,
@@ -71,6 +73,7 @@ const LIMIT_KEYS = [
   "max_input_bytes",
   "max_output_bytes",
   "max_matrix_message_bytes",
+  "max_activity_events_per_message",
   "max_queued_turns_per_room",
   "max_concurrent_prompts",
   "max_turn_seconds",
@@ -445,6 +448,7 @@ function validateLimits(limits: BridgeLimits): void {
     max_input_bytes: limits.maxInputBytes,
     max_output_bytes: limits.maxOutputBytes,
     max_matrix_message_bytes: limits.maxMatrixMessageBytes,
+    max_activity_events_per_message: limits.maxActivityEventsPerMessage,
     max_queued_turns_per_room: limits.maxQueuedTurnsPerRoom,
     max_concurrent_prompts: limits.maxConcurrentPrompts,
     max_turn_seconds: limits.maxTurnSeconds,
@@ -558,6 +562,7 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
 
   const maxOutputBytes = values.get("max_output_bytes")!;
   const maxMatrixMessageBytes = values.get("max_matrix_message_bytes")!;
+  const maxActivityEventsPerMessage = values.get("max_activity_events_per_message")!;
   if (maxOutputBytes < 20) {
     throw new ConfigurationError("limits.max_output_bytes must be at least 20");
   }
@@ -581,6 +586,7 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
     maxInputBytes: values.get("max_input_bytes")!,
     maxOutputBytes,
     maxMatrixMessageBytes,
+    maxActivityEventsPerMessage,
     maxQueuedTurnsPerRoom: values.get("max_queued_turns_per_room")!,
     maxConcurrentPrompts: values.get("max_concurrent_prompts")!,
     maxTurnSeconds: values.get("max_turn_seconds")!,
@@ -640,6 +646,7 @@ function limitProperty(key: LimitKey): keyof BridgeLimits {
     max_input_bytes: "maxInputBytes",
     max_output_bytes: "maxOutputBytes",
     max_matrix_message_bytes: "maxMatrixMessageBytes",
+    max_activity_events_per_message: "maxActivityEventsPerMessage",
     max_queued_turns_per_room: "maxQueuedTurnsPerRoom",
     max_concurrent_prompts: "maxConcurrentPrompts",
     max_turn_seconds: "maxTurnSeconds",

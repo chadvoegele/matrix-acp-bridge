@@ -25,17 +25,30 @@ import type {
   CryptoStatePaths,
 } from "./crypto-contracts.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
-import { MATRIX_HTML_FORMAT, markdownToMatrixHtml } from "./matrix-markdown.js";
+import { renderMatrixText } from "./matrix-text-rendering.js";
+import { matrixHtmlContent } from "./matrix-message-content.js";
+import type { MatrixSafeHtml } from "./matrix-html.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
 export type { BridgeConfig, MatrixConfig } from "./config.js";
 export type { FatalError, FatalErrorListener } from "./diagnostics.js";
 export type { Unsubscribe } from "./cancellation.js";
+export { matrixHtml } from "./matrix-html.js";
+export type { MatrixSafeHtml } from "./matrix-html.js";
 
 export type MatrixRoomId = string;
 export type MatrixUserId = string;
 export type MatrixEventId = string;
 export type MatrixDeviceId = string;
+
+export interface MatrixHtmlMessage {
+  readonly roomId: MatrixRoomId;
+  readonly transactionId: string;
+  readonly body: string;
+  readonly formattedBody: MatrixSafeHtml;
+  /** When present, send an m.replace edit of this event. */
+  readonly targetEventId?: MatrixEventId;
+}
 
 export interface MatrixIdentity {
   readonly userId: MatrixUserId;
@@ -196,6 +209,8 @@ export interface MatrixBridgeAdapter {
   onFatalError(listener: FatalErrorListener): Unsubscribe;
   stopIntake(): void;
   sendMessage(part: RenderedMatrixPart): Promise<void>;
+  /** Sends safe HTML text or an edit; returns the event ID to use for later edits. */
+  sendHtmlMessage?(message: MatrixHtmlMessage): Promise<MatrixEventId>;
   /** Send typing state for an active ACP turn. */
   sendTyping?(roomId: MatrixRoomId, isTyping: boolean, timeoutMs: number): Promise<void>;
   /** Sends the unthreaded `m.read` receipt for the supplied event. */
@@ -1183,7 +1198,7 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
       }
     },
     async sendMessage(roomId, content, transactionId) {
-      await (await load()).sendMessage(roomId, content, transactionId);
+      return (await load()).sendMessage(roomId, content, transactionId);
     },
   };
 }
@@ -1526,13 +1541,6 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
   }
 
   async sendMessage(part: RenderedMatrixPart): Promise<void> {
-    if (this.#lifecycle === "stopped") {
-      throw new MatrixAdapterError(
-        "send_message",
-        "The Matrix adapter has been stopped",
-        permanentFailure(),
-      );
-    }
     if (
       !isRecord(part) ||
       typeof part.roomId !== "string" ||
@@ -1548,25 +1556,40 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       );
     }
 
-    if (!this.#configuredRooms.has(part.roomId)) {
-      throw new MatrixAdapterError(
-        "send_message",
-        "The Matrix response room is not configured",
-        permanentFailure(),
-      );
+    const content = matrixHtmlContent(renderMatrixText(part.content.body));
+    await this.#sendTextContent(part.roomId, content, part.transactionId);
+  }
+
+  async sendHtmlMessage(message: MatrixHtmlMessage): Promise<MatrixEventId> {
+    if (!isRecord(message) || typeof message.roomId !== "string" ||
+      typeof message.transactionId !== "string" || message.transactionId.length === 0 ||
+      typeof message.body !== "string" || typeof message.formattedBody !== "string" ||
+      message.formattedBody.length === 0 ||
+      (message.targetEventId !== undefined &&
+        (typeof message.targetEventId !== "string" || !isValidMatrixEventId(message.targetEventId)))) {
+      throw new MatrixAdapterError("send_message", "The Matrix HTML message is invalid", permanentFailure());
     }
-    if (this.#config.encryption === "required" && this.#validatedRooms.get(part.roomId) !== true) {
+    const content = matrixHtmlContent(message, message.targetEventId);
+    const response = await this.#sendTextContent(message.roomId, content, message.transactionId);
+    if (message.targetEventId !== undefined) return message.targetEventId;
+    if (!isRecord(response) || !isValidMatrixEventId(response.event_id)) {
+      throw new MatrixAdapterError("send_message", "Matrix send returned no event ID", permanentFailure());
+    }
+    return response.event_id;
+  }
+
+  async #sendTextContent(roomId: MatrixRoomId, content: Readonly<Record<string, unknown>>, transactionId: string): Promise<unknown> {
+    if (this.#lifecycle === "stopped") {
+      throw new MatrixAdapterError("send_message", "The Matrix adapter has been stopped", permanentFailure());
+    }
+    if (!this.#configuredRooms.has(roomId)) {
+      throw new MatrixAdapterError("send_message", "The Matrix response room is not configured", permanentFailure());
+    }
+    if (this.#config.encryption === "required" && this.#validatedRooms.get(roomId) !== true) {
       throw this.#fatalEncryptionSend("Required Matrix encryption is not ready for this room");
     }
-
-    const content = {
-      msgtype: "m.text",
-      body: part.content.body,
-      format: MATRIX_HTML_FORMAT,
-      formatted_body: markdownToMatrixHtml(part.content.body),
-    } as const;
     try {
-      await this.#client.sendMessage(part.roomId, content, part.transactionId);
+      return await this.#client.sendMessage(roomId, content, transactionId);
     } catch (error) {
       if (this.#config.encryption === "required" && looksLikeCryptoFailure(error)) {
         throw this.#fatalEncryptionSend("Matrix encrypted message delivery failed", error);

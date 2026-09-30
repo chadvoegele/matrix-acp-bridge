@@ -89,3 +89,18 @@ node agent_tests/encrypted-e2e/cleanup.mjs
 ```
 
 Cleanup preserves local state if ACP deletion or Matrix device revocation fails. Never delete local state first because that can leave an agent session or unrecoverable live devices behind.
+
+## Scripted verbose activity
+
+With the same encrypted-room credentials, run the opt-in activity check:
+
+```sh
+agent_tests/encrypted-e2e/test-activity.sh
+```
+
+It substitutes a local deterministic ACP emitter for this invocation, uses
+the normal SAS-verified test devices, checks decrypted Matrix edits and raw
+`m.room.encrypted` wire types, and invokes the normal cleanup trap. The
+plaintext activity test has the detailed HTML, fallback and event-count
+assertions. The existing `test.sh` entry point still uses the configured ACP
+command.

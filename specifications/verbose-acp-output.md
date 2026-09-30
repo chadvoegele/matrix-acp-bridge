@@ -1,7 +1,7 @@
 +++
 status = "draft"
 created = 2026-09-24
-last_update = 2026-09-27
+last_update = 2026-09-29
 +++
 
 # Verbose ACP output in Matrix
@@ -26,6 +26,7 @@ The bridge currently shows text from `agent_message_chunk`. The ACP adapter also
 
 - Display data that isn't passed through ACP.
 - Use Matrix as an archival store for agent traces.
+- Edit agent text for each streamed token or chunk in this PR.
 
 ## Specification
 
@@ -223,7 +224,7 @@ In the example ACP trace, the following text is sent together at the end of the 
 I’ll create only the specified scratch file at its explicit /tmp path, verify its contents, then display it with the exact allowed cat -- command. No other files or commands will be touched.Completed: wrote, read, and displayed the specified scratch file.
 ```
 
-The first sentence is produced before the tool calls but currently displayed at the end. Send the first nonempty `agent_message_chunk` eagerly, then append subsequent chunks to that agent message as they arrive. `messageId` can identify a message but is optional; without it, group consecutive chunks and use tool/agent-message transitions to separate entries. A `"\n\n"` thought chunk is spacing, not another thought.
+The first sentence is produced before the tool calls. Collect consecutive `agent_message_chunk` fragments into one agent message and send it as an immutable Matrix message when a real `tool_call` starts, a nonempty `agent_thought_chunk` starts, a distinct `messageId` begins another agent message, or the turn finishes after the quiet-drain policy. A `tool_call_update` is not a boundary, and a whitespace-only thought chunk such as `"\n\n"` is spacing within a thought, not a new thought boundary. With no `messageId`, consecutive text chunks belong to the current message until an activity boundary. Send the completed text before newly started tool or thought activity. For text → tool → text → turn end, send exactly two agent-text messages and make no agent-text edits. Render each complete message as Markdown once with the safe converter; preserve original Markdown in the plain-text `body`, escape raw HTML, and keep a readable fallback. A Markdown construct completed across chunks must render as a whole. Split a long complete message into bounded continuation sends without losing characters or editing earlier text. Already-sent text must not appear again in the final reply, including error, timeout, and cancellation paths.
 
 ### Progressive Disclosure via Collapsible Trees
 
@@ -241,7 +242,7 @@ Model the agent's activity as a tree. Each depth reveals more information.
     1. Tool Call 2 Abbreviated Result
         1. Tool Call 2 Full Result
 
-Group at most a configurable 10 activity events per Matrix message by default (minimum 1). Each grouped thought and each tool call counts once; status/output updates to a tool do not count again. The newest activity message shows its entries directly. When an eleventh event arrives, wrap the previous ten-event message in a collapsed `<details>` element with a summary such as `Past agent events (10)` and begin a new, expanded message. A new agent message is also a boundary: on its first nonempty chunk, collapse the current activity batch even if it has fewer than ten events, then show the agent's text eagerly in a separate message.
+Group at most a configurable 10 activity events per Matrix message by default (minimum 1). Each grouped thought and each tool call counts once; status/output updates to a tool do not count again. The newest activity message shows its entries directly. When an eleventh event arrives, wrap the previous ten-event message in a collapsed `<details>` element with a summary such as `Past agent events (10)` and begin a new, expanded message. On the first nonempty chunk of a new agent message, collapse all remaining live activity batches; send the agent text when that message is complete. The first ten events stay expanded until event 11 or an agent message; events 11–20 stay expanded until event 21 or an agent message, and so on. Even if an agent message follows immediately, each new batch must first be sent expanded before it is edited into its collapsed form.
 
 While live, edit the same activity message as thoughts stream and tool statuses/results change; correlate updates by `toolCallId`. If a tool in an archived batch is still running, continue updating that batch when its status/output changes, even though this may re-collapse a disclosure someone opened. Tool updates must not be lost or counted as new events. Close a batch early if needed to fit the configured Matrix message-size limit, including HTML and plain-text bodies.
 
@@ -273,25 +274,34 @@ These are initial limits, measured on the unescaped source text before HTML form
 
 | Content | Visible summary | Maximum in expanded detail |
 | --- | ---: | ---: |
-| Tool result (read, write, edit, or terminal output) | 1 KiB UTF-8 | 8 KiB UTF-8 |
+| Tool result (read, write, edit, MCP, or terminal output) | 256 UTF-8 bytes or 3 lines, whichever comes first | 8 KiB UTF-8 |
 | Terminal command/title | 160 Unicode characters | 2 KiB UTF-8 |
 
 Show short results directly. For a longer result, put the abbreviated output itself in a closed `<details>` element's `<summary>`; expanding it reveals the detailed `<pre><code>` output. For terminal commands over 160 characters, make the abbreviated status-tinted title its own clickable `<summary>` with the command in `<pre><code>` beneath it. If the source exceeds a detailed-view cap, append ` (truncated)` to that summary. The plain-text `body` contains the previews and any truncation notices, not hidden detailed content.
 
-Read, write, and edit previews and details start at the beginning of their result. For terminal output, show the most recent 1 KiB in the visible summary. When it exceeds 8 KiB, keep the first 6 KiB and last 2 KiB in the expanded view, separated by a blank line; otherwise show all of it. Bound streaming accumulation, avoid splitting UTF-8 characters, and keep old/new edit text identifiable. If ten events exceed the Matrix event-size limit after HTML escaping, roll over early; if one event alone is too large, further shorten its detailed view and mark its summary as truncated.
+Indent the entire tool result beneath its title with `<blockquote>`. A short result uses `<blockquote><pre><code>…</code></pre></blockquote>`; a long result places both its preview `<summary><code>` and expanded `<pre><code>` inside `<blockquote><details>…</details></blockquote>`. The quote bar is outside the code, never literal output. Keep the tool title and any command or `mcpScript` source disclosure outside the result quote. Do not add a `Result · completed` label or connector line; the title rail and plain-text fallback carry status. Budget the blockquote tags with the rest of the encoded Matrix event.
+
+Read, write, edit, and other tool previews and details start at the beginning of their result. For terminal output, show the most recent 256 UTF-8 bytes or 3 lines, whichever comes first, in the visible summary. When it exceeds 8 KiB, keep the first 6 KiB and last 2 KiB in the expanded view, separated by a blank line; otherwise show all of it. Bound streaming accumulation, avoid splitting UTF-8 characters, and keep old/new edit text identifiable. If ten events exceed the Matrix event-size limit after HTML escaping, roll over early; if one event alone is too large, further shorten its detailed view and mark its summary as truncated.
 
 ```html
 <details><summary><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(python3 -c '…') (truncated)</span></span></summary><pre><code>python3 -c 'print("alpha")'</code></pre></details>
-<details><summary><code>recent output…</code> (truncated)</summary><pre><code>first output&#10;&#10;recent output</code></pre></details>
+<blockquote><details><summary><code>recent output…</code> (truncated)</summary><pre><code>first output&#10;&#10;recent output</code></pre></details></blockquote>
 ```
 
 ## Event Rendering
 ### Thoughts
 
-Render each chunked thought as a single entry. Use a thought-bubble emoji followed by the thought text.
+Group consecutive chunks of one thought into a single activity event. Keep spacing-only chunks (including `"\n\n"`) within that event rather than discarding them or counting them as another event. Render each paragraph separately with 💭; remove surrounding Markdown `**` or `__` from heading-like paragraphs rather than showing literal markers or bold text. Escape HTML inside paragraphs.
 
 ```html
 <p>💭 Preparing initial write</p>
+```
+
+For source `**First heading**\n\n**Second heading**`, the same one event renders as:
+
+```html
+<p>💭 First heading</p>
+<p>💭 Second heading</p>
 ```
 
 ### Tool Calls
@@ -320,14 +330,14 @@ For reads, use `Read(path)` as the title.
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
+   <blockquote><pre><code>alpha&#10;beta&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Read(/tmp/output.txt)</span></span></p>
-   <pre><code>Permission denied</code></pre>
+   <blockquote><pre><code>Permission denied</code></pre></blockquote>
    ```
 
 #### Writes
@@ -350,14 +360,14 @@ The agent's `write` tool is reported as ACP `kind: "edit"`. Show `Write(path)` w
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">alpha</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">beta</span>&#10;</code></pre>
+   <blockquote><pre><code><span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">alpha</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">beta</span>&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Write(/tmp/output.txt)</span></span></p>
-   <pre><code>Permission denied</code></pre>
+   <blockquote><pre><code>Permission denied</code></pre></blockquote>
    ```
 
 #### Edits
@@ -380,15 +390,21 @@ Show `Edit(path)` with the same four status colors. In the observed edit, `rawIn
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
-   <pre><code><span data-mx-color="#C00000">-</span><span data-mx-color="#000000">1 </span><span data-mx-color="#C00000">2</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">2 </span><span data-mx-color="#C00000">3</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">3 </span><span data-mx-color="#C00000">5</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">4 </span><span data-mx-color="#C00000">7</span>&#10;&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">2</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">3</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">3 </span><span data-mx-color="#008000">5</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">4 </span><span data-mx-color="#008000">11</span>&#10;</code></pre>
+   <blockquote><pre><code><span data-mx-color="#C00000">-</span><span data-mx-color="#000000">1 </span><span data-mx-color="#C00000">2</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">2 </span><span data-mx-color="#C00000">3</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">3 </span><span data-mx-color="#C00000">5</span>&#10;<span data-mx-color="#C00000">-</span><span data-mx-color="#000000">4 </span><span data-mx-color="#C00000">7</span>&#10;&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">1 </span><span data-mx-color="#008000">2</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">2 </span><span data-mx-color="#008000">3</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">3 </span><span data-mx-color="#008000">5</span>&#10;<span data-mx-color="#008000">+</span><span data-mx-color="#000000">4 </span><span data-mx-color="#008000">11</span>&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with an illustrative error if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Edit(/tmp/output.txt)</span></span></p>
-   <pre><code>Could not apply edit</code></pre>
+   <blockquote><pre><code>Could not apply edit</code></pre></blockquote>
    ```
+
+#### MCP and other tools
+
+ACP reports pi-acp's MCP dispatcher as `kind: "other"` with `title: "mcp"`. A search call's `rawInput.search` holds the query; its completed result may be a plain-text list of available tools, not individual tool-call events. Show `MCP(search)` for that call. A schema lookup sends `rawInput.describe` with the named tool and displays `MCP(toolname)`. pi-acp can also report per-server tool calls with titles such as `mcp__example` and `rawInput: { "tool": "list", "args": {} }`; show `MCP(example/list)`. For other calls, show a recognizable name from bounded `rawInput` (`tool`, `toolName`, `name`, or a `call` object); otherwise show `MCP` or the known server name. Do not infer a called tool from search-result text or display arbitrary arguments as a tool name. Keep the same status styling, result preview and expanded cap as other tools.
+
+Pi's MCP scripting tool arrives as `kind: "other"`, `title: "mcpScript"`, and `rawInput.code` containing JavaScript. Show `MCP Script(<abbreviated single-line source>)` as a status-colored clickable summary; put bounded, escaped source in its `<pre><code>` detail (at most 2 KiB, or less to fit the Matrix message budget), even if there is no result yet. Include the source in the plain-text fallback. On updates, retain the same code alongside the bounded result; do not mistake `rawOutput` for new source or publish full uncapped input.
 
 #### Terminal execution
 
@@ -404,35 +420,37 @@ Show `Execute(title)` with the same status rail and tinted background. In the ob
 
    ```html
    <p><span data-mx-bg-color="#F2F2F2"><span data-mx-color="#000000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
+   <blockquote><pre><code>alpha&#10;beta&#10;</code></pre></blockquote>
    ```
 
 3. **Completed successfully — green (`#008000`), retaining the output:**
 
    ```html
    <p><span data-mx-bg-color="#E6F4EA"><span data-mx-color="#008000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
-   <pre><code>alpha&#10;beta&#10;</code></pre>
+   <blockquote><pre><code>alpha&#10;beta&#10;</code></pre></blockquote>
    ```
 
 4. **Failed — red (`#C00000`), with illustrative output if available:**
 
    ```html
    <p><span data-mx-bg-color="#FCE8E6"><span data-mx-color="#C00000">┃</span> <span data-mx-color="#000000">🔧 Execute(cat -- /tmp/output.txt)</span></span></p>
-   <pre><code>Command exited with code 1</code></pre>
+   <blockquote><pre><code>Command exited with code 1</code></pre></blockquote>
    ```
 
 ## Verification
 
-- A text thought chunk followed by `"\n\n"` appears as one live thought entry and counts once.
+- Completed agent messages use the same Markdown HTML conversion as regular replies on their single send; consecutive chunks produce no text edits, their plain-text body preserves the original Markdown, and raw HTML stays escaped. Tool and nonempty-thought boundaries send preceding text before new activity; distinct message IDs and turn completion also close text. Long messages use bounded continuation sends without lost characters.
+- `mcpScript` displays its bounded, escaped `rawInput.code` in a clickable title and plain-text fallback on the initial send and subsequent result edits.
+- A text thought chunk followed by `"\n\n"` and another paragraph appears as one live thought event, counts once, and renders separate unbolded 💭 paragraphs rather than a run-on line.
 - Different `messageId` values create separate thought entries; repeated IDs append to their existing entries.
 - Without IDs, tool and agent-message transitions separate thought runs, while metadata updates and whitespace alone do not. Late chunks do not create entries after turn closure.
 - The thought example renders as a single paragraph with 💭 and unbolded text in an HTML-capable Matrix client; its plain-text fallback remains readable when HTML is unavailable.
-- One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate code block without a rail, and the plain-text fallback includes the status.
+- One read tool event transitions through pending, running, and either completed or failed; the status-tinted title includes one left rail and `Read(path)`, results use a separate indented code block without a rail, and the plain-text fallback includes the status.
 - Write and edit use the same status progression. A new-file write displays only its returned `newText` with green `+` prefixes; an edit colors the returned `oldText` red with `-` prefixes and `newText` green with `+` prefixes, without labels or synthesized hunk headers. When the result contains full-file text, count its lines into a gutter after the sign and before the text; leave the title unchanged and do not treat optional `locations[].line` as a hunk offset. The plain-text fallback retains the text and line numbers in order.
 - A terminal tool event retains streamed output while moving from running to completed or failed, without duplicating output; missing extension metadata does not create invented terminal text.
-- Short tool results and commands stay visible. For long results, the abbreviated output is the clickable `<summary>` revealing a detailed view capped at 8 KiB. For long terminal titles, the abbreviated status-tinted `Execute(…)` is a separate clickable `<summary>` revealing command text capped at 2 KiB. A ` (truncated)` suffix appears on either summary only if the source exceeded its expanded-content cap; the plain-text fallback also notes truncation.
+- Short tool results and commands stay visible. The entire short result code block, or both the long result's clickable preview and its expanded detail, sit inside `<blockquote>` beneath the tool title. The quote bar stays outside the code, with no result-status label or connector line. For long results, the abbreviated output is the clickable `<summary>` revealing a detailed view capped at 8 KiB. For long terminal titles, the abbreviated status-tinted `Execute(…)` is a separate clickable `<summary>` revealing command text capped at 2 KiB. A ` (truncated)` suffix appears on either summary only if the source exceeded its expanded-content cap; the plain-text fallback also notes truncation.
 - Streaming terminal output preserves a recent visible tail and a bounded head-and-tail detail; older output does not grow bridge memory or Matrix event size without limit. An oversized encoded event shrinks details before its preview while keeping truncation explicit.
-- With the default batch size, events 1–10 appear together in an expanded live activity message; event 11 starts a new expanded message and the prior batch collapses. The first nonempty agent-message chunk also closes the batch before appearing eagerly. Tool updates do not count as additional events; a late update edits its archived batch rather than losing the result. Oversized batches roll over early.
+- With the default batch size, events 1–10 appear expanded until event 11 collapses that message and starts a new expanded one; event 21 does the same to events 11–20. The first nonempty agent-message chunk collapses every remaining live batch. No batch is first sent collapsed. Tool updates do not count as additional events; a late update edits its archived batch rather than losing the result. Oversized batches roll over early.
 
 ## Appendix
 
@@ -475,7 +493,7 @@ Here is a full sequence of ACP messages, trimmed and commented for readability.
   }
 }
 
-// Agent message is collected, then displayed after the turn completes
+// Agent message is collected, then sent when the following tool call starts
 {
   "method": "session/update",
   "params": {
@@ -497,7 +515,7 @@ Here is a full sequence of ACP messages, trimmed and commented for readability.
 // Same agent_message_chunk repeated to make it say:
 // I'll create only the specified scratch file with the provided contents, verify it by reading it, then display exactly that file using the requested `cat --` command.
 
-// Tool calls are not displayed
+// Tool calls are displayed as live activity after the preceding agent message
 {
   "method": "session/update",
   "params": {
@@ -645,7 +663,7 @@ Here is a full sequence of ACP messages, trimmed and commented for readability.
   }
 }
 
-// Agent message is collected, then displayed after the turn completes
+// Agent message is collected, then sent after turn completion and quiet drain
 {
   "method": "session/update",
   "params": {
@@ -658,5 +676,5 @@ Here is a full sequence of ACP messages, trimmed and commented for readability.
 // agent_message_chunk repeated until it says:
 // Completed: wrote, read, and displayed the specified scratch file.
 
-// After the turn completes, the collected agent-message text is sent together.
+// No final reply duplicates the agent message already sent before the tools.
 ```

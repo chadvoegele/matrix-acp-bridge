@@ -12,12 +12,14 @@ import {
   classifyMatrixError,
   createMatrixClientAdapter,
   createMatrixCryptoAdapter,
+  matrixHtml,
   type MatrixClientCreateOptions,
   type MatrixSdkClientLike,
   type MatrixSdkEventLike,
   type MatrixSdkRoomLike,
 } from "./matrix-client.js";
 import { DEFAULT_LIMITS, type BridgeConfig, type MatrixConfig } from "./config.js";
+import { matrixHtmlContentBytes } from "./matrix-message-content.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
 import type {
@@ -182,11 +184,12 @@ class FakeSdkClient implements MatrixSdkClientLike {
     roomId: string,
     content: Readonly<Record<string, unknown>>,
     transactionId?: string,
-  ): Promise<void> {
+  ): Promise<{ event_id: string }> {
     this.sent.push({ roomId, content, transactionId });
     if (this.sendError !== undefined) {
       throw this.sendError;
     }
+    return { event_id: "$sent:example.org" };
   }
 
   async sendTyping(roomId: string, isTyping: boolean, timeoutMs: number): Promise<void> {
@@ -1431,6 +1434,80 @@ void test("sends Markdown as the standard Matrix formatted-body representation",
     format: "org.matrix.custom.html",
     formatted_body: "<p><em>hi</em></p>",
   });
+});
+
+void test("sends escaped HTML and edits the returned event with stable transaction IDs", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const formattedBody = matrixHtml`<p>${"<unsafe & quoted \"text\" '"}</p>`;
+  const initial = { roomId: ROOM_ID, transactionId: "html-initial", body: "<unsafe & quoted>", formattedBody };
+  const eventId = await adapter.sendHtmlMessage(initial);
+  assert.equal(eventId, "$sent:example.org");
+  assert.deepEqual(fake.sent[0], { roomId: ROOM_ID, transactionId: "html-initial", content: {
+    msgtype: "m.text", body: "<unsafe & quoted>", format: "org.matrix.custom.html",
+    formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
+  } });
+
+  const edit = { ...initial, transactionId: "html-edit", body: "updated", targetEventId: eventId };
+  fake.sendError = { httpStatus: 503 };
+  await assert.rejects(() => adapter.sendHtmlMessage(edit), (error: unknown) =>
+    error instanceof MatrixAdapterError && error.failure.retryable);
+  fake.sendError = undefined;
+  assert.equal(await adapter.sendHtmlMessage(edit), eventId);
+  assert.deepEqual(fake.sent.slice(1).map((send) => send.transactionId), ["html-edit", "html-edit"]);
+  assert.deepEqual(fake.sent[2]?.content, {
+    msgtype: "m.text", body: "* updated", format: "org.matrix.custom.html",
+    formatted_body: "* <p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>",
+    "m.new_content": { msgtype: "m.text", body: "updated", format: "org.matrix.custom.html",
+      formatted_body: "<p>&lt;unsafe &amp; quoted &quot;text&quot; &#39;</p>" },
+    "m.relates_to": { rel_type: "m.replace", event_id: eventId },
+  });
+});
+
+void test("HTML edit byte accounting matches the wire payload at the message-size limit", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const targetEventId = `$${"x".repeat(254)}`;
+  const formattedBody = matrixHtml`<p>😀 &amp; result</p>`;
+  const limit = DEFAULT_LIMITS.maxMatrixMessageBytes;
+  const overhead = matrixHtmlContentBytes({ body: "", formattedBody }, targetEventId);
+  const body = "x".repeat(Math.floor((limit - overhead) / 2));
+  const message = { roomId: ROOM_ID, transactionId: "limit-edit", body, formattedBody, targetEventId };
+
+  await adapter.sendHtmlMessage(message);
+  const content = fake.sent[0]?.content;
+  const wireBytes = Buffer.byteLength(JSON.stringify(content), "utf8");
+  assert.equal(matrixHtmlContentBytes(message, targetEventId), wireBytes);
+  assert(wireBytes <= limit && wireBytes >= limit - 1);
+  assert.equal(content?.formatted_body, `* ${formattedBody}`);
+  // One extra ASCII character occurs in both the outer and replacement body.
+  assert(matrixHtmlContentBytes({ ...message, body: `${body}x` }, targetEventId) > limit);
+});
+
+void test("Matrix HTML wire content preserves an indented result disclosure on send and edit", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const formattedBody = matrixHtml`<p>🔧 Read(file)</p><blockquote><details><summary><code>first</code></summary><pre><code>first&#10;second</code></pre></details></blockquote>`;
+  const message = { roomId: ROOM_ID, transactionId: "result-send", body: "[completed] 🔧 Read(file)\nfirst", formattedBody };
+  const eventId = await adapter.sendHtmlMessage(message);
+  await adapter.sendHtmlMessage({ ...message, transactionId: "result-edit", targetEventId: eventId });
+  assert.equal(fake.sent[0]?.content.formatted_body, formattedBody);
+  assert.equal(fake.sent[1]?.content.formatted_body, `* ${formattedBody}`);
+  assert.deepEqual(fake.sent[1]?.content["m.new_content"], {
+    msgtype: "m.text", body: message.body, format: "org.matrix.custom.html", formatted_body: formattedBody,
+  });
+});
+
+void test("HTML sends enforce configured rooms and required encryption", async () => {
+  const fake = readyClient();
+  const adapter = adapterFor(fake);
+  const message = { roomId: OTHER_ROOM_ID, transactionId: "html-other", body: "text", formattedBody: matrixHtml`<p>text</p>` };
+  await assert.rejects(() => adapter.sendHtmlMessage(message), /not configured/u);
+  assert.equal(fake.sent.length, 0);
+
+  const required = requiredAdapterFor(fake);
+  await assert.rejects(() => required.sendHtmlMessage({ ...message, roomId: ROOM_ID }), /encryption is not ready/u);
+  assert.equal(fake.sent.length, 0);
 });
 
 void test("required outbound responses use the validated SDK encryption path and never fall back", async () => {

@@ -1,4 +1,9 @@
 import { createCancellationController } from "./cancellation.js";
+import { createHash } from "node:crypto";
+import { AcpActivityModel, type AcpActivity } from "./acp-activity.js";
+import { AcpActivityBatches, type ActivityBatch } from "./acp-activity-batches.js";
+import { renderMatrixTextChunk } from "./matrix-text-rendering.js";
+import type { MatrixSafeHtml } from "./matrix-html.js";
 import { systemClock } from "./clock.js";
 import type {
   CancellationController,
@@ -21,6 +26,7 @@ import {
   type NormalizedInboundEvent,
 } from "./authorization.js";
 import { InMemorySessionStore } from "./session-store.js";
+import { matrixHtmlContentBytes, matrixHtmlEditContentBytes, type MatrixHtmlBody } from "./matrix-message-content.js";
 import type { SessionStore } from "./session-store.js";
 import type {
   AcpClient,
@@ -42,6 +48,7 @@ import type {
   MatrixEventId,
   MatrixFailureClassification,
   MatrixRoomId,
+  MatrixHtmlMessage,
 } from "./matrix-client.js";
 
 const QUIET_DRAIN_MS = 300;
@@ -136,11 +143,28 @@ interface ActiveRun {
 interface TextGroup {
   readonly messageId: string | undefined;
   text: string;
+  closed: boolean;
+  sentLength: number;
+}
+
+interface ActivityBatchDelivery {
+  eventId?: MatrixEventId;
+  revision: number;
+  pending: boolean;
+  dirty: boolean;
 }
 
 interface TurnCollector {
   readonly sessionId: AcpSessionId;
   readonly groups: TextGroup[];
+  readonly activity: AcpActivityModel;
+  readonly activityBatches: AcpActivityBatches;
+  readonly batchDeliveries: WeakMap<ActivityBatch, ActivityBatchDelivery>;
+  outboundTail: Promise<void>;
+  liveFailed: boolean;
+  lastTextGroup: TextGroup | undefined;
+  readonly room: RoomState;
+  readonly inboundEventId: MatrixEventId;
   readonly messageIds: Set<string>;
   readonly messageOrder: string[];
   hasText: boolean;
@@ -307,10 +331,20 @@ function sessionOptions(config: BridgeConfig): { readonly cwd: string; readonly 
 }
 
 function joinedGroups(groups: readonly TextGroup[]): string {
-  return groups
-    .map((group) => group.text)
-    .filter((text) => text.length > 0)
-    .join("\n\n");
+  let result = "";
+  for (const group of groups) {
+    if (!group.text) continue;
+    if (result) result += "\n\n";
+    result += group.text;
+  }
+  return result;
+}
+
+function liveTransactionId(turn: TurnCollector, kind: string, index: number, revision: number): string {
+  const digest = createHash("sha256")
+    .update(`${turn.room.roomId}\u0000${turn.inboundEventId}\u0000${kind}\u0000${index}\u0000${revision}`)
+    .digest("hex");
+  return `matrix-acp-live-${digest}`;
 }
 
 function normalizeThrownPrompt(value: unknown): AcpOutcome {
@@ -1121,6 +1155,18 @@ export class BridgeCoordinator {
       const turn: TurnCollector = {
         sessionId: session.sessionId,
         groups: [],
+        activity: new AcpActivityModel(),
+        activityBatches: new AcpActivityBatches({
+          maxEvents: this.#config.limits.maxActivityEventsPerMessage,
+          maxMessageBytes: this.#config.limits.maxMatrixMessageBytes,
+          measure: matrixHtmlEditContentBytes,
+        }),
+        batchDeliveries: new WeakMap(),
+        outboundTail: Promise.resolve(),
+        liveFailed: false,
+        lastTextGroup: undefined,
+        room: run.room,
+        inboundEventId: run.entry.event.eventId,
         messageIds: new Set(),
         messageOrder: [],
         hasText: false,
@@ -1164,7 +1210,8 @@ export class BridgeCoordinator {
 
       let text = "";
       if (isRecord(outcome) && typeof outcome.text === "string" && joinedGroups(turn.groups).length === 0 && outcome.text.length > 0) {
-          turn.groups.push({ messageId: undefined, text: outcome.text });
+          turn.groups.push({ messageId: undefined, text: outcome.text, closed: false, sentLength: 0 });
+          turn.lastTextGroup = turn.groups.at(-1);
           turn.hasText = true;
           turn.lastTextChangeAt = this.#clock.now();
         }
@@ -1186,11 +1233,24 @@ export class BridgeCoordinator {
         return;
       }
 
+      this.#closeTextGroup(turn);
+      await turn.outboundTail;
+      if (this.#stopping || this.#fatal !== undefined) return;
+
+      const unsent = this.#matrix.sendHtmlMessage === undefined
+        ? text : joinedGroups(turn.groups.map((group) => ({ ...group, text: group.text.slice(group.sentLength) })));
+      const streamed = this.#matrix.sendHtmlMessage !== undefined && text.length > 0 && unsent.length === 0;
+
       const response: RenderableResponse = prompt.timedOut
-        ? { kind: "timeout", ...(text.length === 0 ? {} : { text }) }
+        ? { kind: "timeout", ...(unsent.length > 0 ? { text: unsent } : {}) }
         : (outcome.kind === "method_error"
-          ? { kind: "error", ...(text.length === 0 ? {} : { text }) }
-          : { ...outcome, ...(text.length === 0 ? {} : { text }) });
+          ? { kind: "error", ...(unsent.length > 0 ? { text: unsent } : {}) }
+          : { ...outcome, ...(unsent.length > 0 ? { text: unsent } : {}), ...(streamed ? { text: "" } : {}) });
+      if (streamed && outcome.kind === "turn" && outcome.stopReason === "end_turn") {
+        this.#stopTyping(run);
+        await this.#completeTerminal(run.entry.terminalCompletion);
+        return;
+      }
       const parts = renderMatrixResponse({
         roomId: run.room.roomId,
         inboundEventId: run.entry.event.eventId,
@@ -1618,6 +1678,7 @@ export class BridgeCoordinator {
       return;
     }
     turn.closed = true;
+    turn.activity.close();
     if (turn.quietTimer !== undefined) {
       this.#clock.clearTimeout(turn.quietTimer);
     }
@@ -1647,10 +1708,7 @@ export class BridgeCoordinator {
   #handleAcpUpdate(update: AcpUpdate): void {
     if (
       !isRecord(update) ||
-      update.kind !== "agent_message_chunk" ||
-      typeof update.sessionId !== "string" ||
-      typeof update.text !== "string" ||
-      update.text.length === 0
+      typeof update.sessionId !== "string"
     ) {
       return;
     }
@@ -1661,6 +1719,20 @@ export class BridgeCoordinator {
     if (turn === undefined || turn.closed || turn.drainComplete) {
       return;
     }
+    if (update.kind !== "agent_message_chunk") {
+      if (update.kind === "agent_thought_chunk" || update.kind === "tool_call" || update.kind === "tool_call_update") {
+        if (this.#matrix.sendHtmlMessage === undefined) return;
+        const activity = turn.activity.accept(update);
+        if (activity !== undefined) {
+          if (update.kind === "tool_call" || update.kind === "agent_thought_chunk" && update.text?.trim()) {
+            this.#closeTextGroup(turn);
+          }
+          this.#acceptActivity(turn, activity);
+        }
+      }
+      return;
+    }
+    if (typeof update.text !== "string" || update.text.length === 0) return;
     const messageId = update.messageId;
     if (
       messageId !== undefined &&
@@ -1671,24 +1743,145 @@ export class BridgeCoordinator {
     if (messageId !== undefined && !turn.messageIds.has(messageId)) {
       turn.messageIds.add(messageId);
       turn.messageOrder.push(messageId);
+    } else if (messageId !== undefined && turn.lastTextGroup?.messageId !== messageId &&
+      turn.groups.some((group) => group.messageId === messageId && group.closed)) {
+      return;
     }
-    const last = turn.groups.at(-1);
-    if (
-      last === undefined ||
-      (messageId !== undefined &&
-        last.messageId !== undefined &&
-        last.messageId !== messageId)
-    ) {
-      turn.groups.push({ messageId, text: update.text });
-    } else if (last !== undefined) {
-      last.text += update.text;
+    if (update.text.trim()) {
+      for (const batch of turn.activityBatches.collapse()) this.#scheduleBatch(turn, batch);
     }
+    turn.activity.accept(update);
+    this.#appendText(turn, messageId, update.text);
     if (update.text.length > 0) {
       turn.hasText = true;
       turn.lastTextChangeAt = this.#clock.now();
       if (turn.promptResolved) {
         this.#scheduleQuietDrain(turn);
       }
+    }
+  }
+
+  #appendText(turn: TurnCollector, messageId: string | undefined, value: string): void {
+    if (turn.lastTextGroup !== undefined && turn.lastTextGroup.messageId !== messageId) {
+      this.#closeTextGroup(turn);
+    }
+    let group = turn.lastTextGroup;
+    if (group === undefined) {
+      group = { messageId, text: "", closed: false, sentLength: 0 };
+      turn.groups.push(group);
+      turn.lastTextGroup = group;
+    }
+    group.text += value;
+  }
+
+  #closeTextGroup(turn: TurnCollector): void {
+    const group = turn.lastTextGroup;
+    if (group === undefined || group.closed) return;
+    group.closed = true;
+    turn.lastTextGroup = undefined;
+    if (this.#matrix.sendHtmlMessage === undefined || turn.liveFailed || !group.text.trim()) return;
+    this.#enqueueLive(turn, async () => {
+      const characters = [...group.text];
+      let offset = 0;
+      while (offset < characters.length && !turn.liveFailed) {
+        const chunk = renderMatrixTextChunk(characters, offset, this.#config.limits.maxMatrixMessageBytes);
+        if (chunk === undefined) {
+          turn.liveFailed = true;
+          this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
+          break;
+        }
+        const id = await this.#deliverLive(turn, `text-${turn.groups.indexOf(group)}`, offset, chunk.rendered);
+        if (id === undefined) { turn.liveFailed = true; break; }
+        offset = chunk.nextOffset;
+        group.sentLength += chunk.rendered.body.length;
+      }
+    });
+  }
+
+  #acceptActivity(turn: TurnCollector, activity: AcpActivity): void {
+    if (this.#matrix.sendHtmlMessage === undefined) return;
+    for (const batch of turn.activityBatches.accept(activity)) this.#scheduleBatch(turn, batch);
+  }
+
+  #enqueueLive(turn: TurnCollector, operation: () => Promise<void>): void {
+    turn.outboundTail = turn.outboundTail.then(operation).catch(() => {
+      turn.liveFailed = true;
+      this.#diagnostic("warn", "matrix-live-abandoned", { kind: "unexpected" });
+    });
+  }
+
+  #scheduleBatch(turn: TurnCollector, batch: ActivityBatch): void {
+    if (this.#matrix.sendHtmlMessage === undefined || turn.liveFailed) return;
+    let delivery = turn.batchDeliveries.get(batch);
+    if (delivery === undefined) {
+      delivery = { revision: 0, pending: false, dirty: false };
+      turn.batchDeliveries.set(batch, delivery);
+    }
+    const state = delivery;
+    state.dirty = true;
+    if (state.pending) return;
+    state.pending = true;
+    // Capture the first expanded view before queued sends or a later agent
+    // message can collapse this batch. Otherwise its original event may arrive
+    // already collapsed, with no live version for the user to see.
+    const initial = state.eventId === undefined ? turn.activityBatches.render(batch) : undefined;
+    this.#enqueueLive(turn, async () => {
+      try {
+        let first = initial;
+        while (state.dirty && !turn.liveFailed) {
+          state.dirty = false;
+          const rendered = first ?? turn.activityBatches.render(batch);
+          first = undefined;
+          if (matrixHtmlEditContentBytes(rendered) > this.#config.limits.maxMatrixMessageBytes) {
+            turn.liveFailed = true;
+            this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
+            break;
+          }
+          const id = await this.#deliverLive(turn, `activity-${batch.index}`, state.revision++, rendered, state.eventId);
+          if (id === undefined) { turn.liveFailed = true; break; }
+          state.eventId = id;
+          if (rendered === initial) {
+            const current = turn.activityBatches.render(batch);
+            if (current.body !== rendered.body || current.formattedBody !== rendered.formattedBody) state.dirty = true;
+          }
+        }
+      } finally { state.pending = false; }
+    });
+  }
+
+  async #deliverLive(turn: TurnCollector, kind: string, revision: number, rendered: MatrixHtmlBody,
+    targetEventId?: MatrixEventId): Promise<MatrixEventId | undefined> {
+    if (this.#matrix.sendHtmlMessage === undefined || this.#stopping || this.#fatal !== undefined) return;
+    if (matrixHtmlContentBytes(rendered, targetEventId) > this.#config.limits.maxMatrixMessageBytes) {
+      this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
+      return;
+    }
+    const message: MatrixHtmlMessage = { roomId: turn.room.roomId,
+      transactionId: liveTransactionId(turn, kind, 0, revision), body: rendered.body,
+      formattedBody: rendered.formattedBody as MatrixSafeHtml,
+      ...(targetEventId === undefined ? {} : { targetEventId }) };
+    this.#outboundOperations += 1;
+    try {
+      return await turn.room.outbound.run(async () => {
+        let attempt = 0;
+        for (;;) {
+          if (this.#stopping || this.#fatal !== undefined) return;
+          try { return await this.#matrix.sendHtmlMessage!(message); }
+          catch (error) {
+            const failure = matrixFailureFor(error);
+            if (!failure.retryable) {
+              this.#diagnostic("warn", "matrix-live-abandoned", { kind: "delivery" });
+              return;
+            }
+            const delay = retryDelay(failure, attempt++, this.#random);
+            if (!(await this.#waitForRetry(delay))) return;
+          }
+        }
+      });
+    } finally {
+      this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
+      this.#resolveIdleWaiters();
+      this.#maybeFinalizeStop();
     }
   }
 
