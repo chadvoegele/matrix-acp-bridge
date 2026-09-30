@@ -151,10 +151,13 @@ retaining the thread's known routing identity. Send
 The next ordinary prompt must lazily create a fresh session; reset must not
 reuse the old session. No agent-owned history is deleted.
 
-An exact top-level `/reset` must have no effect: no session creation, no ACP
-prompt, no reset, and no response. Existing authorization, deduplication, and
-receipt handling still apply. Other slash-prefixed text remains ordinary prompt
-text under the existing exact-match policy.
+An authorized exact top-level `/reset` must send the unthreaded response
+`Use /reset inside a thread to reset its agent session.` It must not create a
+session or thread mapping, send an ACP prompt, or reset any session. The response
+must use the existing validated-room encryption path and deterministic transaction
+IDs. Existing authorization, deduplication, and receipt handling still apply.
+Other slash-prefixed text remains ordinary prompt text under the existing
+exact-match policy.
 
 ### State migration and mode changes
 
@@ -182,8 +185,11 @@ policy before changing the durable state schema.
 - Unauthorized, malformed, edited, and duplicate events create no extra sessions.
 - Agent text, activity, edits, split output, errors, and retries retain correct
   thread placement in plaintext and encrypted end-to-end tests.
-- Thread reset affects only subsequent work in that thread; top-level reset is
-  a no-op. Failed state writes cannot produce successful reset acknowledgements.
+- Thread reset affects only subsequent work in that thread. Authorized top-level
+  reset returns the specified unthreaded guidance without ACP calls, mapping
+  creation, or session changes; unauthorized or duplicate events send no response.
+  The guidance follows encryption and retry guarantees.
+  Failed state writes cannot produce successful reset acknowledgements.
 - Restart loads only requested thread sessions, suppresses history replay, and
   recovers stale mappings without affecting other threads.
 - Unknown-thread follow-ups, including `/reset`, return the specified error in
