@@ -47,6 +47,7 @@ const CONFIG: MatrixConfig = {
   allowedSenders: [ALICE],
   encryption: "disabled",
   responseMode: "room",
+  defaultMessageDelivery: "prompt",
 };
 
 const REQUIRED_CONFIG: MatrixConfig = {
