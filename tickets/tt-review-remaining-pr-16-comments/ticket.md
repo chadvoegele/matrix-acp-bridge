@@ -1,7 +1,7 @@
 +++
 name = "Review remaining PR 16 comments"
 creation_date = 2026-10-01T18:00:27Z
-status = "in-progress"
+status = "completed"
 depends_on = ["tt-remove-automatic-migration-backup"]
 +++
 
