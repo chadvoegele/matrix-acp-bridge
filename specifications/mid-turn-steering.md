@@ -102,8 +102,10 @@ Unknown threads retain the existing error without an ACP call.
 
 In thread mode, a top-level message, including `/prompt` or `/steer`, starts a
 new independent conversation. Since that conversation has no running prompt,
-steering-selected input automatically becomes a tracked prompt. It must not steer
-an unrelated active thread. Applicable output belongs in the new message's thread.
+steering-selected input automatically becomes a tracked prompt. When steering is
+available, explicit `/steer` receives `No running turn; message queued as a prompt.`; default-selected steering
+converts silently. It must not steer an unrelated active thread. Applicable output
+belongs in the new message's thread.
 Reset retains its existing thread-mode guidance and scope.
 
 ### Prompt FIFO and steering admission
@@ -115,6 +117,9 @@ There must still be at most one unresolved `session/prompt` per conversation.
 Steering-selected input is eligible for a steering RPC only when dispatch is
 open, support is advertised, the target session has an unresolved prompt, and
 the run has not entered cancellation, timeout, shutdown, or fatal handling.
+Record typed explicit/default selection provenance at admission and preserve it
+through setup, dispatch gates, reset barriers, and prompt conversion. Do not infer
+it from stripped payloads or reparse original text when rendering notices.
 Choose the delivery mode at admission, but evaluate running-turn eligibility at
 dispatch. Preserve steering selection while dispatch is closed or an earlier
 prompt is starting (session setup/loading or permit waiting); do not eagerly
@@ -170,15 +175,18 @@ For validated `injected`, remove the entry from the steering lane and durably
 complete its Matrix event. Successful injection must be silent: send no Matrix
 acknowledgement message. Pi owns subsequent delivery. Do not submit the payload
 through `session/prompt` or wait for model consumption. The original prompt's
-completion remains independent. Errors and prompt-fallback notices remain visible.
+completion remains independent. Errors and unsupported-agent fallback notices
+remain visible for explicit and default selection. Idle fallback notices are
+visible only for explicit `/steer`.
 
 For `promptRequired` with reason `noRunningTurn`, convert that same entry to a
 tracked prompt with the same payload and event identity exactly once. Transfer
 its waiting capacity rather than allocating a second slot. Place converted input
 in the prompt FIFO according to original admission order relative to other
-waiting prompts; do not overtake the active entry. Send
-`No running turn; message queued as a prompt.` The event remains incomplete until
-that prompt reaches its normal terminal boundary.
+waiting prompts; do not overtake the active entry. For explicit `/steer`, send
+`No running turn; message queued as a prompt.` Default-selected steering converts
+silently, both for local idle dispatch and ACP `promptRequired`. The event remains
+incomplete until that prompt reaches its normal terminal boundary.
 
 The coordinator must settle outstanding steering decisions before starting the
 next prompt or reset in the conversation, even if the original prompt resolves
@@ -194,8 +202,9 @@ unrelated result metadata may be ignored.
 ### Compatibility and reset
 
 If steering is unsupported, steering-selected input must use the existing prompt
-FIFO. Send `Steering unavailable; message queued as a prompt.` No startup failure
-or concurrent-prompt assumption is introduced.
+FIFO. Send `Steering unavailable; message queued as a prompt.` for both explicit
+and default selection. No startup failure or concurrent-prompt assumption is
+introduced.
 
 `/reset` remains an ordered local control command. Earlier admitted steering may
 settle before reset, but later steering must not bypass a queued reset: it becomes
@@ -277,6 +286,9 @@ Tests must establish:
   prompts but not a reset barrier. Steering ordering and shared bounds hold.
 - Injected input is sent once with no extra prompt, collector, permit, or timer
   reset. Its durable callback is independent of the original prompt's callback.
+- Explicit idle and `promptRequired` fallback sends the idle notice; default-selected
+  steering silently converts in both cases. Mixed setup/gated batches preserve
+  provenance; unsupported fallback and actual errors stay visible for both.
 - Idle, unsupported-agent, and `promptRequired` fallback produces exactly one
   tracked prompt with the same payload/event identity, without requiring another
   user command or marking queued input complete. Dispatch gates, setup, permit

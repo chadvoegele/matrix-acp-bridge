@@ -32,25 +32,32 @@ void test("unprefixed messages and unrelated slash commands use the default with
   ];
   for (const defaultDelivery of DEFAULT_DELIVERIES) {
     for (const body of bodies) {
-      assert.deepEqual(selectMessageDelivery(body, defaultDelivery), { kind: defaultDelivery, payload: body });
+      assert.deepEqual(selectMessageDelivery(body, defaultDelivery), {
+        kind: defaultDelivery,
+        payload: body,
+        provenance: "default",
+      });
     }
   }
 });
 
 void test("delivery commands override either default and strip only the prefix and separating whitespace", () => {
   const cases: ReadonlyArray<readonly [string, MessageDeliverySelection]> = [
-    ["/prompt message", { kind: "prompt", payload: "message" }],
-    ["/steer correction", { kind: "steer", payload: "correction" }],
-    ["/prompt   preserve trailing spaces  ", { kind: "prompt", payload: "preserve trailing spaces  " }],
-    ["/steer\t\r\n  first\n  second\n", { kind: "steer", payload: "first\n  second\n" }],
-    ["/prompt\n\nfirst\n\nsecond\r\n", { kind: "prompt", payload: "first\n\nsecond\r\n" }],
-    ["/steer\u00A0\u2028☃ café  ", { kind: "steer", payload: "☃ café  " }],
-    ["/prompt /reset", { kind: "prompt", payload: "/reset" }],
-    ["/steer /reset", { kind: "steer", payload: "/reset" }],
-    ["/prompt /steer literal", { kind: "prompt", payload: "/steer literal" }],
-    ["/steer /prompt literal", { kind: "steer", payload: "/prompt literal" }],
-    ["/prompt /prompt", { kind: "prompt", payload: "/prompt" }],
-    ["/steer /steer", { kind: "steer", payload: "/steer" }],
+    ["/prompt message", { kind: "prompt", payload: "message", provenance: "explicit" }],
+    ["/steer correction", { kind: "steer", payload: "correction", provenance: "explicit" }],
+    [
+      "/prompt   preserve trailing spaces  ",
+      { kind: "prompt", payload: "preserve trailing spaces  ", provenance: "explicit" },
+    ],
+    ["/steer\t\r\n  first\n  second\n", { kind: "steer", payload: "first\n  second\n", provenance: "explicit" }],
+    ["/prompt\n\nfirst\n\nsecond\r\n", { kind: "prompt", payload: "first\n\nsecond\r\n", provenance: "explicit" }],
+    ["/steer\u00A0\u2028☃ café  ", { kind: "steer", payload: "☃ café  ", provenance: "explicit" }],
+    ["/prompt /reset", { kind: "prompt", payload: "/reset", provenance: "explicit" }],
+    ["/steer /reset", { kind: "steer", payload: "/reset", provenance: "explicit" }],
+    ["/prompt /steer literal", { kind: "prompt", payload: "/steer literal", provenance: "explicit" }],
+    ["/steer /prompt literal", { kind: "steer", payload: "/prompt literal", provenance: "explicit" }],
+    ["/prompt /prompt", { kind: "prompt", payload: "/prompt", provenance: "explicit" }],
+    ["/steer /steer", { kind: "steer", payload: "/steer", provenance: "explicit" }],
   ];
   for (const defaultDelivery of DEFAULT_DELIVERIES) {
     for (const [body, expected] of cases) {
