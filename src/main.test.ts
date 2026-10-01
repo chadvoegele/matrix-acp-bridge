@@ -50,6 +50,7 @@ const CONFIG: BridgeConfig = {
     allowedSenders: ["@alice:example.org"],
     encryption: "disabled",
     responseMode: "room",
+    defaultMessageDelivery: "prompt",
   },
   acp: { cwd: "/private/workspace" },
   limits: {
