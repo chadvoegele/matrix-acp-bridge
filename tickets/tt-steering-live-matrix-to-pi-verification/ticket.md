@@ -7,6 +7,10 @@ depends_on = ["tt-steering-integrated-verification-and-operator-docs"]
 
 # Live Matrix-to-Pi steering verification for PR 22
 
+## Latest user correction: execution settings
+
+Use Codex model `gpt-6.1-sol` with reasoning effort **medium**, not xhigh. This user correction supersedes earlier coordinator/plan instructions prescribing xhigh. Launch command: `waap agent run --agent-id ID --system codex --model gpt-6.1-sol --reasoning-effort medium`. If an xhigh run was already launched, safely stop only that test agent and relaunch at medium, preserving its changes/private recovery state. No model substitution.
+
 User requests a developer agent to actually test the full live Matrix -> bridge -> real pi-acp/Pi -> Matrix path of https://github.com/chadvoegele/matrix-acp-bridge/pull/22, not merely ACP or hermetic Matrix tests. Delivery feature worktree /home/chad/code/github.com/chadvoegele/matrix-acp-bridge/worktrees/steering-implementation; preserve latest README section removal, don't merge main.
 
 Read skills git-repositories, password-secrets, and docker-service-management if relevant. Inspect existing agent_tests live plaintext/encrypted/thread harnesses and cleanup instructions; reuse temporary test devices and designated rooms. Canonical bare repo root /home/chad/code/github.com/chadvoegele/matrix-acp-bridge/.env already exists and may contain intended test environment/secret lookup expressions: use privately, never print/commit secrets or source blindly without safe inspection. Do not claim credentials unavailable before checking documented local harness setup and password-store entry names. Retrieve credentials via nopass_pass.sh, no plaintext secret outputs. Create only necessary temporary test data/devices; clean using documented order and retain private recovery info if cleanup fails. Never send test messages to arbitrary non-test rooms, delete shared history, or restart production/hosting pi-web services.
