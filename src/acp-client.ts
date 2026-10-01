@@ -1071,6 +1071,18 @@ export class InheritedStdioAcpClient implements AcpClient {
 
     if (update.kind === "agent_message_chunk") {
       const { sessionId, text, messageId } = update;
+      const metadata: unknown = parameters.update._meta;
+      if (isRecord(metadata) && isRecord(metadata.piAcp) && isRecord(metadata.piAcp.notify)) {
+        // pi-acp marks extension UI notifications separately from assistant text.
+        // Keep them observable without logging potentially private notification bodies.
+        const level = metadata.piAcp.notify.level;
+        this.#diagnostic(
+          level === "error" ? "error" : level === "warning" ? "warn" : "info",
+          "acp-extension-notification",
+          { sessionId },
+        );
+        return;
+      }
       if (this.#startupInfoBySession.get(sessionId) === text) {
         // pi-acp emits this prelude once, but it schedules the notification
         // after session/new. Consume the marker even when the notification

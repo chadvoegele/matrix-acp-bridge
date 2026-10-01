@@ -1031,6 +1031,95 @@ void test("suppresses a session startup prelude that races the first prompt", as
   await client.close();
 });
 
+for (const timing of ["before", "during"] as const) {
+  void test(`routes pi-acp notifications to diagnostics ${timing} prompts in independent sessions`, async () => {
+    const input = createFakeInput();
+    const output = createFakeOutput();
+    const diagnostics: unknown[] = [];
+    const client = newClient(input, output, {
+      diagnostics: {
+        ...createDiagnostics(),
+        emit(level: string, event: string, fields: unknown) {
+          diagnostics.push({ level, event, fields });
+        },
+      },
+    });
+    await initialize(client, input, output);
+    const updates: unknown[] = [];
+    client.onUpdate((update) => updates.push(update));
+    const banner = "MCP: 2 servers connected (48 tools)";
+    const notices = [
+      { level: "info", text: banner },
+      { level: "warning", text: "private authentication warning" },
+      { level: "error", text: "private connection failure" },
+    ];
+    for (const sessionId of ["thread-1", "thread-2"]) {
+      await createSession(client, input, output, { sessionId });
+      const sendNotices = (): void => {
+        for (const notice of notices) {
+          input.push(
+            rpcNotification("session/update", {
+              sessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: notice.text },
+                _meta: { piAcp: { notify: { level: notice.level } } },
+              },
+            }),
+          );
+        }
+      };
+      if (timing === "before") {
+        sendNotices();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const prompt = client.prompt(sessionId, "hello", {
+        cancelled: false,
+        reason: undefined,
+        onCancel() {
+          return () => {};
+        },
+      });
+      const frame = await output.nextFrame();
+      if (timing === "during") sendNotices();
+      // Identical, untagged assistant text must survive; never filter by text.
+      input.push(
+        rpcNotification("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: banner },
+            _meta: { piAcp: { notify: "not a notification marker" } },
+          },
+        }),
+      );
+      // eslint-disable-next-line unicorn/no-array-push-push -- ordered protocol frames
+      input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+      assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn", text: banner });
+    }
+    assert.deepEqual(
+      updates,
+      ["thread-1", "thread-2"].map((sessionId) => ({
+        sessionId,
+        kind: "agent_message_chunk",
+        text: banner,
+      })),
+    );
+    assert.deepEqual(
+      diagnostics,
+      ["thread-1", "thread-2"].flatMap((sessionId) =>
+        ["info", "warn", "error"].map((level) => ({
+          level,
+          event: "acp-extension-notification",
+          fields: { sessionId },
+        })),
+      ),
+    );
+    assert.equal(JSON.stringify(diagnostics).includes("private"), false);
+    await client.close();
+  });
+}
+
 void test("returns healthy-transport prompt errors without poisoning the connection", async () => {
   const input = createFakeInput();
   const output = createFakeOutput();
