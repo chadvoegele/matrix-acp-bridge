@@ -1,7 +1,8 @@
 +++
 name = "steering-coordinator-exec"
 creation_date = 2026-10-01T20:53:00Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP steering delivery developer
