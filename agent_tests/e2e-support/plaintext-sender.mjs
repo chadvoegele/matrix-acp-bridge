@@ -111,6 +111,15 @@ export async function runSenderHarness({ readEnvironment, readToken, threadMode 
     }
   }
 
+  function isExpectedResponse(event) {
+    return (
+      event?.type === "m.room.message" &&
+      event.sender === environment.bridge.userId &&
+      event.content?.msgtype === "m.text" &&
+      event.content.body === expected
+    );
+  }
+
   const responseEvents = [];
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline && responseEvents.length === 0) {
@@ -118,13 +127,7 @@ export async function runSenderHarness({ readEnvironment, readToken, threadMode 
     if (typeof result.next_batch !== "string") throw new Error("Matrix sync did not return next_batch");
     cursor = result.next_batch;
     for (const event of roomEvents(result)) {
-      if (
-        event?.type === "m.room.message" &&
-        event.sender === environment.bridge.userId &&
-        event.content?.msgtype === "m.text" &&
-        event.content.body === expected
-      )
-        responseEvents.push(event);
+      if (isExpectedResponse(event)) responseEvents.push(event);
     }
   }
   if (responseEvents.length === 0) throw new Error("plaintext exchange timed out");
@@ -132,13 +135,7 @@ export async function runSenderHarness({ readEnvironment, readToken, threadMode 
   // Give an accidental duplicate response time to arrive.
   const finalSync = await sync(cursor, 2000);
   for (const event of roomEvents(finalSync)) {
-    if (
-      event?.type === "m.room.message" &&
-      event.sender === environment.bridge.userId &&
-      event.content?.msgtype === "m.text" &&
-      event.content.body === expected
-    )
-      responseEvents.push(event);
+    if (isExpectedResponse(event)) responseEvents.push(event);
   }
   if (responseEvents.length !== 1) throw new Error(`expected one response, received ${responseEvents.length}`);
 

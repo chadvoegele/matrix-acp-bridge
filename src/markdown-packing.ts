@@ -63,7 +63,7 @@ export function packMarkdownText(
             ? [...graphemes.segment(unit.text)].map(({ segment }) => segment)
             : [...unit.text];
     if (smaller.length <= 1) {
-      if (unit.level >= 3 && [...unit.text].length <= 1) {
+      if (unit.level >= 3) {
         throw new RangeError("maxMatrixMessageBytes cannot fit one Unicode code point");
       }
       pending.push({ text: unit.text, level: unit.level + 1 });
