@@ -148,3 +148,8 @@ and bash activity, checks exact ACP fields and Matrix activity/edit events,
 then runs the cleanup command even on failure. Agent tool choices vary, so it
 prints `INCOMPLETE` with missing field names when a turn did not provide full
 coverage. Device and session cleanup still run through the usual harness.
+
+## Thread-scoped sessions
+
+Thread tests are a separate suite: [thread-sessions](../thread-sessions/README.md).
+This suite always uses room mode, including its senders and activity tests.

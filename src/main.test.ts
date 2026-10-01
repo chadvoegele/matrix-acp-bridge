@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +49,7 @@ const CONFIG: BridgeConfig = {
     allowedRooms: [ROOM_ID],
     allowedSenders: ["@alice:example.org"],
     encryption: "disabled",
+    responseMode: "room",
   },
   acp: { cwd: "/private/workspace" },
   limits: {
@@ -56,7 +57,7 @@ const CONFIG: BridgeConfig = {
     maxOutputBytes: 256,
     maxMatrixMessageBytes: 128,
     maxActivityEventsPerMessage: 10,
-    maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerConversation: 2,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 10,
     shutdownGraceSeconds: 1,
@@ -796,4 +797,150 @@ void test("a shutdown grace deadline force-closes adapters and returns exit code
   assert.equal(rig.acp.closeCalls, 1);
   assert.equal(rig.matrix.cryptoCloseCalls, 1);
   assert.equal(rig.lock.released, true);
+});
+
+void test("incompatible private state stops startup with self-contained recovery guidance, preserves state and releases the lock", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-incompatible-state-"));
+  try {
+    const statePath = join(stateDir, "bridge-state.json");
+    const original = '{"schemaVersion":999,"privateField":"raw-state-secret"}\n';
+    await writeFile(statePath, original, { mode: 0o600 });
+    const log: string[] = [];
+    const diagnosticRecords: string[] = [];
+    const lock = new FakeStateLock();
+    const acp = new FakeAcp(log);
+    const matrix = new FakeMatrix(log);
+    let bridgeConstructed = false;
+    const lifecycle = new DaemonLifecycle({
+      loadedConfiguration: loadedConfiguration(lock, { ...CONFIG, stateDir }),
+      dependencies: {
+        diagnostics: {
+          ...SILENT_DIAGNOSTICS,
+          emit(level, event, fields) {
+            diagnosticRecords.push(JSON.stringify({ level, event, fields }));
+          },
+        },
+        installSignals: false,
+        createAcpClient: () => acp,
+        createMatrixClient: () => matrix,
+        createBridge: () => {
+          bridgeConstructed = true;
+          return new FakeBridge(log, acp, matrix);
+        },
+      },
+    });
+    assert.equal(await lifecycle.run(), 1);
+    assert.equal(bridgeConstructed, false);
+    assert.equal(matrix.startCalls, 0);
+    assert.equal(lock.released, true);
+    assert.equal(await readFile(statePath, "utf8"), original);
+    const diagnostics = diagnosticRecords.join("\n");
+    assert.match(diagnostics, /unsupported-version/u);
+    assert.match(
+      diagnostics,
+      /Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem/u,
+    );
+    assert.match(diagnostics, /Backups are user-managed/u);
+    assert.match(diagnostics, /do not delete state to bypass this error/u);
+    assert.doesNotMatch(diagnostics, /docs\/|specifications\/|restore-backup/u);
+    assert.equal(diagnostics.includes("raw-state-secret"), false);
+    assert.equal(diagnostics.includes("reset it only"), false);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+void test("default daemon composition enables configured thread sessions through sync intake", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-main-thread-"));
+  try {
+    const settings: BridgeConfig = {
+      ...CONFIG,
+      stateDir,
+      matrix: { ...CONFIG.matrix, responseMode: "thread" },
+      limits: { ...CONFIG.limits, maxMatrixMessageBytes: 2000 },
+    };
+    const log: string[] = [];
+    const acp = new FakeAcp(log);
+    let sessionCount = 0;
+    acp.createSession = async () => ({ sessionId: `session-${++sessionCount}` });
+    const prompts: Array<{ sessionId: string; text: string }> = [];
+    acp.prompt = async (sessionId, text) => {
+      prompts.push({ sessionId, text });
+      return { kind: "method_error", operation: "session_prompt", fatal: false };
+    };
+    const matrix = new FakeMatrix(log);
+    const sent: RenderedMatrixPart[] = [];
+    matrix.sendMessage = async (part) => {
+      sent.push(part);
+    };
+    const lock = new FakeStateLock();
+    const lifecycle = new DaemonLifecycle({
+      loadedConfiguration: loadedConfiguration(lock, settings),
+      dependencies: {
+        diagnostics: SILENT_DIAGNOSTICS,
+        installSignals: false,
+        createAcpClient: () => acp,
+        createMatrixClient: () => matrix,
+      },
+    });
+    const running = lifecycle.run();
+    const deadline = Date.now() + 5000;
+    while (!(lifecycle.bridge instanceof BridgeCoordinator && lifecycle.bridge.dispatchOpen) && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(matrix.syncBatchSubscriptionCalls, 1);
+    assert.ok(lifecycle.bridge instanceof BridgeCoordinator && lifecycle.bridge.dispatchOpen);
+    const input = (eventId: string, body: string, root?: string): InboundMatrixEvent => ({
+      eventId,
+      roomId: ROOM_ID,
+      sender: "@alice:example.org",
+      type: "m.room.message",
+      isLive: true,
+      isPlaintext: true,
+      isRedacted: false,
+      content: {
+        msgtype: "m.text",
+        body,
+        ...(root === undefined ? {} : { "m.relates_to": { rel_type: "m.thread", event_id: root } }),
+      },
+    });
+    for (const listener of matrix.syncBatchListeners) {
+      await listener({
+        phase: "incremental",
+        rooms: [
+          {
+            roomId: ROOM_ID,
+            limited: false,
+            timeline: [
+              input("$main-root-one", "first"),
+              input("$main-root-two", "second"),
+              input("$main-follow", "follow", "$main-root-one"),
+              input("$main-guidance", "/reset"),
+            ],
+          },
+        ],
+      });
+    }
+    const completeDeadline = Date.now() + 5000;
+    while (sent.length < 4 && Date.now() < completeDeadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    }
+    assert.deepEqual(
+      prompts.map(({ sessionId }) => sessionId),
+      ["session-1", "session-2", "session-1"],
+    );
+    assert.equal(
+      sent.find(({ inboundEventId }) => inboundEventId === "$main-follow")?.threadRootEventId,
+      "$main-root-one",
+    );
+    assert.equal(
+      sent.find(({ responseKind }) => responseKind === "thread_reset_guidance")?.threadRootEventId,
+      undefined,
+    );
+    lifecycle.receiveSignal("SIGTERM");
+    assert.equal(await running, 0);
+    assert.equal(lock.releaseCalls, 1);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });

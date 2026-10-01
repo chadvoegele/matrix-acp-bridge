@@ -5,6 +5,8 @@ import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { validatePrivateStateDirectory, validatePrivateStateFileMetadata, ConfigurationError } from "./config.js";
+import { conversationKey, type ConversationIdentity } from "./conversation-identity.js";
+import type { ConversationRecord, ThreadConversationRecord } from "./session-store.js";
 import type { DiagnosticSink } from "./diagnostics.js";
 import type { AcpSessionId } from "./acp-client.js";
 import { closeQuietly, unlinkQuietly } from "./file-utils.js";
@@ -31,6 +33,7 @@ export interface BridgeStateSnapshot {
   readonly schemaVersion: number;
   readonly identity: MatrixBridgeIdentity;
   readonly initialized: boolean;
+  readonly threadRecords: readonly ThreadConversationRecord[];
   readonly sessionMappings: Readonly<Record<MatrixRoomId, AcpSessionId>>;
   readonly completedEventIds: Readonly<Record<MatrixRoomId, readonly MatrixEventId[]>>;
 }
@@ -50,6 +53,11 @@ export interface BridgeStateStore {
     currentTimeline: CompletedEventLedgerInput,
     newlyCompletedEventIds?: CompletedEventLedgerInput,
   ): Promise<void>;
+  getConversationRecord(identity: ConversationIdentity): ConversationRecord | undefined;
+  getConversationRecords(): readonly ConversationRecord[];
+  setConversationRecord(record: ConversationRecord): Promise<boolean>;
+  /** Reset known threads atomically without forgetting identity; unknown stays unknown. */
+  resetConversation(identity: ConversationIdentity): Promise<boolean>;
   getSessionMapping(roomId: MatrixRoomId): AcpSessionId | undefined;
   getSessionMappings(): ReadonlyMap<MatrixRoomId, AcpSessionId>;
   setSessionMapping(roomId: MatrixRoomId, sessionId: AcpSessionId): Promise<boolean>;
@@ -62,7 +70,7 @@ export interface BridgeStateStore {
 
 export const BRIDGE_STATE_FILE_NAME = "bridge-state.json";
 
-export const BRIDGE_STATE_SCHEMA_VERSION = 12;
+export const BRIDGE_STATE_SCHEMA_VERSION = 13;
 
 export type BridgeStateFaultPoint = "write" | "file-fsync" | "rename" | "directory-fsync";
 
@@ -96,8 +104,13 @@ export class BridgeStateError extends Error {
 
   readonly statePath: string;
 
+  readonly recoveryGuidance =
+    "Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem. Backups are user-managed; do not delete state to bypass this error.";
+
   constructor(category: BridgeStateFailureCategory, statePath: string) {
-    super(`Private bridge state failure (${category}) at ${statePath}`);
+    super(
+      `Private bridge state failure (${category}) at ${statePath}. Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem. Backups are user-managed; do not delete state to bypass this error.`,
+    );
     this.name = "BridgeStateError";
     this.category = category;
     this.statePath = statePath;
@@ -114,10 +127,13 @@ export interface BridgeStateStoreOptions {
 interface InternalState {
   readonly initialized: boolean;
   readonly sessions: Map<MatrixRoomId, AcpSessionId>;
+  readonly threads: Map<string, ThreadConversationRecord>;
   readonly completedEventIds: Map<MatrixRoomId, MatrixEventId[]>;
 }
 
 interface ParsedState {
+  readonly schemaVersion: number;
+  readonly threads: ReadonlyMap<string, ThreadConversationRecord>;
   readonly identity: MatrixBridgeIdentity;
   readonly initialized: boolean;
   readonly sessions: ReadonlyMap<MatrixRoomId, AcpSessionId>;
@@ -221,6 +237,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       identity: { ...this.#identity },
       initialized: state?.initialized ?? false,
       sessionMappings: sessions,
+      threadRecords: [...(state?.threads.values() ?? [])].map((record) => ({ ...record })),
       completedEventIds,
     };
   }
@@ -247,6 +264,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       mergeCompletedEventIds(nextCompleted, baseline);
       const next: InternalState = {
         initialized: true,
+        threads: new Map(current?.threads ?? []),
         sessions: new Map(current?.sessions ?? []),
         completedEventIds: nextCompleted,
       };
@@ -271,6 +289,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       completedEventIds.set(roomId, room);
       const next: InternalState = {
         initialized: current?.initialized ?? false,
+        threads: new Map(current?.threads ?? []),
         sessions: new Map(current?.sessions ?? []),
         completedEventIds,
       };
@@ -315,11 +334,83 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       }
       const next: InternalState = {
         initialized: current?.initialized ?? false,
+        threads: new Map(current?.threads ?? []),
         sessions: new Map(current?.sessions ?? []),
         completedEventIds: compacted,
       };
       await this.#persist(next);
       this.#state = next;
+    });
+  }
+
+  getConversationRecord(identity: ConversationIdentity): ConversationRecord | undefined {
+    this.#validateConversationIdentity(identity);
+    if (identity.kind === "room") {
+      const sessionId = this.#state?.sessions.get(identity.roomId);
+      return sessionId === undefined ? undefined : { ...identity, sessionId };
+    }
+    const record = this.#state?.threads.get(conversationKey(identity));
+    return record === undefined ? undefined : { ...record };
+  }
+
+  getConversationRecords(): readonly ConversationRecord[] {
+    return [
+      ...[...(this.#state?.sessions ?? [])].map(([roomId, sessionId]) => ({
+        kind: "room" as const,
+        roomId,
+        sessionId,
+      })),
+      ...[...(this.#state?.threads.values() ?? [])].map((record) => ({ ...record })),
+    ];
+  }
+
+  async setConversationRecord(record: ConversationRecord): Promise<boolean> {
+    // Validate and copy before queuing so caller mutation cannot change the accepted operation.
+    this.#validateConversationRecord(record);
+    if (record.kind === "room") {
+      return this.setSessionMapping(record.roomId, record.sessionId);
+    }
+    const accepted = { ...record };
+    return this.#enqueue(async () => {
+      const current = this.#state;
+      const key = conversationKey(accepted);
+      const existing = current?.threads.get(key);
+      if (existing !== undefined && existing.sessionId === accepted.sessionId) {
+        return false;
+      }
+      const next: InternalState = {
+        initialized: current?.initialized ?? false,
+        sessions: new Map(current?.sessions ?? []),
+        threads: new Map(current?.threads ?? []).set(key, accepted),
+        completedEventIds: cloneCompletedEventIds(current?.completedEventIds),
+      };
+      await this.#persist(next);
+      this.#state = next;
+      return true;
+    });
+  }
+
+  async resetConversation(identity: ConversationIdentity): Promise<boolean> {
+    this.#validateConversationIdentity(identity);
+    if (identity.kind === "room") {
+      return this.removeSessionMapping(identity.roomId);
+    }
+    const accepted = { ...identity };
+    return this.#enqueue(async () => {
+      const current = this.#state;
+      const key = conversationKey(accepted);
+      if (current === undefined || current.threads.get(key)?.sessionId === undefined) {
+        return false;
+      }
+      const next: InternalState = {
+        initialized: current.initialized,
+        sessions: new Map(current.sessions),
+        threads: new Map(current.threads).set(key, accepted),
+        completedEventIds: cloneCompletedEventIds(current.completedEventIds),
+      };
+      await this.#persist(next);
+      this.#state = next;
+      return true;
     });
   }
 
@@ -342,6 +433,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       }
       const next: InternalState = {
         initialized: current?.initialized ?? false,
+        threads: new Map(current?.threads ?? []),
         sessions: new Map(current?.sessions ?? []).set(roomId, sessionId),
         completedEventIds: cloneCompletedEventIds(current?.completedEventIds),
       };
@@ -362,6 +454,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       sessions.delete(roomId);
       const next: InternalState = {
         initialized: current.initialized,
+        threads: new Map(current.threads),
         sessions,
         completedEventIds: cloneCompletedEventIds(current.completedEventIds),
       };
@@ -385,7 +478,9 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       if (current === undefined) {
         return [];
       }
-      const removed = [...current.sessions.keys()]
+      const removed = [
+        ...new Set([...current.sessions.keys(), ...[...current.threads.values()].map((record) => record.roomId)]),
+      ]
         .filter((roomId) => !allowed.has(roomId))
         .sort((left, right) => left.localeCompare(right));
       if (removed.length === 0) {
@@ -395,8 +490,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       for (const roomId of removed) {
         sessions.delete(roomId);
       }
+      const threads = new Map([...current.threads].filter(([, record]) => allowed.has(record.roomId)));
       const next: InternalState = {
         initialized: current.initialized,
+        threads,
         sessions,
         completedEventIds: cloneCompletedEventIds(current.completedEventIds),
       };
@@ -409,11 +506,12 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   async discardSessionMappings(): Promise<boolean> {
     return this.#enqueue(async () => {
       const current = this.#state;
-      if (current === undefined || current.sessions.size === 0) {
+      if (current === undefined || (current.sessions.size === 0 && current.threads.size === 0)) {
         return false;
       }
       const next: InternalState = {
         initialized: current.initialized,
+        threads: new Map(),
         sessions: new Map(),
         completedEventIds: cloneCompletedEventIds(current.completedEventIds),
       };
@@ -467,14 +565,21 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
         throw this.#failure("corrupt");
       }
       const state = this.#parseState(parsed);
-      this.#state = {
+      const next: InternalState = {
         initialized: state.initialized,
+        threads: new Map(state.threads),
         sessions: new Map(state.sessions),
         completedEventIds: cloneCompletedEventIds(state.completedEventIds),
       };
+      if (state.schemaVersion === 12) {
+        await this.#persist(next);
+        this.#emit("debug", "private-state-migrated", { fromVersion: 12, toVersion: BRIDGE_STATE_SCHEMA_VERSION });
+      }
+      this.#state = next;
       this.#emit("debug", "private-state-loaded", {
         initialized: state.initialized,
         mappingCount: state.sessions.size,
+        threadCount: state.threads.size,
         completedRoomCount: state.completedEventIds.size,
       });
     } catch (error) {
@@ -572,10 +677,17 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     if (!isRecord(value)) {
       throw this.#failure("corrupt");
     }
-    if (value.schemaVersion !== BRIDGE_STATE_SCHEMA_VERSION) {
+    if (value.schemaVersion !== BRIDGE_STATE_SCHEMA_VERSION && value.schemaVersion !== 12) {
       throw this.#failure("unsupported-version");
     }
-    if (!hasExactKeys(value, ["schemaVersion", "identity", "initialized", "sessions", "completedEventIds"])) {
+    if (
+      !hasExactKeys(
+        value,
+        value.schemaVersion === 12
+          ? ["schemaVersion", "identity", "initialized", "sessions", "completedEventIds"]
+          : ["schemaVersion", "identity", "initialized", "sessions", "threads", "completedEventIds"],
+      )
+    ) {
       throw this.#failure("corrupt");
     }
     const identity = this.#parseIdentity(value.identity);
@@ -586,6 +698,8 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     const sessions = this.#parseSessions(value.sessions);
     const completedEventIds = this.#parseCompletedEventIds(value.completedEventIds);
     return {
+      schemaVersion: value.schemaVersion,
+      threads: value.schemaVersion === 12 ? new Map() : this.#parseThreads(value.threads),
       identity,
       initialized: value.initialized,
       sessions,
@@ -609,7 +723,11 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       userId: value.userId,
       deviceId: value.deviceId,
     };
-    this.#validateIdentity(identity);
+    try {
+      this.#validateIdentity(identity);
+    } catch {
+      throw this.#failure("corrupt");
+    }
     return identity;
   }
 
@@ -624,6 +742,71 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       sessions.set(roomId, sessionId);
     }
     return sessions;
+  }
+
+  #parseThreads(value: unknown): Map<string, ThreadConversationRecord> {
+    if (!Array.isArray(value)) {
+      throw this.#failure("corrupt");
+    }
+    const threads = new Map<string, ThreadConversationRecord>();
+    for (const rawRecord of value) {
+      if (!isRecord(rawRecord)) {
+        throw this.#failure("corrupt");
+      }
+      const keys = ["roomId", "threadRootEventId"];
+      if (Object.hasOwn(rawRecord, "sessionId")) {
+        keys.push("sessionId");
+      }
+      if (!hasExactKeys(rawRecord, keys)) {
+        throw this.#failure("corrupt");
+      }
+      const record = { ...rawRecord, kind: "thread" as const };
+      try {
+        this.#validateConversationRecord(record);
+      } catch {
+        throw this.#failure("corrupt");
+      }
+      const key = conversationKey(record);
+      if (threads.has(key)) {
+        throw this.#failure("corrupt");
+      }
+      threads.set(key, record);
+    }
+    return threads;
+  }
+
+  #validateConversationIdentity(value: unknown): asserts value is ConversationIdentity {
+    if (!isRecord(value) || (value.kind !== "room" && value.kind !== "thread")) {
+      throw this.#failure("invalid-input");
+    }
+    const keys = value.kind === "room" ? ["kind", "roomId"] : ["kind", "roomId", "threadRootEventId"];
+    if (!hasExactKeys(value, keys)) {
+      throw this.#failure("invalid-input");
+    }
+    this.#validateRoomId(value.roomId);
+    if (value.kind === "thread") {
+      this.#validateEventId(value.threadRootEventId);
+    }
+  }
+
+  #validateConversationRecord(value: unknown): asserts value is ConversationRecord {
+    if (!isRecord(value) || (value.kind !== "room" && value.kind !== "thread")) {
+      throw this.#failure("invalid-input");
+    }
+    const keys = value.kind === "room" ? ["kind", "roomId", "sessionId"] : ["kind", "roomId", "threadRootEventId"];
+    if (value.kind === "thread" && Object.hasOwn(value, "sessionId")) {
+      keys.push("sessionId");
+    }
+    if (!hasExactKeys(value, keys)) {
+      throw this.#failure("invalid-input");
+    }
+    this.#validateRoomId(value.roomId);
+    if (value.kind === "thread") {
+      this.#validateEventId(value.threadRootEventId);
+    }
+    if (value.kind === "room" || Object.hasOwn(value, "sessionId")) {
+      this.#validateSessionId(value.sessionId);
+    }
   }
 
   #parseCompletedEventIds(value: unknown): Map<MatrixRoomId, MatrixEventId[]> {
@@ -787,6 +970,13 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       identity: this.#identity,
       initialized: state.initialized,
       sessions,
+      threads: [...state.threads.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([, record]) => ({
+          roomId: record.roomId,
+          threadRootEventId: record.threadRootEventId,
+          sessionId: record.sessionId,
+        })),
       completedEventIds,
     })}\n`;
   }
@@ -811,7 +1001,10 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   }
 
   #emitFailure(error: BridgeStateError): void {
-    this.#emit("error", "private-state-failure", { category: error.category });
+    this.#emit("error", "private-state-failure", {
+      category: error.category,
+      recoveryGuidance: error.recoveryGuidance,
+    });
   }
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -878,6 +1071,7 @@ function emitStateFailure(diagnostics: DiagnosticSink | undefined, error: Bridge
     diagnostics?.emit("error", "private-state-failure", {
       path: error.statePath,
       category: error.category,
+      recoveryGuidance: error.recoveryGuidance,
     });
   } catch {
     // Diagnostics must never change state semantics.

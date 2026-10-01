@@ -65,11 +65,13 @@ access_token_file = ${tomlString(identity.tokenFile)}
 allowed_rooms = [${tomlString(environment.roomId)}]
 allowed_senders = [${tomlString(allowedSender)}]
 encryption = "required"
+response_mode = "room"
 
 [acp]
 cwd = ${tomlString(environment.acpCwd)}
 
 [limits]
+max_queued_turns_per_conversation = 16
 startup_timeout_seconds = 120
 shutdown_grace_seconds = 30
 `;

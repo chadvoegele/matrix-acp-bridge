@@ -2,14 +2,19 @@ import { createHash } from "node:crypto";
 
 import type { MatrixEventId, MatrixRoomId } from "./matrix-client.js";
 import type { AcpOutcome, AcpStopReason } from "./acp-client.js";
+import { matrixHtmlContentBytes, matrixTextContent, type MatrixOutputRouting } from "./matrix-message-content.js";
+import { renderMatrixMultipartText, renderMatrixText } from "./matrix-text-rendering.js";
+import { packMarkdownText } from "./markdown-packing.js";
+import { markdownReferences } from "./matrix-markdown.js";
+import type { MatrixSafeHtml } from "./matrix-html.js";
+import type { ThreadRoutingMetadata } from "./conversation-identity.js";
 import { utf8ByteLength } from "./text-utils.js";
+
+import type { MatrixTextMessageContent } from "./matrix-message-content.js";
 
 export type MatrixTransactionId = string;
 
-export interface MatrixTextMessageContent {
-  readonly msgtype: "m.text";
-  readonly body: string;
-}
+export type { MatrixTextMessageContent } from "./matrix-message-content.js";
 
 export type MatrixResponseKind =
   | "agent"
@@ -17,6 +22,8 @@ export type MatrixResponseKind =
   | "busy"
   | "oversized"
   | "reset"
+  | "unknown_thread"
+  | "thread_reset_guidance"
   | "timeout"
   | "max_tokens"
   | "max_turn_requests"
@@ -24,7 +31,7 @@ export type MatrixResponseKind =
   | "cancelled"
   | "error";
 
-export interface RenderedMatrixPart {
+export interface RenderedMatrixPart extends MatrixOutputRouting {
   readonly roomId: MatrixRoomId;
   readonly inboundEventId: MatrixEventId;
   readonly responseKind: MatrixResponseKind;
@@ -32,6 +39,8 @@ export interface RenderedMatrixPart {
   readonly partCount: number;
   readonly transactionId: MatrixTransactionId;
   readonly content: MatrixTextMessageContent;
+  /** Pre-rendered thread HTML preserves references defined in another part. */
+  readonly formattedBody?: MatrixSafeHtml;
 }
 
 /** The marker is part of the user-visible response contract. */
@@ -43,6 +52,8 @@ export const RESPONSE_TEXT = {
   busy: "The room queue is full. Try again later.",
   oversized: "Your message is too large.",
   reset: "Agent session reset.",
+  unknown_thread: "Unknown thread agent session. Please start a new thread.",
+  thread_reset_guidance: "Use /reset inside a thread to reset its agent session.",
   timeout: "[agent timed out]",
   max_tokens: "[agent reached its token limit]",
   max_turn_requests: "[agent reached its turn-request limit]",
@@ -66,7 +77,7 @@ export interface ResponseRenderLimits {
   readonly maxMatrixMessageBytes: number;
 }
 
-export interface ResponseRenderContext extends ResponseRenderLimits {
+export interface ResponseRenderContext extends ResponseRenderLimits, MatrixOutputRouting {
   readonly roomId: MatrixRoomId;
   readonly inboundEventId: MatrixEventId;
 }
@@ -74,29 +85,6 @@ export interface ResponseRenderContext extends ResponseRenderLimits {
 export interface RenderMatrixResponseRequest extends ResponseRenderContext {
   readonly outcome: RenderableResponse;
 }
-
-const STATUS_KINDS = new Set<MatrixResponseKind>([
-  "timeout",
-  "max_tokens",
-  "max_turn_requests",
-  "refusal",
-  "cancelled",
-  "error",
-]);
-
-const STATUS_TEXT: Readonly<Record<MatrixResponseKind, string | undefined>> = {
-  agent: undefined,
-  empty: undefined,
-  busy: undefined,
-  oversized: undefined,
-  reset: undefined,
-  timeout: RESPONSE_TEXT.timeout,
-  max_tokens: RESPONSE_TEXT.max_tokens,
-  max_turn_requests: RESPONSE_TEXT.max_turn_requests,
-  refusal: RESPONSE_TEXT.refusal,
-  cancelled: RESPONSE_TEXT.cancelled,
-  error: RESPONSE_TEXT.error,
-};
 
 function assertPositiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -245,18 +233,26 @@ function fittingChunkEnd(value: string, start: number, maxBytes: number): number
   );
 }
 
-function splitWithAssumedPartCount(value: string, maxMatrixMessageBytes: number, assumedPartCount: number): string[] {
+function splitWithAssumedPartCount(
+  value: string,
+  maxMatrixMessageBytes: number,
+  assumedPartCount: number,
+  measure: (body: string) => number,
+): string[] {
+  if (measure !== utf8ByteLength) {
+    return packMarkdownText(value, maxMatrixMessageBytes, measure, (index) => `[${index + 1}/${assumedPartCount}]\n`);
+  }
+  // Preserve the established plain-text room-mode boundaries.
   const parts: string[] = [];
   let offset = 0;
   while (offset < value.length) {
     const partNumber = parts.length + 1;
     const prefix = `[${partNumber}/${assumedPartCount}]\n`;
-    const prefixBytes = utf8ByteLength(prefix);
-    const chunkCapacity = maxMatrixMessageBytes - prefixBytes;
-    if (chunkCapacity <= 0) {
+    const capacity = maxMatrixMessageBytes - utf8ByteLength(prefix);
+    if (capacity <= 0) {
       throw new RangeError("maxMatrixMessageBytes cannot fit a multipart prefix");
     }
-    const end = fittingChunkEnd(value, offset, chunkCapacity);
+    const end = fittingChunkEnd(value, offset, capacity);
     if (end <= offset) {
       throw new Error("multipart splitter failed to make progress");
     }
@@ -270,9 +266,14 @@ function splitWithAssumedPartCount(value: string, maxMatrixMessageBytes: number,
  * Split a rendered response into bounded Matrix bodies.  Multipart prefixes
  * are solved iteratively because their denominator contributes to capacity.
  */
-export function splitMatrixResponseText(value: string, maxMatrixMessageBytes: number): string[] {
+export function splitMatrixResponseText(
+  value: string,
+  maxMatrixMessageBytes: number,
+  measure: (body: string) => number = utf8ByteLength,
+  measurePart: (body: string) => number = measure,
+): string[] {
   assertPositiveInteger(maxMatrixMessageBytes, "maxMatrixMessageBytes");
-  if (utf8ByteLength(value) <= maxMatrixMessageBytes) {
+  if (measure(value) <= maxMatrixMessageBytes) {
     return [value];
   }
 
@@ -286,7 +287,7 @@ export function splitMatrixResponseText(value: string, maxMatrixMessageBytes: nu
       break;
     }
     seen.add(assumedPartCount);
-    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, assumedPartCount);
+    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, assumedPartCount, measurePart);
     if (parts.length === assumedPartCount) {
       return parts;
     }
@@ -298,7 +299,7 @@ export function splitMatrixResponseText(value: string, maxMatrixMessageBytes: nu
   // nonempty value when every prefix can fit at least one code point.
   const upperBound = Math.max(2, value.length);
   for (let candidate = 2; candidate <= upperBound; candidate += 1) {
-    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, candidate);
+    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, candidate, measurePart);
     if (parts.length === candidate) {
       return parts;
     }
@@ -306,7 +307,7 @@ export function splitMatrixResponseText(value: string, maxMatrixMessageBytes: nu
   throw new Error("could not stabilize multipart response count");
 }
 
-export interface TransactionIdInput {
+export interface TransactionIdInput extends ThreadRoutingMetadata {
   readonly roomId: MatrixRoomId;
   readonly inboundEventId: MatrixEventId;
   readonly responseKind: MatrixResponseKind;
@@ -353,6 +354,7 @@ export function computeMatrixTransactionId(
     input.inboundEventId,
     input.responseKind,
     input.oneBasedPartNumber,
+    ...(input.threadRootEventId === undefined ? [] : [input.threadRootEventId]),
   ];
   const digest = createHash("sha256")
     .update(Buffer.from(JSON.stringify(canonicalTuple), "utf8"))
@@ -403,14 +405,7 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
     return { responseKind: "error", agentText: "" };
   }
 
-  if (
-    !STATUS_KINDS.has(outcome.kind) &&
-    outcome.kind !== "agent" &&
-    outcome.kind !== "empty" &&
-    outcome.kind !== "busy" &&
-    outcome.kind !== "oversized" &&
-    outcome.kind !== "reset"
-  ) {
+  if (outcome.kind !== "agent" && !Object.hasOwn(RESPONSE_TEXT, outcome.kind)) {
     throw new TypeError(`unsupported response kind: ${String(outcome.kind)}`);
   }
 
@@ -424,17 +419,15 @@ function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: numb
   const descriptor = descriptorFromOutcome(outcome);
   const { responseKind, agentText } = descriptor;
 
-  if (responseKind === "empty") {
-    return { responseKind, text: RESPONSE_TEXT.empty };
-  }
-  if (responseKind === "busy") {
-    return { responseKind, text: RESPONSE_TEXT.busy };
-  }
-  if (responseKind === "oversized") {
-    return { responseKind, text: RESPONSE_TEXT.oversized };
-  }
-  if (responseKind === "reset") {
-    return { responseKind, text: RESPONSE_TEXT.reset };
+  if (
+    responseKind === "empty" ||
+    responseKind === "busy" ||
+    responseKind === "oversized" ||
+    responseKind === "reset" ||
+    responseKind === "unknown_thread" ||
+    responseKind === "thread_reset_guidance"
+  ) {
+    return { responseKind, text: RESPONSE_TEXT[responseKind] };
   }
 
   const boundedAgentText = truncateAgentText(agentText, maxOutputBytes);
@@ -444,13 +437,9 @@ function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: numb
       : { responseKind, text: boundedAgentText };
   }
 
-  const status = STATUS_TEXT[responseKind];
-  if (status === undefined) {
-    throw new Error(`response kind ${responseKind} has no status text`);
-  }
   return {
     responseKind,
-    text: joinTextAndStatus(boundedAgentText, status),
+    text: joinTextAndStatus(boundedAgentText, RESPONSE_TEXT[responseKind]),
   };
 }
 
@@ -462,12 +451,29 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
   assertPositiveInteger(request.maxMatrixMessageBytes, "maxMatrixMessageBytes");
 
   const normalized = normalizeResponseText(request.outcome, request.maxOutputBytes);
-  const bodies = splitMatrixResponseText(normalized.text, request.maxMatrixMessageBytes);
+  const routing: MatrixOutputRouting = {
+    ...(request.threadRootEventId === undefined ? {} : { threadRootEventId: request.threadRootEventId }),
+    ...(request.threadInReplyToEventId === undefined ? {} : { threadInReplyToEventId: request.threadInReplyToEventId }),
+  };
+  // Room mode keeps its established body budget and wire shape. Thread parts
+  // include Markdown HTML and relations in their full serialized payload budget.
+  const references = request.threadRootEventId === undefined ? {} : markdownReferences(normalized.text);
+  const threaded = request.threadRootEventId !== undefined;
+  const render = (body: string) => renderMatrixText(body, references);
+  const renderPart = (body: string) => renderMatrixMultipartText(body, references);
+  const measure = threaded
+    ? (body: string): number => matrixHtmlContentBytes({ ...render(body), ...routing })
+    : utf8ByteLength;
+  const measurePart = threaded
+    ? (body: string): number => matrixHtmlContentBytes({ ...renderPart(body), ...routing })
+    : utf8ByteLength;
+  const bodies = splitMatrixResponseText(normalized.text, request.maxMatrixMessageBytes, measure, measurePart);
   const partCount = bodies.length;
 
   return bodies.map((body, index) => {
     const partNumber = index + 1;
     return {
+      ...routing,
       roomId: request.roomId,
       inboundEventId: request.inboundEventId,
       responseKind: normalized.responseKind,
@@ -478,8 +484,12 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
         inboundEventId: request.inboundEventId,
         responseKind: normalized.responseKind,
         oneBasedPartNumber: partNumber,
+        ...(routing.threadRootEventId === undefined ? {} : { threadRootEventId: routing.threadRootEventId }),
       }),
-      content: { msgtype: "m.text", body },
+      content: matrixTextContent(body, routing),
+      ...(threaded
+        ? { formattedBody: (partCount > 1 ? renderPart(body) : render(body)).formattedBody as MatrixSafeHtml }
+        : {}),
     };
   });
 }

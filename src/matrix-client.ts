@@ -22,7 +22,7 @@ import type {
 } from "./crypto-contracts.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 import { renderMatrixText } from "./matrix-text-rendering.js";
-import { matrixHtmlContent } from "./matrix-message-content.js";
+import { matrixHtmlContent, type MatrixHtmlBody, type MatrixOutputRouting } from "./matrix-message-content.js";
 import type { MatrixSafeHtml } from "./matrix-html.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
@@ -44,7 +44,7 @@ export type MatrixEventId = string;
 
 export type MatrixDeviceId = string;
 
-export interface MatrixHtmlMessage {
+export interface MatrixHtmlMessage extends MatrixOutputRouting {
   readonly roomId: MatrixRoomId;
   readonly transactionId: string;
   readonly body: string;
@@ -1530,12 +1530,17 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       typeof part.transactionId !== "string" ||
       !isRecord(part.content) ||
       part.content.msgtype !== "m.text" ||
-      typeof part.content.body !== "string"
+      typeof part.content.body !== "string" ||
+      (part.formattedBody !== undefined && typeof part.formattedBody !== "string")
     ) {
       throw new MatrixAdapterError("send_message", "The Matrix message part is invalid", permanentFailure());
     }
 
-    const content = matrixHtmlContent(renderMatrixText(part.content.body));
+    const rendered =
+      part.formattedBody === undefined
+        ? { ...part, ...renderMatrixText(part.content.body) }
+        : { ...part, body: part.content.body, formattedBody: part.formattedBody };
+    const content = this.#outputContent(rendered);
     await this.#sendTextContent(part.roomId, content, part.transactionId);
   }
 
@@ -1553,13 +1558,24 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     ) {
       throw new MatrixAdapterError("send_message", "The Matrix HTML message is invalid", permanentFailure());
     }
-    const content = matrixHtmlContent(message, message.targetEventId);
+    const content = this.#outputContent(message, message.targetEventId);
     const response = await this.#sendTextContent(message.roomId, content, message.transactionId);
     if (message.targetEventId !== undefined) return message.targetEventId;
     if (!isRecord(response) || !isValidMatrixEventId(response.event_id)) {
       throw new MatrixAdapterError("send_message", "Matrix send returned no event ID", permanentFailure());
     }
     return response.event_id;
+  }
+
+  #outputContent(
+    body: MatrixHtmlBody & MatrixOutputRouting,
+    targetEventId?: MatrixEventId,
+  ): Readonly<Record<string, unknown>> {
+    try {
+      return matrixHtmlContent(body, targetEventId);
+    } catch {
+      throw new MatrixAdapterError("send_message", "The Matrix thread routing is invalid", permanentFailure());
+    }
   }
 
   async #sendTextContent(

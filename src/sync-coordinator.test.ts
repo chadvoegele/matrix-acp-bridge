@@ -23,6 +23,7 @@ const config: BridgeConfig = {
     allowedRooms: [ROOM],
     allowedSenders: [SENDER],
     encryption: "disabled",
+    responseMode: "room",
   },
   acp: { cwd: "/tmp" },
   limits: {
@@ -30,7 +31,7 @@ const config: BridgeConfig = {
     maxOutputBytes: 10_000,
     maxMatrixMessageBytes: 10_000,
     maxActivityEventsPerMessage: 10,
-    maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerConversation: 2,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 60,
     shutdownGraceSeconds: 1,
@@ -450,5 +451,61 @@ void test("incremental terminal completion is durable before the next response b
       ["$live:example.org"],
     );
     assert.equal(stateStore.isEventCompleted(ROOM, "$live:example.org"), true);
+  });
+});
+
+void test("thread sync routing preserves authorization, completed IDs and per-room catch-up count bounds", async () => {
+  await withStore(async (stateDir) => {
+    const identity = {
+      homeserver: config.matrix.homeserver,
+      userId: config.matrix.userId,
+      deviceId: config.matrix.deviceId,
+    };
+    const stateStore = await openBridgeStateStore({ stateDir, identity });
+    await stateStore.establishInitialBaseline([{ roomId: ROOM, eventIds: ["$completed"] }]);
+    const received: InboundMatrixEvent[] = [];
+    const { coordinator } = makeCoordinator(stateStore, received, {
+      config: { ...config, matrix: { ...config.matrix, responseMode: "thread" } },
+    });
+    const threaded = (id: string, root: string): InboundMatrixEvent => ({
+      ...event(id, "follow-up", false),
+      content: { msgtype: "m.text", body: "follow-up", "m.relates_to": { rel_type: "m.thread", event_id: root } },
+    });
+    await coordinator.handleBatch(
+      batch("initial", [
+        threaded("$completed", "$root-one"),
+        { ...threaded("$unauthorized", "$root-one"), sender: "@mallory:example.org" },
+        {
+          ...threaded("$malformed", "$root-one"),
+          content: { msgtype: "m.text", body: "bad", "m.relates_to": { rel_type: "m.thread", event_id: "invalid" } },
+        },
+        threaded("$omitted-one", "$root-one"),
+        threaded("$kept-two", "$root-two"),
+        threaded("$kept-three", "$root-three"),
+      ]),
+    );
+    await coordinator.flush();
+    assert.deepEqual(
+      received.map(({ eventId }) => eventId),
+      ["$kept-two", "$kept-three"],
+    );
+    assert.ok(received.every(({ isCatchUp, isLive }) => isCatchUp && isLive));
+    assert.deepEqual(stateStore.getSnapshot().completedEventIds[ROOM], [
+      "$completed",
+      "$omitted-one",
+      "$kept-two",
+      "$kept-three",
+    ]);
+    await coordinator.handleBatch(
+      batch("incremental", [
+        { ...threaded("$kept-two", "$root-two"), isLive: true },
+        { ...threaded("$live-four", "$root-four"), isLive: true },
+      ]),
+    );
+    await coordinator.flush();
+    assert.deepEqual(
+      received.map(({ eventId }) => eventId),
+      ["$kept-two", "$kept-three", "$live-four"],
+    );
   });
 });

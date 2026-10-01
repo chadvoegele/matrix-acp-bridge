@@ -104,3 +104,8 @@ the normal SAS-verified test devices, checks decrypted Matrix edits and raw
 plaintext activity test has the detailed HTML, fallback and event-count
 assertions. The existing `test.sh` entry point still uses the configured ACP
 command.
+
+## Thread-scoped sessions
+
+Thread tests are a separate suite: [thread-sessions](../thread-sessions/README.md).
+This suite always uses room mode, including its senders and activity tests.

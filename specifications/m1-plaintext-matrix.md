@@ -1,7 +1,7 @@
 +++
 status = "final"
 created = 2026-08-09
-last_update = 2026-08-12
+last_update = 2026-10-01
 +++
 
 # Matrix–ACP bridge specification
@@ -141,7 +141,7 @@ cwd = "/absolute/agent/workspace"
 max_input_bytes = 16384
 max_output_bytes = 262144
 max_matrix_message_bytes = 32768
-max_queued_turns_per_room = 16
+max_queued_turns_per_conversation = 16
 max_concurrent_prompts = 4
 max_turn_seconds = 1800
 shutdown_grace_seconds = 30
@@ -271,12 +271,12 @@ empty MCP server list. A room never receives context from another room.
 ACP permits multiple sessions on one client connection. The bridge therefore:
 
 - runs at most one turn at a time in each room session;
-- permits one active turn plus at most `max_queued_turns_per_room` waiting turns
+- permits one active turn plus at most `max_queued_turns_per_conversation` waiting turns
   per room;
 - treats a turn as active from removal from the waiting queue through session
   creation, prompt, drain, and final Matrix delivery or abandonment;
 - while startup dispatch is gated, designates the first buffered event as
-  active, allowing `1 + max_queued_turns_per_room` buffered events per room;
+  active, allowing `1 + max_queued_turns_per_conversation` buffered events per room;
 - runs no more than `max_concurrent_prompts` unresolved `session/prompt`
   requests at once, acquiring the permit immediately before dispatch and
   releasing it when the prompt promise resolves, before draining; and

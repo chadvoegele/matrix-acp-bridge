@@ -80,13 +80,14 @@ void test("parses the documented shape and applies every default limit", () => {
   const config = parseConfigText(validConfigText("/tmp/matrix-acp-config-state"));
 
   assert.deepEqual(config.limits, DEFAULT_LIMITS);
+  assert.equal(config.matrix.responseMode, "room");
   assert.equal(config.stateDir, "/tmp/matrix-acp-config-state/state");
   assert.deepEqual(config.matrix.allowedRooms, ["!room:example.test"]);
   assert.deepEqual(config.matrix.allowedSenders, ["@alice:example.test", "@bob:example.test"]);
 });
 
 void test("parses operator-supplied limits and TOML comments", () => {
-  const source = `${validConfigText("/tmp/matrix-acp-config-state")}\n\n[limits]\nmax_input_bytes = 1_000 # byte limit\nmax_output_bytes = 20\nmax_matrix_message_bytes = 64\nmax_activity_events_per_message = 7\nmax_queued_turns_per_room = 2\nmax_concurrent_prompts = 1\nmax_turn_seconds = 2_147_483\nshutdown_grace_seconds = 1\nstartup_timeout_seconds = 120\nmax_catchup_age_seconds = 120\nmax_catchup_events_per_room = 3\n`;
+  const source = `${validConfigText("/tmp/matrix-acp-config-state")}\n\n[limits]\nmax_input_bytes = 1_000 # byte limit\nmax_output_bytes = 20\nmax_matrix_message_bytes = 64\nmax_activity_events_per_message = 7\nmax_queued_turns_per_conversation = 2\nmax_concurrent_prompts = 1\nmax_turn_seconds = 2_147_483\nshutdown_grace_seconds = 1\nstartup_timeout_seconds = 120\nmax_catchup_age_seconds = 120\nmax_catchup_events_per_room = 3\n`;
   const config = parseConfigText(source);
 
   assert.deepEqual(config.limits, {
@@ -94,7 +95,7 @@ void test("parses operator-supplied limits and TOML comments", () => {
     maxOutputBytes: 20,
     maxMatrixMessageBytes: 64,
     maxActivityEventsPerMessage: 7,
-    maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerConversation: 2,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 2_147_483,
     shutdownGraceSeconds: 1,
@@ -400,4 +401,89 @@ void test("reuses an unlocked stale lock file and redacts lock failures", async 
     const stale = await readFile(join(stateDir, ".lock"));
     assert.equal(stale.length, 0);
   });
+});
+
+void test("response mode defaults to room and accepts only explicit room or thread", async () => {
+  const valid = validConfigText("/tmp/matrix-acp-config-state");
+  for (const mode of ["room", "thread"] as const) {
+    const source = valid.replace("[matrix]", `[matrix]\nresponse_mode = "${mode}"`);
+    assert.equal(parseConfigText(source).matrix.responseMode, mode);
+  }
+  for (const value of ['"unknown"', '"THREAD"', '""', "1", "true", "[]", "2026-09-30"]) {
+    await expectConfigurationError(() =>
+      parseConfigText(valid.replace("[matrix]", `[matrix]\nresponse_mode = ${value}`)),
+    );
+  }
+  const parsed = parseConfigText(valid);
+  await expectConfigurationError(() =>
+    validateConfiguration({
+      ...parsed,
+      matrix: { ...parsed.matrix, responseMode: "invalid" as "room" },
+    }),
+  );
+});
+
+void test("conversation queue defaults to 16 in both response modes", () => {
+  const valid = validConfigText("/tmp/matrix-acp-config-state");
+  for (const mode of ["room", "thread"] as const) {
+    const source = valid.replace("[matrix]", `[matrix]\nresponse_mode = "${mode}"`);
+    assert.equal(parseConfigText(source).limits.maxQueuedTurnsPerConversation, 16);
+  }
+});
+
+void test("new and legacy queue keys map to one conversation limit with identical integer bounds", async () => {
+  const valid = `${validConfigText("/tmp/matrix-acp-config-state")}\n[limits]\n`;
+  for (const key of ["max_queued_turns_per_conversation", "max_queued_turns_per_room"]) {
+    for (const mode of ["room", "thread"] as const) {
+      const source = valid.replace("[matrix]", `[matrix]\nresponse_mode = "${mode}"`);
+      const parsed = parseConfigText(`${source}${key} = 3\n`);
+      assert.deepEqual(parsed.limits, { ...DEFAULT_LIMITS, maxQueuedTurnsPerConversation: 3 });
+    }
+    for (const value of [
+      "0",
+      "-1",
+      "1.5",
+      '"16"',
+      "true",
+      "[]",
+      "2026-09-30",
+      "inf",
+      "nan",
+      "2147483648",
+      "9007199254740992",
+    ]) {
+      await expectConfigurationError(() => parseConfigText(`${valid}${key} = ${value}\n`));
+    }
+    for (const value of [1, 2_147_483_647]) {
+      assert.equal(parseConfigText(`${valid}${key} = ${value}\n`).limits.maxQueuedTurnsPerConversation, value);
+    }
+  }
+  const parsed = parseConfigText(valid);
+  await expectConfigurationError(() =>
+    validateConfiguration({
+      ...parsed,
+      limits: { ...parsed.limits, maxQueuedTurnsPerConversation: 0 },
+    }),
+  );
+});
+
+void test("rejects explicit new and legacy queue keys together even when values match", async () => {
+  const valid = `${validConfigText("/tmp/matrix-acp-config-state")}\n[limits]\n`;
+  for (const legacyValue of [3, 16]) {
+    for (const keys of [
+      [`max_queued_turns_per_conversation = 3`, `max_queued_turns_per_room = ${legacyValue}`],
+      [`max_queued_turns_per_room = ${legacyValue}`, `max_queued_turns_per_conversation = 3`],
+    ]) {
+      const error = await expectConfigurationError(() => parseConfigText(`${valid}${keys.join("\n")}\n`));
+      assert.match(error.message, /limits\.max_queued_turns_per_conversation/u);
+      assert.match(error.message, /limits\.max_queued_turns_per_room/u);
+      assert.match(error.message, /cannot both be set/u);
+    }
+  }
+});
+
+void test("rejects the removed thread queue key", async () => {
+  const valid = `${validConfigText("/tmp/matrix-acp-config-state")}\n[limits]\n`;
+  const error = await expectConfigurationError(() => parseConfigText(`${valid}max_queued_turns_per_thread = 16\n`));
+  assert.equal(error.message, "Unknown configuration key");
 });

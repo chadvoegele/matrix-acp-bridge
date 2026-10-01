@@ -1,7 +1,7 @@
 +++
 status = "draft"
 created = 2026-09-30
-last_update = 2026-09-30
+last_update = 2026-10-01
 +++
 
 # Thread-scoped agent sessions
@@ -41,8 +41,11 @@ encryption milestones and must also cover verbose ACP output when available.
 
 Add a global `[matrix]` setting, `response_mode = "room" | "thread"`.
 Omission must select `"room"`; unknown values must fail configuration validation.
-Add `max_queued_turns_per_thread` under `[limits]`, defaulting independently to
-16 even when `max_queued_turns_per_room` is customized.
+Use `max_queued_turns_per_conversation` under `[limits]`, defaulting to 16 in both
+modes. The existing `max_queued_turns_per_room` key remains a legacy parse alias
+for the same limit. Explicitly supplying both keys must fail configuration
+validation, even when their values match. Both keys must use the same positive
+safe-integer bounds. The unmerged thread-specific queue key is removed.
 
 Room mode must retain current behavior, including room-local `/reset` and
 rejection of inbound thread relations. Thread mode changes both Matrix output
@@ -130,11 +133,11 @@ threads, including threads in the same room, must be eligible to run concurrentl
 bounded by `max_concurrent_prompts`. Starting or resetting one thread must not
 cancel another thread's active work.
 
-In thread mode, `max_queued_turns_per_thread` must limit waiting work separately
-for each thread. A full thread queue must reject additional work with the existing
-busy response inside that thread without affecting admission to other threads.
-Room mode must continue using `max_queued_turns_per_room`. The new setting must
-use the same default and validation rules as the existing room queue setting.
+`max_queued_turns_per_conversation` must limit waiting work separately for each
+conversation: a room in room mode or a thread in thread mode. A full thread queue
+must reject additional work with the existing busy response inside that thread
+without affecting admission to other threads. The active turn is separate from
+this waiting-work limit, including while it waits for a global prompt permit.
 
 Thread mode has no aggregate room-wide waiting-work limit; total queued work can
 grow with the number of threads. `max_concurrent_prompts` retains its existing
@@ -183,12 +186,14 @@ Returning to a mode must resume its retained context without assigning sessions
 from the other mode. Removed-room cleanup still applies to both sets of mappings.
 
 Existing state must migrate automatically, preserving account identity, sync
-recovery state, completed-event IDs, and room sessions. Before replacing state
-with the new schema, create a private pre-migration backup. A failed backup or
-migration must stop startup without overwriting the original state.
+recovery state, completed-event IDs, and room sessions. Users must back up private
+bridge state before upgrading; the bridge creates no automatic backup. Migration
+uses the normal atomic write/file-fsync/rename/directory-fsync sequence. Failures
+stop startup; pre-rename failures retain original state, while post-rename fsync
+failures have an indeterminate disk commit.
 
-Rollback to an older binary requires stopping the bridge and restoring that
-backup; post-migration state changes are lost. Document this procedure. Unsupported
+Rollback to an older binary requires stopping the bridge and restoring the user's
+own pre-upgrade backup; post-migration state changes are lost. Document this procedure. Unsupported
 or invalid state must fail startup with recovery guidance, never silently reset.
 A downgrade/export tool is not required.
 
@@ -200,10 +205,11 @@ A downgrade/export tool is not required.
   reference another event within the same thread.
 - Same-thread prompts serialize; different threads run concurrently within the
   global prompt limit. Session creation/loading does not consume prompt slots.
-  Each thread independently enforces `max_queued_turns_per_thread`;
+  Each thread independently enforces `max_queued_turns_per_conversation`;
   filling one thread's queue does not block admission to another thread.
-- Room mode retains `max_queued_turns_per_room`; the thread queue setting uses
-  the same default and validation rules.
+- Both modes use one conversation queue limit with default 16. New and legacy
+  room keys map to the same limit and accept identical bounds; supplying both
+  keys or the removed thread key fails configuration validation.
 - Unauthorized, malformed, edited, and duplicate events create no extra sessions.
 - Agent text, activity, edits, split output, errors, and retries retain correct
   thread placement in plaintext and encrypted end-to-end tests.
@@ -226,9 +232,11 @@ A downgrade/export tool is not required.
 - No inactivity or age-based cleanup removes persisted mappings. Removing a
   room from `allowed_rooms` prunes its mappings; removing a sender rejects their
   messages without removing mappings.
-- State migration preserves existing recovery state and sessions, creates a
-  private backup, and leaves original state intact on failure. Restore-based
-  rollback is documented and tested; incompatible state is never silently erased.
+- State migration preserves existing recovery state and sessions without creating
+  a backup. Atomic writes retain original state on pre-rename failure; all write
+  failures are fatal. Existing backups are untouched. Restore-based rollback using
+  a user-managed pre-upgrade backup is documented and tested; incompatible state
+  is never silently erased.
 - Mode switching retains both sets of mappings and sessionless thread identities
   when loading is supported, and never cross-associates sessions.
 - Concurrent turns preserve room typing state until the last relevant turn ends.

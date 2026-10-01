@@ -62,6 +62,7 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
     allowedRooms: [ROOM],
     allowedSenders: ["@alice:example.org"],
     encryption: "required",
+    responseMode: "room",
   },
   acp: { cwd: "/unused" },
   limits: {
@@ -69,7 +70,7 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
     maxOutputBytes: 256,
     maxMatrixMessageBytes: 128,
     maxActivityEventsPerMessage: 10,
-    maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerConversation: 2,
     maxConcurrentPrompts: 1,
     maxTurnSeconds: 10,
     shutdownGraceSeconds: 1,

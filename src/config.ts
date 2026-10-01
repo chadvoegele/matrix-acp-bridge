@@ -14,6 +14,8 @@ import { isNodeError } from "./object-validation.js";
 
 export type EncryptionMode = "disabled" | "required";
 
+export type ResponseMode = "room" | "thread";
+
 export interface MatrixConfig {
   readonly homeserver: string;
   readonly userId: MatrixUserId;
@@ -22,6 +24,7 @@ export interface MatrixConfig {
   readonly allowedRooms: readonly MatrixRoomId[];
   readonly allowedSenders: readonly MatrixUserId[];
   readonly encryption: EncryptionMode;
+  readonly responseMode: ResponseMode;
 }
 
 export interface AcpConfig {
@@ -33,7 +36,7 @@ export interface BridgeLimits {
   readonly maxOutputBytes: number;
   readonly maxMatrixMessageBytes: number;
   readonly maxActivityEventsPerMessage: number;
-  readonly maxQueuedTurnsPerRoom: number;
+  readonly maxQueuedTurnsPerConversation: number;
   readonly maxConcurrentPrompts: number;
   readonly maxTurnSeconds: number;
   readonly shutdownGraceSeconds: number;
@@ -60,7 +63,7 @@ export const DEFAULT_LIMITS: BridgeLimits = {
   maxOutputBytes: 262_144,
   maxMatrixMessageBytes: 32_768,
   maxActivityEventsPerMessage: 10,
-  maxQueuedTurnsPerRoom: 16,
+  maxQueuedTurnsPerConversation: 16,
   maxConcurrentPrompts: 4,
   maxTurnSeconds: 1800,
   shutdownGraceSeconds: 30,
@@ -75,7 +78,7 @@ const LIMIT_KEYS = [
   "max_output_bytes",
   "max_matrix_message_bytes",
   "max_activity_events_per_message",
-  "max_queued_turns_per_room",
+  "max_queued_turns_per_conversation",
   "max_concurrent_prompts",
   "max_turn_seconds",
   "shutdown_grace_seconds",
@@ -99,9 +102,10 @@ const TABLE_KEYS: Readonly<Record<TomlTable, ReadonlySet<string>>> = {
     "allowed_rooms",
     "allowed_senders",
     "encryption",
+    "response_mode",
   ]),
   acp: new Set(["cwd"]),
-  limits: new Set(LIMIT_KEYS),
+  limits: new Set([...LIMIT_KEYS, "max_queued_turns_per_room"]),
 };
 
 const REQUIRED_KEYS: ReadonlyArray<readonly [TomlTable, string]> = [
@@ -204,6 +208,7 @@ export function parseConfigText(source: string): BridgeConfig {
     allowedRooms: requiredStringArray(entries, "matrix", "allowed_rooms"),
     allowedSenders: requiredStringArray(entries, "matrix", "allowed_senders"),
     encryption: requiredEncryption(entries),
+    responseMode: optionalResponseMode(entries),
   };
   const acp: AcpConfig = {
     cwd: requiredString(entries, "acp", "cwd"),
@@ -421,6 +426,9 @@ function validateShape(stateDir: string, matrix: MatrixConfig, acp: AcpConfig, l
   if (matrix.encryption !== "disabled" && matrix.encryption !== "required") {
     throw new ConfigurationError('matrix.encryption must be either "disabled" or "required"');
   }
+  if (matrix.responseMode !== "room" && matrix.responseMode !== "thread") {
+    throw new ConfigurationError('matrix.response_mode must be either "room" or "thread"');
+  }
   validateLimits(limits);
 }
 
@@ -430,7 +438,7 @@ function validateLimits(limits: BridgeLimits): void {
     max_output_bytes: limits.maxOutputBytes,
     max_matrix_message_bytes: limits.maxMatrixMessageBytes,
     max_activity_events_per_message: limits.maxActivityEventsPerMessage,
-    max_queued_turns_per_room: limits.maxQueuedTurnsPerRoom,
+    max_queued_turns_per_conversation: limits.maxQueuedTurnsPerConversation,
     max_concurrent_prompts: limits.maxConcurrentPrompts,
     max_turn_seconds: limits.maxTurnSeconds,
     shutdown_grace_seconds: limits.shutdownGraceSeconds,
@@ -524,11 +532,20 @@ function requireMatrixIdList(values: readonly string[], field: string, prefix: "
 }
 
 function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
+  const legacyQueueKey = "max_queued_turns_per_room";
+  const hasLegacyQueueLimit = entries.has(entryName("limits", legacyQueueKey));
+  if (hasLegacyQueueLimit && entries.has(entryName("limits", "max_queued_turns_per_conversation"))) {
+    throw new ConfigurationError(
+      "limits.max_queued_turns_per_conversation and legacy limits.max_queued_turns_per_room cannot both be set",
+    );
+  }
+
   const values = new Map<LimitKey, number>();
   for (const key of LIMIT_KEYS) {
-    const value = entries.get(entryName("limits", key));
+    const inputKey = key === "max_queued_turns_per_conversation" && hasLegacyQueueLimit ? legacyQueueKey : key;
+    const value = entries.get(entryName("limits", inputKey));
     const defaultValue = DEFAULT_LIMITS[limitProperty(key)];
-    const parsed = value === undefined ? defaultValue : requireInteger(value, `limits.${key}`);
+    const parsed = value === undefined ? defaultValue : requireInteger(value, `limits.${inputKey}`);
     values.set(key, parsed);
   }
 
@@ -559,7 +576,7 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
     maxOutputBytes,
     maxMatrixMessageBytes,
     maxActivityEventsPerMessage,
-    maxQueuedTurnsPerRoom: values.get("max_queued_turns_per_room")!,
+    maxQueuedTurnsPerConversation: values.get("max_queued_turns_per_conversation")!,
     maxConcurrentPrompts: values.get("max_concurrent_prompts")!,
     maxTurnSeconds: values.get("max_turn_seconds")!,
     shutdownGraceSeconds: values.get("shutdown_grace_seconds")!,
@@ -607,13 +624,21 @@ function requiredEncryption(entries: ReadonlyMap<string, TomlValue>): Encryption
   return value;
 }
 
+function optionalResponseMode(entries: ReadonlyMap<string, TomlValue>): ResponseMode {
+  const value = entries.get(entryName("matrix", "response_mode")) ?? "room";
+  if (value !== "room" && value !== "thread") {
+    throw new ConfigurationError('matrix.response_mode must be either "room" or "thread"');
+  }
+  return value;
+}
+
 function limitProperty(key: LimitKey): keyof BridgeLimits {
   const properties: Readonly<Record<LimitKey, keyof BridgeLimits>> = {
     max_input_bytes: "maxInputBytes",
     max_output_bytes: "maxOutputBytes",
     max_matrix_message_bytes: "maxMatrixMessageBytes",
     max_activity_events_per_message: "maxActivityEventsPerMessage",
-    max_queued_turns_per_room: "maxQueuedTurnsPerRoom",
+    max_queued_turns_per_conversation: "maxQueuedTurnsPerConversation",
     max_concurrent_prompts: "maxConcurrentPrompts",
     max_turn_seconds: "maxTurnSeconds",
     shutdown_grace_seconds: "shutdownGraceSeconds",

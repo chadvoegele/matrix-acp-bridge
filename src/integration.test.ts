@@ -67,6 +67,7 @@ const MATRIX_CONFIG: MatrixConfig = {
   allowedRooms: [ROOM_ONE, ROOM_TWO],
   allowedSenders: [ALICE],
   encryption: "disabled",
+  responseMode: "room",
 };
 
 const CONFIG: BridgeConfig = {
@@ -78,7 +79,7 @@ const CONFIG: BridgeConfig = {
     maxOutputBytes: 262_144,
     maxMatrixMessageBytes: 32_768,
     maxActivityEventsPerMessage: 10,
-    maxQueuedTurnsPerRoom: 2,
+    maxQueuedTurnsPerConversation: 2,
     maxConcurrentPrompts: 2,
     maxTurnSeconds: 60,
     shutdownGraceSeconds: 1,
@@ -1498,6 +1499,7 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
       () => seed!.matrixSdk.sent.filter((attempt) => attempt.content.body?.toString().startsWith("seed ")).length === 2,
       "seed Matrix responses",
     );
+    await seed.bridge.waitForIdle();
     await stopRig(seed, seedRun);
     seedRun = undefined;
 
@@ -1564,6 +1566,10 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
         ).length === 2,
       "restored Matrix responses",
     );
+    // Live delivery can precede the durable terminal write. Let both turns
+    // finish before cleanup advances the fake shutdown deadline and removes
+    // the directory, so real filesystem work cannot race that removal.
+    await restart.bridge.waitForIdle();
   } finally {
     if (seedRun !== undefined && seed !== undefined) {
       await stopRig(seed, seedRun);

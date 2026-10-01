@@ -28,11 +28,13 @@ access_token_file = ${string(environment.bridge.tokenFile)}
 allowed_rooms = [${string(environment.roomId)}]
 allowed_senders = [${string(environment.sender.userId)}]
 encryption = "disabled"
+response_mode = "room"
 
 [acp]
 cwd = ${string(environment.acpCwd)}
 
 [limits]
+max_queued_turns_per_conversation = 16
 startup_timeout_seconds = 120
 shutdown_grace_seconds = 30
 `;

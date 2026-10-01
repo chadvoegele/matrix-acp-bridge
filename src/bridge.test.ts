@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { createInboundAuthorizer } from "./authorization.js";
+import { InMemorySessionStore } from "./session-store.js";
 import { BridgeCoordinator } from "./bridge.js";
-import { matrixHtmlContentBytes } from "./matrix-message-content.js";
+import { matrixHtmlContent, matrixHtmlContentBytes } from "./matrix-message-content.js";
 import { openBridgeStateStore } from "./bridge-state.js";
 import type { BridgeConfig } from "./config.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
@@ -44,6 +46,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       allowedRooms: [ROOM_ONE, ROOM_TWO],
       allowedSenders: [SENDER],
       encryption: "disabled",
+      responseMode: "room",
     },
     acp: { cwd: "/tmp" },
     limits: {
@@ -51,7 +54,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       maxOutputBytes: 10_000,
       maxMatrixMessageBytes: 10_000,
       maxActivityEventsPerMessage: 10,
-      maxQueuedTurnsPerRoom: 1,
+      maxQueuedTurnsPerConversation: 1,
       maxConcurrentPrompts: 2,
       maxTurnSeconds: 60,
       shutdownGraceSeconds: 1,
@@ -84,15 +87,26 @@ async function flush(): Promise<void> {
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
-  for (let index = 0; index < 100; index += 1) {
-    if (condition()) {
-      return;
-    }
+  // Filesystem-backed setup may need more than 100 timer ticks on a busy CI runner.
+  const deadline = performance.now() + 5000;
+  while (!condition() && performance.now() < deadline) {
     await flush();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
   }
   assert.equal(condition(), true, "condition did not become true");
 }
+
+void test("fixture waits allow asynchronous setup beyond a fixed 100 timer turns", async () => {
+  let ready = false;
+  const timer = setTimeout(() => {
+    ready = true;
+  }, 200);
+  try {
+    await waitFor(() => ready);
+  } finally {
+    clearTimeout(timer);
+  }
+});
 
 class FakeMatrix implements MatrixClientAdapter {
   readonly sent: RenderedMatrixPart[] = [];
@@ -312,7 +326,7 @@ void test("buffers startup events within active-plus-waiting capacity and recove
   const promptResults: Array<(outcome: AcpOutcome) => void> = [];
   acp.promptImpl = () => new Promise<AcpOutcome>((resolve) => promptResults.push(resolve));
   const bridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp,
     matrix,
     clock,
@@ -776,7 +790,7 @@ void test("receipts are exactly once for eligible dispositions and absent for po
       busyResolvers.push(resolve);
     });
   const busyBridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp: busyAcp,
     matrix: busyMatrix,
   });
@@ -937,7 +951,7 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
       queuedResolvers.push(resolve);
     });
   const queuedBridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp: queuedAcp,
     matrix: queuedMatrix,
   });
@@ -1053,7 +1067,7 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
       finishCatchup = resolve;
     });
   const catchupBridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp: catchupAcp,
     matrix: catchupMatrix,
   });
@@ -1187,7 +1201,7 @@ void test("reset stays in room order, is busy when the bounded queue is full, an
     };
   };
   const bridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 2 }),
+    config: config({ maxQueuedTurnsPerConversation: 2 }),
     acp,
     matrix,
   });
@@ -2490,5 +2504,978 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
     matrix.html.some((message) => message.body.includes("stale")),
     false,
   );
+  await bridge.stop();
+});
+
+void test("thread authorization gates session lookup, creation and loading for rejected events", async () => {
+  const bridgeConfig = config();
+  const acp = new FakeAcp();
+  const matrix = new FakeMatrix();
+  const sessionStore = new InMemorySessionStore();
+  sessionStore.set({ roomId: ROOM_ONE, sessionId: "known-session" });
+  let sessionLookups = 0;
+  const get = sessionStore.getConversationRecord.bind(sessionStore);
+  sessionStore.getConversationRecord = (identity) => {
+    sessionLookups += 1;
+    return get(identity);
+  };
+  const bridge = new BridgeCoordinator({
+    config: bridgeConfig,
+    acp,
+    matrix,
+    sessionStore,
+    loadSession: true,
+    authorizer: createInboundAuthorizer({
+      ...bridgeConfig,
+      matrix: { ...bridgeConfig.matrix, responseMode: "thread" },
+    }),
+  });
+  const content = {
+    msgtype: "m.text",
+    body: "follow-up",
+    "m.relates_to": { rel_type: "m.thread", event_id: "$known-root" },
+  };
+  const cases: Partial<InboundMatrixEvent>[] = [
+    { sender: "@mallory:example.org" },
+    { sender: bridgeConfig.matrix.userId },
+    { roomId: "!not-allowed:example.org" },
+    { isRedacted: true },
+    { type: "m.room.redaction" },
+    { content: { ...content, "m.relates_to": { rel_type: "m.thread", event_id: "invalid" } } },
+    { content: { ...content, "m.relates_to": { rel_type: "m.replace", event_id: "$old" } } },
+  ];
+  try {
+    for (const [index, overrides] of cases.entries()) {
+      await bridge.handleTimelineEvent({ ...event(`$rejected-${index}`), content, ...overrides });
+    }
+    await flush();
+    assert.equal(sessionLookups, 0);
+    assert.equal(acp.sessionCount, 0);
+    assert.deepEqual(acp.loadCalls, []);
+    assert.deepEqual(acp.promptCalls, []);
+    assert.deepEqual(matrix.sent, []);
+    assert.equal(get({ kind: "room", roomId: ROOM_ONE })?.sessionId, "known-session");
+  } finally {
+    await bridge.stop();
+  }
+});
+
+void test("validated thread routing survives eager text, activity retries and late archive edits", async () => {
+  const transactionIds: string[] = [];
+  for (const [roomId, root] of [
+    [ROOM_ONE, "$root-one"],
+    [ROOM_ONE, "$root-two"],
+    [ROOM_TWO, "$root-one"],
+  ]) {
+    assert.ok(roomId && root);
+    const clock = new FakeClock();
+    const acp = new FakeAcp();
+    const matrix = new FakeLiveMatrix();
+    let resolvePrompt!: (outcome: AcpOutcome) => void;
+    acp.promptImpl = () =>
+      new Promise((resolve) => {
+        resolvePrompt = resolve;
+      });
+    let first = true;
+    matrix.htmlSend = async (message) => {
+      if (first) {
+        first = false;
+        throw { failure: { kind: "transient", retryable: true, sdkRetryable: false, retryAfterMs: 0 } };
+      }
+      matrix.html.push(message);
+      return message.targetEventId ?? `$live-${matrix.html.length}`;
+    };
+    const settings = config({ maxMatrixMessageBytes: 1400 });
+    // Inject the foundation policy to exercise only the outbound boundary;
+    // actual thread admission/session scheduling is the next ticket's scope.
+    const bridge = new BridgeCoordinator({
+      config: settings,
+      acp,
+      matrix,
+      clock,
+      random: () => 0,
+      authorizer: createInboundAuthorizer({
+        ...settings,
+        matrix: { ...settings.matrix, responseMode: "thread" },
+      }),
+    });
+    const inbound = {
+      ...event("$shared-input", roomId),
+      content: { msgtype: "m.text", body: "hello", "m.relates_to": { rel_type: "m.thread", event_id: root } },
+    };
+    const completion = bridge.handleTimelineEvent(inbound);
+    await waitFor(() => acp.promptCalls.length === 1);
+    const sessionId = acp.promptCalls[0]!.sessionId;
+    acp.emit({ sessionId, kind: "tool_call", toolCallId: "late", title: "read", toolKind: "read", status: "pending" });
+    await waitFor(() => matrix.attempts.length > 0);
+    clock.advanceBy(0);
+    await waitFor(() => matrix.html.length > 0);
+    assert.deepEqual(matrix.attempts[0], matrix.attempts[1]);
+    transactionIds.push(matrix.attempts[0]!.transactionId);
+    acp.emit({ sessionId, kind: "agent_message_chunk", text: "<&😀".repeat(200) });
+    acp.emit({ sessionId, kind: "agent_thought_chunk", text: "next thought" });
+    await waitFor(() => matrix.html.some((message) => message.body.startsWith("<&😀")));
+    acp.emit({
+      sessionId,
+      kind: "tool_call_update",
+      toolCallId: "late",
+      status: "completed",
+      content: [{ type: "content", text: "late result" }],
+    });
+    await waitFor(() => matrix.html.some((message) => message.body.includes("late result")));
+    const archived = matrix.html.find((message) => message.body.includes("late result"));
+    assert.ok(archived?.targetEventId);
+    assert.match(archived.formattedBody, /Past agent events/);
+    resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+    await flush();
+    clock.advanceBy(300);
+    await completion;
+    const text = matrix.html.filter((message) => /^(?:[<&]|😀)+$/u.test(message.body));
+    assert.ok(text.length > 1);
+    assert.equal(text.map((message) => message.body).join(""), "<&😀".repeat(200));
+    for (const message of matrix.html) {
+      assert.equal(message.threadRootEventId, root);
+      assert.equal(message.threadInReplyToEventId, "$shared-input");
+      assert.ok(matrixHtmlContentBytes(message, message.targetEventId) <= 1400);
+      const content = matrixHtmlContent(message, message.targetEventId);
+      if (message.targetEventId === undefined) {
+        assert.equal((content["m.relates_to"] as Record<string, unknown>).event_id, root);
+      } else {
+        assert.deepEqual(content["m.relates_to"], { rel_type: "m.replace", event_id: message.targetEventId });
+        assert.equal(
+          ((content["m.new_content"] as Record<string, unknown>)["m.relates_to"] as Record<string, unknown>).event_id,
+          root,
+        );
+      }
+    }
+    assert.equal(matrix.sent.length, 0);
+    await bridge.stop();
+  }
+  assert.equal(new Set(transactionIds).size, 3);
+});
+
+function threadConfig(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
+  const settings = config({ maxQueuedTurnsPerConversation: 16, ...overrides });
+  return { ...settings, matrix: { ...settings.matrix, responseMode: "thread" } };
+}
+
+function threadEvent(eventId: string, root: string, body = "follow-up", roomId = ROOM_ONE): InboundMatrixEvent {
+  return {
+    ...event(eventId, roomId, body),
+    content: {
+      msgtype: "m.text",
+      body,
+      "m.relates_to": {
+        rel_type: "m.thread",
+        event_id: root,
+        is_falling_back: true,
+        "m.in_reply_to": { event_id: "$different-fallback" },
+      },
+    },
+  };
+}
+
+const methodError = (): AcpOutcome => ({ kind: "method_error", operation: "session_prompt", fatal: false });
+
+function heldPrompts(acp: FakeAcp): Map<string, (outcome: AcpOutcome) => void> {
+  const pending = new Map<string, (outcome: AcpOutcome) => void>();
+  acp.promptImpl = async (_sessionId, text) => new Promise((resolve) => pending.set(text, resolve));
+  return pending;
+}
+
+async function withThreadState(
+  run: (store: Awaited<ReturnType<typeof openBridgeStateStore>>, stateDir: string) => Promise<void>,
+): Promise<void> {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-thread-runtime-"));
+  try {
+    const store = await openBridgeStateStore({
+      stateDir,
+      identity: {
+        homeserver: config().matrix.homeserver,
+        userId: config().matrix.userId,
+        deviceId: config().matrix.deviceId,
+      },
+    });
+    await store.establishInitialBaseline([]);
+    await run(store, stateDir);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+}
+
+void test("thread mode gives top-level messages independent sessions and follows the root rather than fallback", async () => {
+  const acp = new FakeAcp();
+  acp.promptImpl = async () => methodError();
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix });
+  await bridge.handleTimelineEvent(event("$root-a", ROOM_ONE, "first"));
+  await bridge.handleTimelineEvent({
+    ...event("$root-b", ROOM_ONE, "ordinary reply"),
+    content: {
+      msgtype: "m.text",
+      body: "ordinary reply",
+      "m.relates_to": { "m.in_reply_to": { event_id: "$root-a" } },
+    },
+  });
+  await bridge.handleTimelineEvent(threadEvent("$follow-a", "$root-a"));
+  await bridge.handleTimelineEvent(event("$root-a-other-room", ROOM_TWO));
+  assert.deepEqual(
+    acp.promptCalls.map(({ sessionId }) => sessionId),
+    ["session-1", "session-2", "session-1", "session-3"],
+  );
+  assert.deepEqual(
+    matrix.sent.map(({ threadRootEventId }) => threadRootEventId),
+    ["$root-a", "$root-b", "$root-a", "$root-a-other-room"],
+  );
+  assert.equal(matrix.sent[2]?.threadInReplyToEventId, "$follow-a");
+  assert.equal(bridge.sessionForRoom(ROOM_ONE), undefined);
+  assert.equal(matrix.receipts.length, 4);
+  await bridge.stop();
+});
+
+void test("a quoted thread prompt ending in reset remains prompt text and preserves its session", async () => {
+  const acp = new FakeAcp();
+  acp.promptImpl = async () => methodError();
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix });
+  await bridge.handleTimelineEvent(event("$quote-root"));
+  const body = "> Discuss this command\n\n/reset";
+  await bridge.handleTimelineEvent(threadEvent("$quoted-reset", "$quote-root", body));
+  await bridge.handleTimelineEvent(threadEvent("$after-quote", "$quote-root"));
+  assert.equal(acp.promptCalls[1]?.text, body);
+  assert.deepEqual(
+    acp.promptCalls.map(({ sessionId }) => sessionId),
+    ["session-1", "session-1", "session-1"],
+  );
+  assert.equal(
+    matrix.sent.some(({ responseKind }) => responseKind === "reset"),
+    false,
+  );
+  await bridge.stop();
+});
+
+void test("unknown threads and rejected roots never create context; top-level reset is unthreaded guidance", async () => {
+  const acp = new FakeAcp();
+  const matrix = new FakeMatrix();
+  const sessionStore = new InMemorySessionStore();
+  const bridge = new BridgeCoordinator({ config: threadConfig({ maxInputBytes: 30 }), acp, matrix, sessionStore });
+  await bridge.handleTimelineEvent(threadEvent("$unknown", "$absent"));
+  await bridge.handleTimelineEvent(threadEvent("$unknown-reset", "$absent", "/reset"));
+  await bridge.handleTimelineEvent(event("$too-large", ROOM_ONE, "x".repeat(31)));
+  await bridge.handleTimelineEvent(threadEvent("$rejected-follow", "$too-large"));
+  await bridge.handleTimelineEvent(event("$guidance", ROOM_ONE, "/reset"));
+  await bridge.handleTimelineEvent(event("$guidance", ROOM_ONE, "/reset"));
+  await bridge.handleTimelineEvent(event("$unauthorized-reset", ROOM_ONE, "/reset", "@mallory:example.org"));
+  assert.deepEqual(
+    matrix.sent.map(({ responseKind }) => responseKind),
+    ["unknown_thread", "unknown_thread", "oversized", "unknown_thread", "thread_reset_guidance"],
+  );
+  assert.equal(matrix.sent[0]?.content.body, "Unknown thread agent session. Please start a new thread.");
+  assert.equal(matrix.sent[4]?.content.body, "Use /reset inside a thread to reset its agent session.");
+  assert.equal(matrix.sent[4]?.threadRootEventId, undefined);
+  assert.equal(acp.sessionCount, 0);
+  assert.equal(acp.loadCalls.length, 0);
+  assert.equal(acp.promptCalls.length, 0);
+  assert.deepEqual([...sessionStore.conversationEntries()], []);
+  assert.equal(matrix.receipts.length, 5);
+  await bridge.stop();
+});
+
+for (const mode of ["room", "thread"] as const) {
+  void test(`${mode} mode applies the conversation limit only to waiting turns`, async () => {
+    const acp = new FakeAcp();
+    const pending = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    const settings = config({ maxQueuedTurnsPerConversation: 2 });
+    const bridge = new BridgeCoordinator({
+      config: { ...settings, matrix: { ...settings.matrix, responseMode: mode } },
+      acp,
+      matrix,
+    });
+    const first = bridge.handleTimelineEvent(event("$limit-root", ROOM_ONE, "active"));
+    await waitFor(() => acp.promptCalls.length === 1);
+    const followUp = (eventId: string, body: string) =>
+      mode === "thread" ? threadEvent(eventId, "$limit-root", body) : event(eventId, ROOM_ONE, body);
+    const second = bridge.handleTimelineEvent(followUp("$limit-second", "second"));
+    const third = bridge.handleTimelineEvent(followUp("$limit-third", "third"));
+    await bridge.handleTimelineEvent(followUp("$limit-rejected", "rejected"));
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 2);
+    assert.equal(matrix.sent.at(-1)?.responseKind, "busy");
+    assert.equal(matrix.sent.at(-1)?.threadRootEventId, mode === "thread" ? "$limit-root" : undefined);
+
+    const other = bridge.handleTimelineEvent(event("$limit-other", mode === "thread" ? ROOM_ONE : ROOM_TWO, "other"));
+    await waitFor(() => acp.promptCalls.length === 2);
+    pending.get("other")?.(methodError());
+    await other;
+    pending.get("active")?.(methodError());
+    await first;
+    await waitFor(() => acp.promptCalls.length === 3);
+    pending.get("second")?.(methodError());
+    await second;
+    await waitFor(() => acp.promptCalls.length === 4);
+    pending.get("third")?.(methodError());
+    await third;
+    assert.deepEqual(
+      acp.promptCalls.map(({ text }) => text),
+      ["active", "other", "second", "third"],
+    );
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 0);
+    await bridge.stop();
+  });
+}
+
+void test("each thread bounds only its waiting queue and selected permit waiters do not count", async () => {
+  const acp = new FakeAcp();
+  const pending = heldPrompts(acp);
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({
+    config: threadConfig({ maxConcurrentPrompts: 1, maxQueuedTurnsPerConversation: 1 }),
+    acp,
+    matrix,
+  });
+  const first = bridge.handleTimelineEvent(event("$queue-root-a", ROOM_ONE, "a1"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const a2 = bridge.handleTimelineEvent(threadEvent("$a2", "$queue-root-a", "a2"));
+  await bridge.handleTimelineEvent(threadEvent("$a3", "$queue-root-a", "/reset"));
+  assert.equal(matrix.sent.at(-1)?.responseKind, "busy");
+  assert.equal(matrix.sent.at(-1)?.threadRootEventId, "$queue-root-a");
+  const other = bridge.handleTimelineEvent(event("$queue-root-b", ROOM_ONE, "b1"));
+  await waitFor(() => acp.sessionCount === 2);
+  const b2 = bridge.handleTimelineEvent(threadEvent("$b2", "$queue-root-b", "b2"));
+  assert.equal(bridge.getQueueDepth(ROOM_ONE), 2);
+  assert.equal(bridge.snapshot.activeRooms, 1);
+  assert.equal(bridge.unresolvedPromptCount, 1);
+  pending.get("a1")?.(methodError());
+  await first;
+  await waitFor(() => acp.promptCalls.length === 2);
+  assert.equal(acp.promptCalls[1]?.text, "b1");
+  pending.get("b1")?.(methodError());
+  await other;
+  await waitFor(() => acp.promptCalls.length === 3);
+  pending.get("a2")?.(methodError());
+  await a2;
+  await waitFor(() => acp.promptCalls.length === 4);
+  pending.get("b2")?.(methodError());
+  await b2;
+  assert.deepEqual(
+    acp.promptCalls.map(({ sessionId }) => sessionId),
+    ["session-1", "session-2", "session-1", "session-2"],
+  );
+  await bridge.stop();
+});
+
+void test("session setup runs concurrently outside prompt permits and pending roots route follow-ups", async () => {
+  const acp = new FakeAcp();
+  const setups: Array<(session: AcpSession) => void> = [];
+  acp.createSession = async () => {
+    acp.sessionCount += 1;
+    return new Promise((resolve) => setups.push(resolve));
+  };
+  const pending = heldPrompts(acp);
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig({ maxConcurrentPrompts: 1 }), acp, matrix });
+  const first = bridge.handleTimelineEvent(event("$pending-a", ROOM_ONE, "a1"));
+  const second = bridge.handleTimelineEvent(event("$pending-b", ROOM_ONE, "b1"));
+  await waitFor(() => setups.length === 2);
+  const follow = bridge.handleTimelineEvent(threadEvent("$pending-follow", "$pending-a", "a2"));
+  assert.equal(bridge.snapshot.queuedTurns, 1);
+  assert.equal(bridge.unresolvedPromptCount, 0);
+  assert.equal(matrix.sent.length, 0);
+  setups[1]?.({ sessionId: "b" });
+  await waitFor(() => acp.promptCalls.length === 1);
+  const third = bridge.handleTimelineEvent(event("$pending-c", ROOM_ONE, "c1"));
+  await waitFor(() => setups.length === 3);
+  setups[0]?.({ sessionId: "a" });
+  setups[2]?.({ sessionId: "c" });
+  await flush();
+  assert.equal(acp.promptCalls.length, 1);
+  pending.get("b1")?.(methodError());
+  await second;
+  await waitFor(() => acp.promptCalls.length === 2);
+  pending.get("a1")?.(methodError());
+  await first;
+  await waitFor(() => acp.promptCalls.length === 3);
+  pending.get("c1")?.(methodError());
+  await third;
+  await waitFor(() => acp.promptCalls.length === 4);
+  pending.get("a2")?.(methodError());
+  await follow;
+  assert.equal(acp.promptCalls[3]?.sessionId, "a");
+  assert.equal(acp.sessionCount, 3);
+  await bridge.stop();
+});
+
+void test("ordered thread reset and queue rejection leave other active threads and typing untouched", async () => {
+  const acp = new FakeAcp();
+  const pending = heldPrompts(acp);
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix });
+  const a = bridge.handleTimelineEvent(event("$reset-a", ROOM_ONE, "a"));
+  const b = bridge.handleTimelineEvent(event("$reset-b", ROOM_ONE, "b"));
+  await waitFor(() => acp.promptCalls.length === 2);
+  const reset = bridge.handleTimelineEvent(threadEvent("$reset-control", "$reset-a", "/reset"));
+  const follow = bridge.handleTimelineEvent(threadEvent("$after-reset", "$reset-a", "fresh"));
+  await bridge.handleTimelineEvent(threadEvent("$known-oversized", "$reset-b", "x".repeat(1001)));
+  assert.equal(
+    bridge.sessionForConversation({ kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$reset-b" }),
+    "session-2",
+  );
+  assert.equal(
+    matrix.sent.some(({ responseKind }) => responseKind === "reset"),
+    false,
+  );
+  pending.get("a")?.(methodError());
+  await a;
+  await reset;
+  await waitFor(() => acp.promptCalls.length === 3);
+  assert.equal(acp.promptCalls[2]?.sessionId, "session-3");
+  assert.equal(matrix.sent.find(({ responseKind }) => responseKind === "reset")?.threadRootEventId, "$reset-a");
+  assert.equal(
+    matrix.typing.some(({ isTyping }) => !isTyping),
+    false,
+  );
+  assert.deepEqual(acp.cancelCalls, []);
+  pending.get("fresh")?.(methodError());
+  await follow;
+  assert.equal(
+    matrix.typing.some(({ isTyping }) => !isTyping),
+    false,
+  );
+  pending.get("b")?.(methodError());
+  await b;
+  assert.equal(matrix.typing.filter(({ isTyping }) => !isTyping).length, 1);
+  await bridge.stop();
+});
+
+void test("admitted setup is durable before prompt and reset remains known after restart without eager loading", async () => {
+  await withThreadState(async (store, stateDir) => {
+    const root = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$durable-root" } as const;
+    const other = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$durable-other" } as const;
+    await store.setConversationRecord({ ...other, sessionId: "retained-other" });
+    await store.setSessionMapping(ROOM_ONE, "retained-room");
+    const acp = new FakeAcp();
+    let finishSetup!: (session: AcpSession) => void;
+    acp.createSession = async () =>
+      new Promise((resolve) => {
+        finishSetup = resolve;
+      });
+    acp.promptImpl = async (sessionId) => {
+      assert.equal(store.getConversationRecord(root)?.sessionId, sessionId);
+      return methodError();
+    };
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, stateStore: store, loadSession: true });
+    const initial = bridge.handleTimelineEvent(event(root.threadRootEventId));
+    await waitFor(() => finishSetup !== undefined);
+    assert.deepEqual(store.getConversationRecord(root), root);
+    const follow = bridge.handleTimelineEvent(threadEvent("$during-setup", root.threadRootEventId));
+    finishSetup({ sessionId: "durable-session" });
+    await Promise.all([initial, follow]);
+    assert.deepEqual(acp.loadCalls, []);
+    await bridge.handleTimelineEvent(threadEvent("$durable-reset", root.threadRootEventId, "/reset"));
+    assert.deepEqual(store.getConversationRecord(root), root);
+    assert.equal(store.getConversationRecord(other)?.sessionId, "retained-other");
+    assert.equal(store.getSessionMapping(ROOM_ONE), "retained-room");
+    await bridge.stop();
+
+    const restoredStore = await openBridgeStateStore({
+      stateDir,
+      identity: {
+        homeserver: config().matrix.homeserver,
+        userId: config().matrix.userId,
+        deviceId: config().matrix.deviceId,
+      },
+    });
+    const restoredAcp = new FakeAcp();
+    restoredAcp.promptImpl = async () => methodError();
+    const restored = new BridgeCoordinator({
+      config: threadConfig(),
+      acp: restoredAcp,
+      matrix: new FakeMatrix(),
+      stateStore: restoredStore,
+      loadSession: true,
+    });
+    assert.equal(restoredAcp.loadCalls.length, 0);
+    await restored.handleTimelineEvent(threadEvent("$restart-follow", root.threadRootEventId));
+    assert.equal(restoredAcp.sessionCount, 1);
+    assert.deepEqual(restoredAcp.loadCalls, []);
+    assert.equal(restoredStore.getConversationRecord(root)?.sessionId, "session-1");
+    await restored.handleTimelineEvent(threadEvent("$restart-other", other.threadRootEventId));
+    assert.deepEqual(restoredAcp.loadCalls, ["retained-other"]);
+    assert.equal(restoredAcp.promptCalls[1]?.sessionId, "retained-other");
+    await restored.stop();
+  });
+});
+
+void test("healthy stale-thread recovery suppresses history and keeps every other session intact", async () => {
+  await withThreadState(async (store) => {
+    const a = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$stale-a" } as const;
+    const b = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$stale-b" } as const;
+    await store.setConversationRecord({ ...a, sessionId: "stale" });
+    await store.setConversationRecord({ ...b, sessionId: "healthy" });
+    const acp = new FakeAcp();
+    acp.loadSessionImpl = async ({ sessionId }) => {
+      acp.emit({ kind: "agent_message_chunk", sessionId, text: "private old history", messageId: "history" });
+      if (sessionId === "stale") throw { kind: "method_error", operation: "session_load", fatal: false };
+      return { sessionId };
+    };
+    acp.promptImpl = async () => methodError();
+    const matrix = new FakeLiveMatrix();
+    const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, stateStore: store, loadSession: true });
+    await bridge.handleTimelineEvent(threadEvent("$stale-follow", a.threadRootEventId));
+    assert.equal(store.getConversationRecord(a)?.sessionId, "session-1");
+    assert.equal(store.getConversationRecord(b)?.sessionId, "healthy");
+    await bridge.handleTimelineEvent(threadEvent("$healthy-follow", b.threadRootEventId));
+    assert.deepEqual(acp.loadCalls, ["stale", "healthy"]);
+    assert.equal(acp.promptCalls[1]?.sessionId, "healthy");
+    assert.equal(JSON.stringify([...matrix.sent, ...matrix.html]).includes("private old history"), false);
+    assert.equal(bridge.fatalError, undefined);
+    await bridge.stop();
+  });
+});
+
+void test("without load support prior threads become unknown but live reset identities remain usable", async () => {
+  await withThreadState(async (store) => {
+    const old = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$no-load-old" } as const;
+    await store.setConversationRecord({ ...old, sessionId: "unusable" });
+    const acp = new FakeAcp();
+    acp.promptImpl = async () => methodError();
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, stateStore: store });
+    await bridge.handleTimelineEvent(threadEvent("$no-load-follow", old.threadRootEventId));
+    assert.equal(matrix.sent.at(-1)?.responseKind, "unknown_thread");
+    await bridge.handleTimelineEvent(event("$no-load-new"));
+    await bridge.handleTimelineEvent(threadEvent("$no-load-reset", "$no-load-new", "/reset"));
+    await bridge.handleTimelineEvent(threadEvent("$no-load-fresh", "$no-load-new"));
+    assert.deepEqual(
+      acp.promptCalls.map(({ sessionId }) => sessionId),
+      ["session-1", "session-2"],
+    );
+    assert.deepEqual(store.getConversationRecords(), []);
+    assert.deepEqual(acp.loadCalls, []);
+    await bridge.stop();
+  });
+});
+
+void test("healthy creation errors preserve admitted thread identity and allow retry without stopping another thread", async () => {
+  await withThreadState(async (store) => {
+    const acp = new FakeAcp();
+    const create = acp.createSession.bind(acp);
+    let rejectCreation = true;
+    acp.createSession = async (options) => {
+      if (rejectCreation) {
+        rejectCreation = false;
+        throw { kind: "method_error", operation: "session_new", fatal: false };
+      }
+      return create(options);
+    };
+    acp.promptImpl = async () => methodError();
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, stateStore: store, loadSession: true });
+    await bridge.handleTimelineEvent(event("$failed-root"));
+    assert.deepEqual(
+      store.getConversationRecord({ kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$failed-root" }),
+      { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$failed-root" },
+    );
+    assert.equal(matrix.sent.at(-1)?.responseKind, "error");
+    assert.equal(matrix.sent.at(-1)?.threadRootEventId, "$failed-root");
+    assert.equal(bridge.fatalError, undefined);
+    await bridge.handleTimelineEvent(event("$healthy-new-root"));
+    await bridge.handleTimelineEvent(threadEvent("$retry-failed-root", "$failed-root"));
+    assert.deepEqual(
+      acp.promptCalls.map(({ sessionId }) => sessionId),
+      ["session-1", "session-2"],
+    );
+    await bridge.stop();
+  });
+});
+
+void test("thread session persistence failures cannot prompt or acknowledge reset", async () => {
+  for (const operation of ["mapping", "reset"] as const) {
+    const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-thread-fault-"));
+    try {
+      let failWrites = false;
+      const store = await openBridgeStateStore({
+        stateDir,
+        identity: {
+          homeserver: config().matrix.homeserver,
+          userId: config().matrix.userId,
+          deviceId: config().matrix.deviceId,
+        },
+        faultInjector: async (point) => {
+          if (failWrites && point === "rename") throw new Error("private failure");
+        },
+      });
+      await store.establishInitialBaseline([]);
+      const identity = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$fault-root" } as const;
+      await store.setConversationRecord({ ...identity, ...(operation === "reset" ? { sessionId: "saved" } : {}) });
+      const acp = new FakeAcp();
+      const matrix = new FakeMatrix();
+      const bridge = new BridgeCoordinator({
+        config: threadConfig(),
+        acp,
+        matrix,
+        stateStore: store,
+        loadSession: true,
+      });
+      failWrites = true;
+      await bridge.handleTimelineEvent(
+        threadEvent("$fault-event", identity.threadRootEventId, operation === "reset" ? "/reset" : "prompt"),
+      );
+      assert.equal(bridge.fatalError?.code, "state");
+      assert.equal(acp.promptCalls.length, 0);
+      assert.equal(matrix.sent.length, 0);
+      assert.equal(store.getConversationRecord(identity)?.sessionId, operation === "reset" ? "saved" : undefined);
+      await bridge.stop();
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  }
+});
+
+void test("shutdown cancels active threads, drops their queues and never prompts late setup", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const pending = heldPrompts(acp);
+  const create = acp.createSession.bind(acp);
+  let finishSetup!: (session: AcpSession) => void;
+  acp.createSession = async (options) => {
+    if (acp.sessionCount < 2) return create(options);
+    return new Promise((resolve) => {
+      finishSetup = resolve;
+    });
+  };
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, clock });
+  const a = bridge.handleTimelineEvent(event("$stop-a", ROOM_ONE, "a"));
+  const b = bridge.handleTimelineEvent(event("$stop-b", ROOM_ONE, "b"));
+  await waitFor(() => acp.promptCalls.length === 2);
+  const queued = bridge.handleTimelineEvent(threadEvent("$stop-follow", "$stop-a"));
+  const setup = bridge.handleTimelineEvent(event("$stop-setup", ROOM_ONE, "c"));
+  await waitFor(() => finishSetup !== undefined);
+  const stopped = bridge.stop();
+  assert.deepEqual(acp.cancelCalls.sort(), ["session-1", "session-2"]);
+  pending.get("a")?.(methodError());
+  pending.get("b")?.(methodError());
+  finishSetup({ sessionId: "late" });
+  await Promise.all([a, b, queued, setup, stopped]);
+  assert.equal(acp.promptCalls.length, 2);
+  assert.equal(matrix.typing.filter(({ isTyping }) => !isTyping).length, 1);
+  assert.equal(matrix.stopped, true);
+  assert.equal(acp.closed, true);
+  assert.equal(bridge.snapshot.queuedTurns, 0);
+});
+
+void test("thread prompt permits release before output drain while typing waits for the last active thread", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const pending = heldPrompts(acp);
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig({ maxConcurrentPrompts: 1 }), acp, matrix, clock });
+  const a = bridge.handleTimelineEvent(event("$drain-root-a", ROOM_ONE, "a"));
+  const b = bridge.handleTimelineEvent(event("$drain-root-b", ROOM_ONE, "b"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  pending.get("a")?.({ kind: "turn", stopReason: "end_turn", text: "answer a" });
+  await waitFor(() => acp.promptCalls.length === 2);
+  assert.equal(bridge.unresolvedPromptCount, 1);
+  assert.equal(matrix.sent.length, 0);
+  clock.advanceBy(300);
+  await a;
+  assert.equal(matrix.sent[0]?.threadRootEventId, "$drain-root-a");
+  assert.equal(
+    matrix.typing.some(({ isTyping }) => !isTyping),
+    false,
+  );
+  clock.advanceBy(10_000);
+  assert.equal(matrix.typing.at(-1)?.isTyping, true);
+  pending.get("b")?.({ kind: "turn", stopReason: "end_turn", text: "answer b" });
+  await flush();
+  clock.advanceBy(300);
+  await b;
+  assert.equal(matrix.sent[1]?.threadRootEventId, "$drain-root-b");
+  assert.equal(matrix.typing.at(-1)?.isTyping, false);
+  await bridge.stop();
+});
+
+void test("simultaneous thread output isolates text splits, tools, thoughts and late archived edits", async () => {
+  const acp = new FakeAcp();
+  const pending = heldPrompts(acp);
+  const matrix = new FakeLiveMatrix();
+  const outputOwners = new Map<string, string | undefined>();
+  matrix.htmlSend = async (message) => {
+    matrix.html.push(message);
+    const id = message.targetEventId ?? `$output-${matrix.html.length}`;
+    if (message.targetEventId === undefined) outputOwners.set(id, message.threadRootEventId);
+    return id;
+  };
+  const bridge = new BridgeCoordinator({
+    config: threadConfig({ maxMatrixMessageBytes: 1600, maxActivityEventsPerMessage: 1 }),
+    acp,
+    matrix,
+  });
+  const a = bridge.handleTimelineEvent(event("$live-root-a", ROOM_ONE, "a"));
+  const b = bridge.handleTimelineEvent(event("$live-root-b", ROOM_ONE, "b"));
+  await waitFor(() => acp.promptCalls.length === 2);
+  for (const [index, call] of acp.promptCalls.entries()) {
+    acp.emit({
+      kind: "tool_call",
+      sessionId: call.sessionId,
+      toolCallId: "shared-tool-id",
+      title: `tool ${index}`,
+      status: "pending",
+    });
+  }
+  await waitFor(() => matrix.html.length >= 2);
+
+  for (const [index, call] of acp.promptCalls.entries()) {
+    acp.emit({
+      kind: "agent_thought_chunk",
+      sessionId: call.sessionId,
+      messageId: "shared-thought-id",
+      text: `thought ${index}`,
+    });
+    acp.emit({
+      kind: "agent_message_chunk",
+      sessionId: call.sessionId,
+      messageId: "shared-text-id",
+      text: `answer ${index} `.repeat(500),
+    });
+    acp.emit({
+      kind: "agent_thought_chunk",
+      sessionId: call.sessionId,
+      messageId: "closing-thought",
+      text: `closing ${index}`,
+    });
+    acp.emit({
+      kind: "tool_call_update",
+      sessionId: call.sessionId,
+      toolCallId: "shared-tool-id",
+      status: "completed",
+      content: [{ type: "content", text: `late result ${index}` }],
+    });
+  }
+  await waitFor(() => matrix.html.filter(({ body }) => body.includes("answer")).length >= 2);
+  pending.get("a")?.(methodError());
+  pending.get("b")?.(methodError());
+  await Promise.all([a, b]);
+  for (const [index, root] of ["$live-root-a", "$live-root-b"].entries()) {
+    const messages = matrix.html.filter(({ threadRootEventId }) => threadRootEventId === root);
+    assert.ok(messages.some(({ body }) => body.includes(`thought ${index}`)));
+    assert.ok(messages.some(({ body }) => body.includes(`late result ${index}`)));
+    assert.ok(messages.filter(({ body }) => body.includes(`answer ${index}`)).length > 1);
+    assert.equal(
+      messages.some(({ body }) => body.includes(`answer ${1 - index}`) || body.includes(`late result ${1 - index}`)),
+      false,
+    );
+    for (const message of messages) {
+      assert.equal(message.threadInReplyToEventId, root);
+      assert.ok(matrixHtmlContentBytes(message, message.targetEventId) <= 1600);
+      if (message.targetEventId !== undefined) {
+        assert.equal(outputOwners.get(message.targetEventId), root);
+      }
+    }
+  }
+  assert.equal(new Set(matrix.html.map(({ transactionId }) => transactionId)).size, matrix.html.length);
+  assert.ok(
+    matrix.sent.every(
+      ({ threadRootEventId }) => threadRootEventId === "$live-root-a" || threadRootEventId === "$live-root-b",
+    ),
+  );
+  await bridge.stop();
+});
+
+void test("a shared ACP setup transport failure is fatal across active threads and carries its root", async () => {
+  const acp = new FakeAcp();
+  const pending = heldPrompts(acp);
+  const create = acp.createSession.bind(acp);
+  acp.createSession = async (options) => {
+    if (acp.sessionCount === 0) return create(options);
+    throw { kind: "transport_error", operation: "session_new", fatal: true };
+  };
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix });
+  const active = bridge.handleTimelineEvent(event("$fatal-active", ROOM_ONE, "active"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  await bridge.handleTimelineEvent(event("$fatal-setup"));
+  assert.equal(bridge.fatalError?.code, "acp_transport");
+  assert.equal(matrix.sent.at(-1)?.threadRootEventId, "$fatal-setup");
+  assert.deepEqual(acp.cancelCalls, ["session-1"]);
+  pending.get("active")?.(methodError());
+  await active;
+  await bridge.stop();
+});
+
+void test("pending durable reset keeps follow-ups queued as known until state changes before acknowledgement", async () => {
+  await withThreadState(async (store) => {
+    const identity = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$pending-reset-root" } as const;
+    await store.setConversationRecord({ ...identity, sessionId: "old" });
+    const originalReset = store.resetConversation.bind(store);
+    let finishReset!: () => void;
+    store.resetConversation = async (conversation) => {
+      await new Promise<void>((resolve) => {
+        finishReset = resolve;
+      });
+      return originalReset(conversation);
+    };
+    const acp = new FakeAcp();
+    acp.promptImpl = async () => methodError();
+    const matrix = new FakeMatrix();
+    matrix.send = async (part) => {
+      if (part.responseKind === "reset") assert.deepEqual(store.getConversationRecord(identity), identity);
+      matrix.sent.push(part);
+    };
+    const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, stateStore: store, loadSession: true });
+    const reset = bridge.handleTimelineEvent(threadEvent("$pending-reset", identity.threadRootEventId, "/reset"));
+    await waitFor(() => finishReset !== undefined);
+    const follow = bridge.handleTimelineEvent(threadEvent("$pending-reset-follow", identity.threadRootEventId));
+    assert.equal(bridge.snapshot.queuedTurns, 1);
+    assert.equal(matrix.sent.length, 0);
+    assert.equal(acp.sessionCount, 0);
+    finishReset();
+    await Promise.all([reset, follow]);
+    assert.deepEqual(
+      matrix.sent.map(({ responseKind }) => responseKind),
+      ["reset", "error"],
+    );
+    assert.equal(acp.promptCalls[0]?.sessionId, "session-1");
+    assert.deepEqual(acp.loadCalls, []);
+    await bridge.stop();
+  });
+});
+
+void test("lazy thread loads may overlap an active prompt without consuming additional permits", async () => {
+  await withThreadState(async (store) => {
+    for (const root of ["$load-a", "$load-b"]) {
+      await store.setConversationRecord({ kind: "thread", roomId: ROOM_ONE, threadRootEventId: root, sessionId: root });
+    }
+    const acp = new FakeAcp();
+    const loads = new Map<string, () => void>();
+    acp.loadSessionImpl = async ({ sessionId }) =>
+      new Promise((resolve) => loads.set(sessionId, () => resolve({ sessionId })));
+    const pending = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({
+      config: threadConfig({ maxConcurrentPrompts: 1 }),
+      acp,
+      matrix,
+      stateStore: store,
+      loadSession: true,
+    });
+    const a = bridge.handleTimelineEvent(threadEvent("$load-follow-a", "$load-a", "a"));
+    const b = bridge.handleTimelineEvent(threadEvent("$load-follow-b", "$load-b", "b"));
+    await waitFor(() => acp.loadCalls.length === 2);
+    assert.equal(bridge.unresolvedPromptCount, 0);
+    assert.equal(matrix.typing.length, 0);
+    loads.get("$load-a")?.();
+    await waitFor(() => acp.promptCalls.length === 1);
+    loads.get("$load-b")?.();
+    await flush();
+    assert.equal(bridge.unresolvedPromptCount, 1);
+    assert.equal(acp.promptCalls.length, 1);
+    assert.equal(acp.sessionCount, 0);
+    pending.get("a")?.(methodError());
+    await a;
+    await waitFor(() => acp.promptCalls.length === 2);
+    pending.get("b")?.(methodError());
+    await b;
+    assert.deepEqual(
+      acp.promptCalls.map(({ sessionId }) => sessionId),
+      ["$load-a", "$load-b"],
+    );
+    await bridge.stop();
+  });
+});
+
+void test("mode switches resume only their retained records and removed rooms prune both kinds", async () => {
+  await withThreadState(async (store) => {
+    const thread = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$mode-thread" } as const;
+    await store.setConversationRecord({ ...thread, sessionId: "thread-session" });
+    await store.setSessionMapping(ROOM_ONE, "room-session");
+    await store.setSessionMapping(ROOM_TWO, "removed-room");
+    await store.setConversationRecord({
+      kind: "thread",
+      roomId: ROOM_TWO,
+      threadRootEventId: "$removed-thread",
+      sessionId: "removed-thread",
+    });
+    for (const mode of ["thread", "room", "thread"] as const) {
+      const settings = config();
+      const acp = new FakeAcp();
+      acp.promptImpl = async () => methodError();
+      const bridge = new BridgeCoordinator({
+        config: { ...settings, matrix: { ...settings.matrix, responseMode: mode, allowedRooms: [ROOM_ONE] } },
+        acp,
+        matrix: new FakeMatrix(),
+        stateStore: store,
+        loadSession: true,
+      });
+      await bridge.handleTimelineEvent(
+        mode === "thread"
+          ? threadEvent(`$mode-${mode}-${store.getConversationRecords().length}`, thread.threadRootEventId)
+          : event("$mode-room"),
+      );
+      assert.deepEqual(acp.loadCalls, [mode === "thread" ? "thread-session" : "room-session"]);
+      assert.equal(store.getConversationRecord(thread)?.sessionId, "thread-session");
+      assert.equal(store.getSessionMapping(ROOM_ONE), "room-session");
+      assert.equal(
+        store.getConversationRecords().some(({ roomId }) => roomId === ROOM_TWO),
+        false,
+      );
+      await bridge.stop();
+    }
+  });
+});
+
+void test("thread timeout cancels only its prompt, retains retry routing and leaves another thread typing", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const pending = heldPrompts(acp);
+  const matrix = new FakeMatrix();
+  const timeoutAttempts: RenderedMatrixPart[] = [];
+  matrix.send = async (part) => {
+    if (part.responseKind === "timeout") {
+      timeoutAttempts.push(part);
+      if (timeoutAttempts.length === 1) {
+        throw { failure: { kind: "transient", retryable: true, sdkRetryable: false, retryAfterMs: 100 } };
+      }
+    }
+    matrix.sent.push(part);
+  };
+  const bridge = new BridgeCoordinator({ config: threadConfig({ maxTurnSeconds: 1 }), acp, matrix, clock });
+  const a = bridge.handleTimelineEvent(event("$timeout-root-a", ROOM_ONE, "a"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  clock.advanceBy(500);
+  const b = bridge.handleTimelineEvent(event("$timeout-root-b", ROOM_ONE, "b"));
+  await waitFor(() => acp.promptCalls.length === 2);
+  clock.advanceBy(500);
+  assert.deepEqual(acp.cancelCalls, ["session-1"]);
+  assert.equal(
+    matrix.typing.some(({ isTyping }) => !isTyping),
+    false,
+  );
+  pending.get("a")?.({ kind: "turn", stopReason: "cancelled", text: "partial a" });
+  await waitFor(() => timeoutAttempts.length === 1);
+  await flush();
+  clock.advanceBy(100);
+  await a;
+  assert.equal(timeoutAttempts.length, 2);
+  assert.equal(timeoutAttempts[0]?.transactionId, timeoutAttempts[1]?.transactionId);
+  assert.ok(
+    timeoutAttempts.every(
+      ({ threadRootEventId, threadInReplyToEventId }) =>
+        threadRootEventId === "$timeout-root-a" && threadInReplyToEventId === "$timeout-root-a",
+    ),
+  );
+  assert.equal(matrix.sent[0]?.content.body, "partial a\n\n[agent timed out]");
+  assert.equal(
+    matrix.typing.some(({ isTyping }) => !isTyping),
+    false,
+  );
+  pending.get("b")?.(methodError());
+  await b;
+  assert.deepEqual(acp.cancelCalls, ["session-1"]);
+  assert.equal(matrix.typing.at(-1)?.isTyping, false);
+  assert.equal(acp.promptCalls.length, 2);
+  assert.equal(matrix.receipts.length, 2);
   await bridge.stop();
 });
