@@ -163,6 +163,7 @@ export interface DaemonFactories {
     readonly clock: Clock;
     readonly stateStore: BridgeStateStore;
     readonly loadSession: boolean;
+    readonly steering: boolean;
   }) => DaemonBridge;
 }
 
@@ -240,6 +241,7 @@ function defaultBridgeFactory(context: {
   readonly clock: Clock;
   readonly stateStore: BridgeStateStore;
   readonly loadSession: boolean;
+  readonly steering: boolean;
 }): DaemonBridge {
   return new BridgeCoordinator({
     config: context.config,
@@ -249,6 +251,7 @@ function defaultBridgeFactory(context: {
     clock: context.clock,
     stateStore: context.stateStore,
     loadSession: context.loadSession,
+    steering: context.steering,
     intakeOpen: false,
     dispatchOpen: false,
   });
@@ -547,6 +550,7 @@ export class DaemonLifecycle {
       readonly clock: Clock;
       readonly stateStore: BridgeStateStore;
       readonly loadSession: boolean;
+      readonly steering: boolean;
     }) => DaemonBridge,
   ): Promise<void> {
     this.#checkShutdownRequest();
@@ -613,6 +617,7 @@ export class DaemonLifecycle {
       clock: this.#clock,
       stateStore: this.#stateStore,
       loadSession,
+      steering: initializeResult.agentCapabilities?.steering === true,
     });
     const bridge = this.#bridge;
     bridge.beginStartup();
