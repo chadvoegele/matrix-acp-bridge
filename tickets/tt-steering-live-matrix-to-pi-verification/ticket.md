@@ -1,7 +1,7 @@
 +++
 name = "Steering live Matrix-to-Pi verification"
 creation_date = 2026-10-01T22:35:51Z
-status = "in-progress"
+status = "completed"
 depends_on = ["tt-steering-integrated-verification-and-operator-docs"]
 +++
 
