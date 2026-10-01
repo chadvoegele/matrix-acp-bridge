@@ -1,7 +1,7 @@
 +++
 name = "Reject redundant kind in unmerged thread state schema"
 creation_date = 2026-10-01T13:48:09Z
-status = "pending"
+status = "in-progress"
 +++
 
 # Remove compatibility for unmerged tagged thread records
