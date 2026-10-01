@@ -1,7 +1,7 @@
 +++
 name = "Remove project doc references from source"
 creation_date = 2026-10-01T18:01:40Z
-status = "pending"
+status = "in-progress"
 +++
 
 # Remove project documentation references from source
