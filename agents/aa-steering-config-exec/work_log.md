@@ -46,5 +46,41 @@ queue admission, notices, and lifecycle behavior belong to coordinator work.
 
 ## Validation and handoff
 
-Checks in progress. Code commits and actual outcomes will be recorded before exit.
-Ticket completion and integration are reserved for the integration coordinator.
+- Scoped ESLint auto-fix and Prettier formatting passed with no changes needed.
+- Initial `npm run check` passed formatting but stopped at ESLint's existing
+  maximum of 32 files using the default TypeScript project. The new selector test
+  makes 33; increased only that file-count allowance from 32 to 33 in
+  `eslint.config.js`, as required for the added tests. No lint rules changed.
+- `waap check` passed; WAAP state resolved to the prescribed central directory.
+
+- Final `npm run check` passed: Prettier check, repository-wide ESLint,
+  TypeScript typecheck, build, test compilation, and all 407 tests. Zero failed,
+  cancelled, skipped, or todo tests. This includes the four new selector test
+  groups, four new delivery-configuration test groups, and existing bridge,
+  sync, thread/encryption, persistence, and integration regressions.
+  Full local output: `/tmp/matrix-acp-aa-steering-config-exec-check.log`.
+- `git diff --check` passed. Reviewed the changed files: the eight unrelated
+  test suites have only their required fixture field added. `src/bridge.ts` and
+  `src/acp-client.ts` remain unchanged; SDK dependency remains pinned at 1.3.0.
+- Rechecked the public [pi-acp PR #115](https://github.com/svkozak/pi-acp/pull/115)
+  page (still open) and downloaded its current patch for source inspection.
+  Confirmed `_meta.steering.supported = true`, extension method
+  `_session/steering`, params `sessionId` and `prompt`, idle opt-in
+  `_meta.steering.idleBehavior = "promptRequired"`, idle response
+  `promptRequired` / `noRunningTurn`, and `injected` only after awaiting native
+  `session.proc.steer(message, images)`. Native steer itself awaits the Pi RPC.
+  Without idle opt-in the patch can return `startedNewTurn`. This is a source
+  contract review only: no live pi-acp manual validation was performed for this
+  configuration/selection ticket, and no server acknowledgement or model
+  consumption was asserted experimentally.
+- Committed all implementation/tests on branch `aa-steering-config-exec`:
+  `3a2dce5` — `aa-steering-config-exec
+  tt-steering-delivery-configuration-and-command-selection: add delivery
+  defaults and command selector`. The code worktree is clean.
+- Initial log-only WAAP commit: `743054b`; final validation/handoff notes are
+  committed separately to the same agent log, excluding other WAAP files.
+
+Ready for coordinator integration. No remaining blockers for this ticket's
+scope. Ticket deliberately remains `in-progress`; the integration coordinator
+alone integrates the committed branch into `feat/message-delivery-steering`
+and marks it completed. Runner owns agent status and worktree lifecycle.
