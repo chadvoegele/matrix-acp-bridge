@@ -1,7 +1,7 @@
 +++
 name = "Steering coordinator lane and lifecycle"
 creation_date = 2026-10-01T20:30:24Z
-status = "in-progress"
+status = "completed"
 depends_on = ["tt-steering-delivery-configuration-and-command-selection", "tt-steering-acp-extension-transport"]
 +++
 
