@@ -1,7 +1,8 @@
 +++
 name = "Matrix reply naming Codex 6.1 Sol"
 creation_date = 2026-10-01T13:55:41Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Implement WAAP ticket tt-align-thread-reply-target-name-with-matrix-spec at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-align-thread-reply-target-name-with-matrix-spec/ticket.md. Read it fully and follow repository instructions. Rename threadFallbackEventId to threadInReplyToEventId consistently without wire/behavior changes.
