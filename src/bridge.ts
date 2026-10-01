@@ -2331,6 +2331,11 @@ export class BridgeCoordinator {
         let attempt = 0;
         for (const part of parts) {
           while (true) {
+            // The room mutex or an earlier multipart send may have waited
+            // across shutdown. Recheck before starting each SDK request.
+            if (this.#stopped || ((this.#stopping || this.#fatal !== undefined) && options.allowDuringStop !== true)) {
+              return false;
+            }
             let sent = false;
             try {
               await this.#matrix.sendMessage(part);
