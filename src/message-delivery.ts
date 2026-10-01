@@ -1,7 +1,9 @@
 import type { MessageDelivery } from "./config.js";
 
+export type MessageDeliveryProvenance = "explicit" | "default";
+
 export type MessageDeliverySelection =
-  | { readonly kind: MessageDelivery; readonly payload: string }
+  | { readonly kind: MessageDelivery; readonly payload: string; readonly provenance: MessageDeliveryProvenance }
   | { readonly kind: "reset" }
   | { readonly kind: "usage"; readonly delivery: MessageDelivery; readonly message: string };
 
@@ -17,7 +19,7 @@ export function selectMessageDelivery(body: string, defaultDelivery: MessageDeli
 
   const command = /^\/(prompt|steer)(?:\s+|$)/u.exec(body);
   if (command === null) {
-    return { kind: defaultDelivery, payload: body };
+    return { kind: defaultDelivery, payload: body, provenance: "default" };
   }
 
   const delivery = command[1] === "prompt" ? "prompt" : "steer";
@@ -25,5 +27,5 @@ export function selectMessageDelivery(body: string, defaultDelivery: MessageDeli
   if (payload.length === 0) {
     return { kind: "usage", delivery, message: `Usage: /${delivery} <message>` };
   }
-  return { kind: delivery, payload };
+  return { kind: delivery, payload, provenance: "explicit" };
 }

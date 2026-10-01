@@ -2137,104 +2137,109 @@ void test("M3 scenario 3: a live encrypted message reaches ACP once and gets an 
 });
 
 void test("steering live and restart sync batches preserve selection, FIFO fallback and independent durable IDs", async () => {
-  for (const phase of ["live", "catch-up"] as const) {
-    const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-steering-sync-"));
-    const config: BridgeConfig = {
-      ...CONFIG,
-      stateDir,
-      matrix: { ...MATRIX_CONFIG, defaultMessageDelivery: "steer" },
-      limits: { ...CONFIG.limits, maxQueuedTurnsPerConversation: 3 },
-    };
-    let rig: IntegrationRig | undefined;
-    let run: Promise<DaemonExitCode> | undefined;
-    let restart: IntegrationRig | undefined;
-    let restartRun: Promise<DaemonExitCode> | undefined;
-    const inputs = ["first", "correction", "/prompt future", "fallback"].map((body, index) =>
-      sdkEvent({ eventId: `$steering-sync-${index}:example.org`, body }),
-    );
-    try {
-      const seed = createRig(config);
-      const { run: seedRun } = await startRig(seed);
-      await stopRig(seed, seedRun);
-      rig = createRig(config, { advertiseSteering: true });
-      if (phase === "catch-up") {
-        rig.matrixSdk.startClientAction = () => {
-          for (const input of inputs) rig!.matrixSdk.emitInbound(input);
-          rig!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "steering-catchup" });
-        };
-      }
-      ({ run } = await startRig(rig));
-      if (phase === "live") {
-        for (const input of inputs) rig.matrixSdk.emitInbound(input);
-        rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "steering-live" });
-      }
-      await waitFor(() => rig!.peer.steering.length === 1, "first steering dispatch from full sync batch");
-      assert.deepEqual(
-        rig.peer.prompts.map((call) => call.text),
-        ["first"],
-      );
-      assert.equal(rig.bridge.unresolvedPromptCount, 1);
-      assert.deepEqual(rig.peer.steering[0]?.params, {
-        sessionId: rig.peer.prompts[0]!.sessionId,
-        prompt: [{ type: "text", text: "correction" }],
-        _meta: { steering: { idleBehavior: "promptRequired" } },
-      });
-      // Repeat the whole timeline while decisions remain pending.
-      for (const input of inputs) rig.matrixSdk.emitInbound(input);
-      rig.matrixSdk.emit("sync", "SYNCING", "SYNCING", { nextSyncToken: "steering-duplicates" });
-      await flushMany();
-      assert.equal(rig.peer.steering.length, 1);
-      rig.peer.steering[0].respond({ outcome: "injected" });
-      await waitFor(
-        () => rig!.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-1:example.org"),
-        "injected ledger write",
-      );
-      assert.equal(rig.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-0:example.org"), false);
-      await waitFor(() => rig!.peer.steering.length === 2, "second serial steering dispatch");
-      assert.equal(
-        rig.matrixSdk.sent.some((part) => String(part.content.body).includes("correction")),
-        false,
-      );
-      rig.peer.steering[1]!.respond({ outcome: "promptRequired", reason: "noRunningTurn" });
-      await waitFor(
-        () =>
-          rig!.matrixSdk.sent.filter((part) => part.content.body === "No running turn; message queued as a prompt.")
-            .length === 2,
-        "idle conversion notice",
-      );
-      assert.equal(rig.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-3:example.org"), false);
-      await completePrompt(rig, rig.peer.prompts[0]!, "first response");
-      await waitFor(() => rig!.peer.prompts.length === 2, "explicit prompt FIFO dispatch");
-      assert.equal(rig.peer.prompts[1]!.text, "future");
-      await completePrompt(rig, rig.peer.prompts[1]!, "future response");
-      await waitFor(() => rig!.peer.prompts.length === 3, "converted prompt dispatch");
-      assert.equal(rig.peer.prompts[2]!.text, "fallback");
-      await stopRig(rig, run);
-      run = undefined;
-      assert.equal(rig.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-3:example.org"), false);
-
-      restart = createRig(config, { advertiseSteering: true });
-      restart.matrixSdk.startClientAction = () => {
-        for (const input of inputs) restart!.matrixSdk.emitInbound(input);
-        restart!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "steering-restart" });
+  for (const explicit of [false, true]) {
+    for (const phase of ["live", "catch-up"] as const) {
+      const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-steering-sync-"));
+      const config: BridgeConfig = {
+        ...CONFIG,
+        stateDir,
+        matrix: { ...MATRIX_CONFIG, defaultMessageDelivery: "steer" },
+        limits: { ...CONFIG.limits, maxQueuedTurnsPerConversation: 3 },
       };
-      ({ run: restartRun } = await startRig(restart));
-      await waitFor(() => restart!.peer.prompts.length === 1, "incomplete converted event recovery");
-      assert.deepEqual(
-        restart.peer.prompts.map((call) => call.text),
-        ["fallback"],
-      );
-      assert.equal(restart.peer.steering.length, 0);
-      await completePrompt(restart, restart.peer.prompts[0]!, "recovered response");
-      await restart.bridge.waitForIdle();
-      assert.equal(restart.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-3:example.org"), true);
-      const disk = await readFile(join(stateDir, "bridge-state.json"), "utf8");
-      for (const payload of ["correction", "future", "fallback", "recovered response"])
-        assert.equal(disk.includes(payload), false);
-    } finally {
-      if (rig !== undefined && run !== undefined) await stopRig(rig, run);
-      if (restart !== undefined && restartRun !== undefined) await stopRig(restart, restartRun);
-      await rm(stateDir, { recursive: true, force: true });
+      let rig: IntegrationRig | undefined;
+      let run: Promise<DaemonExitCode> | undefined;
+      let restart: IntegrationRig | undefined;
+      let restartRun: Promise<DaemonExitCode> | undefined;
+      const inputs = [
+        explicit ? "/steer first" : "first",
+        "correction",
+        "/prompt future",
+        explicit ? "/steer fallback" : "fallback",
+      ].map((body, index) => sdkEvent({ eventId: `$steering-sync-${index}:example.org`, body }));
+      try {
+        const seed = createRig(config);
+        const { run: seedRun } = await startRig(seed);
+        await stopRig(seed, seedRun);
+        rig = createRig(config, { advertiseSteering: true });
+        if (phase === "catch-up") {
+          rig.matrixSdk.startClientAction = () => {
+            for (const input of inputs) rig!.matrixSdk.emitInbound(input);
+            rig!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "steering-catchup" });
+          };
+        }
+        ({ run } = await startRig(rig));
+        if (phase === "live") {
+          for (const input of inputs) rig.matrixSdk.emitInbound(input);
+          rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "steering-live" });
+        }
+        await waitFor(() => rig!.peer.steering.length === 1, "first steering dispatch from full sync batch");
+        assert.deepEqual(
+          rig.peer.prompts.map((call) => call.text),
+          ["first"],
+        );
+        assert.equal(rig.bridge.unresolvedPromptCount, 1);
+        assert.deepEqual(rig.peer.steering[0]?.params, {
+          sessionId: rig.peer.prompts[0]!.sessionId,
+          prompt: [{ type: "text", text: "correction" }],
+          _meta: { steering: { idleBehavior: "promptRequired" } },
+        });
+        // Repeat the whole timeline while decisions remain pending.
+        for (const input of inputs) rig.matrixSdk.emitInbound(input);
+        rig.matrixSdk.emit("sync", "SYNCING", "SYNCING", { nextSyncToken: "steering-duplicates" });
+        await flushMany();
+        assert.equal(rig.peer.steering.length, 1);
+        rig.peer.steering[0].respond({ outcome: "injected" });
+        await waitFor(
+          () => rig!.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-1:example.org"),
+          "injected ledger write",
+        );
+        assert.equal(rig.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-0:example.org"), false);
+        await waitFor(() => rig!.peer.steering.length === 2, "second serial steering dispatch");
+        assert.equal(
+          rig.matrixSdk.sent.some((part) => String(part.content.body).includes("correction")),
+          false,
+        );
+        rig.peer.steering[1]!.respond({ outcome: "promptRequired", reason: "noRunningTurn" });
+        await flushMany();
+        assert.equal(
+          rig.matrixSdk.sent.filter((part) => part.content.body === "No running turn; message queued as a prompt.")
+            .length,
+          explicit ? 2 : 0,
+        );
+        assert.equal(rig.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-3:example.org"), false);
+        await completePrompt(rig, rig.peer.prompts[0]!, "first response");
+        await waitFor(() => rig!.peer.prompts.length === 2, "explicit prompt FIFO dispatch");
+        assert.equal(rig.peer.prompts[1]!.text, "future");
+        await completePrompt(rig, rig.peer.prompts[1]!, "future response");
+        await waitFor(() => rig!.peer.prompts.length === 3, "converted prompt dispatch");
+        assert.equal(rig.peer.prompts[2]!.text, "fallback");
+        await stopRig(rig, run);
+        run = undefined;
+        assert.equal(rig.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-3:example.org"), false);
+
+        restart = createRig(config, { advertiseSteering: true });
+        restart.matrixSdk.startClientAction = () => {
+          for (const input of inputs) restart!.matrixSdk.emitInbound(input);
+          restart!.matrixSdk.emit("sync", "PREPARED", null, { nextSyncToken: "steering-restart" });
+        };
+        ({ run: restartRun } = await startRig(restart));
+        await waitFor(() => restart!.peer.prompts.length === 1, "incomplete converted event recovery");
+        assert.deepEqual(
+          restart.peer.prompts.map((call) => call.text),
+          ["fallback"],
+        );
+        assert.equal(restart.peer.steering.length, 0);
+        await completePrompt(restart, restart.peer.prompts[0]!, "recovered response");
+        await restart.bridge.waitForIdle();
+        assert.equal(restart.stateStore!.isEventCompleted(ROOM_ONE, "$steering-sync-3:example.org"), true);
+        const disk = await readFile(join(stateDir, "bridge-state.json"), "utf8");
+        for (const payload of ["correction", "future", "fallback", "recovered response"])
+          assert.equal(disk.includes(payload), false);
+      } finally {
+        if (rig !== undefined && run !== undefined) await stopRig(rig, run);
+        if (restart !== undefined && restartRun !== undefined) await stopRig(restart, restartRun);
+        await rm(stateDir, { recursive: true, force: true });
+      }
     }
   }
 });

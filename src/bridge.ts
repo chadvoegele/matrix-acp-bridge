@@ -9,7 +9,7 @@ import type { CancellationController, Unsubscribe } from "./cancellation.js";
 import type { Clock, TimerHandle } from "./clock.js";
 import type { DiagnosticFields, DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
 import type { BridgeConfig } from "./config.js";
-import { selectMessageDelivery } from "./message-delivery.js";
+import { selectMessageDelivery, type MessageDeliveryProvenance } from "./message-delivery.js";
 import { isRecord, numberProperty, stringProperty } from "./object-validation.js";
 import {
   createInboundAuthorizer,
@@ -105,6 +105,7 @@ interface MutableQueueEntry {
   readonly event: NormalizedInboundEvent;
   readonly sequence: number;
   readonly payload: string;
+  readonly deliveryProvenance: MessageDeliveryProvenance | undefined;
   delivery: "prompt" | "steer" | "reset";
   readonly terminalCompletion: BridgeTerminalCompletion | undefined;
   readonly resolve: () => void;
@@ -572,12 +573,23 @@ function makeQueueEntry(
   sequence: number,
   delivery: MutableQueueEntry["delivery"],
   payload: string,
+  deliveryProvenance: MessageDeliveryProvenance | undefined,
 ): MutableQueueEntry {
   let resolve!: () => void;
   const completion = new Promise<void>((done) => {
     resolve = done;
   });
-  return { event, terminalCompletion, sequence, delivery, payload, resolve, completion, completed: false };
+  return {
+    event,
+    terminalCompletion,
+    sequence,
+    delivery,
+    payload,
+    deliveryProvenance,
+    resolve,
+    completion,
+    completed: false,
+  };
 }
 
 /**
@@ -1062,6 +1074,7 @@ export class BridgeCoordinator {
       this.#admissionSequence++,
       selection.kind,
       selection.kind === "reset" ? "" : selection.payload,
+      selection.kind === "reset" ? undefined : selection.provenance,
     );
     if (reserveActive) {
       conversation.active = entry;
@@ -1222,6 +1235,7 @@ export class BridgeCoordinator {
     entry: MutableQueueEntry,
     kind: "steering_idle" | "steering_unavailable",
   ): void {
+    if (kind === "steering_idle" && entry.deliveryProvenance === "default") return;
     // Enqueue the notice before pumping its prompt, but never hold the room's
     // outbound mutex while waiting on an ACP decision or durable callback.
     void this.#deliverDescriptor(

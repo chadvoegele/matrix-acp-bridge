@@ -3549,10 +3549,7 @@ void test("steer-default live/catch-up batches preserve msg2/msg3 through dispat
     await batch[2];
     assert.deepEqual(completed, ["msg2", "msg3"]);
     assert.equal(bridge.unresolvedPromptCount, 1);
-    assert.deepEqual(
-      matrix.sent.map((part) => part.responseKind),
-      ["steering_idle"],
-    );
+    assert.deepEqual(matrix.sent, []);
     prompts.get("msg1")?.({ kind: "turn", stopReason: "end_turn", text: "done" });
     await flush();
     clock.advanceBy(300);
@@ -3921,56 +3918,61 @@ void test("steering does not restart the turn timeout and cancellation stops fur
 });
 
 void test("healthy steering errors never resubmit or cancel; method-not-found disables the connection", async () => {
-  for (const methodNotFound of [false, true]) {
-    const acp = new FakeSteeringAcp();
-    const prompts = heldPrompts(acp);
-    const matrix = new FakeMatrix();
-    const bridge = new BridgeCoordinator({
-      config: config({ maxQueuedTurnsPerConversation: 3 }),
-      acp,
-      matrix,
-      steering: true,
-    });
-    const completed: string[] = [];
-    const first = bridge.handleTimelineEvent(event("$error-first", ROOM_ONE, "first"));
-    await flush();
-    const failed = bridge.handleTimelineEvent(event("$error-steer", ROOM_ONE, "/steer failed"), async () => {
-      completed.push("failed");
-    });
-    const later = bridge.handleTimelineEvent(event("$error-later", ROOM_ONE, "/steer later"));
-    acp.steeringReplies[0]?.({ kind: "method_error", operation: "session_steering", fatal: false, methodNotFound });
-    await failed;
-    assert.deepEqual(completed, ["failed"]);
-    assert.equal(
-      matrix.sent.some((part) => part.content.body === "Steering failed; message was not resubmitted."),
-      true,
-    );
-    assert.deepEqual(acp.cancelCalls, []);
-    assert.equal(bridge.fatalError, undefined);
-    if (methodNotFound) {
-      assert.equal(acp.steeringCalls.length, 1);
+  for (const explicit of [false, true]) {
+    for (const methodNotFound of [false, true]) {
+      const acp = new FakeSteeringAcp();
+      const prompts = heldPrompts(acp);
+      const matrix = new FakeMatrix();
+      const bridge = new BridgeCoordinator({
+        config: steeringConfig({ maxQueuedTurnsPerConversation: 3 }),
+        acp,
+        matrix,
+        steering: true,
+      });
+      const completed: string[] = [];
+      const first = bridge.handleTimelineEvent(event("$error-first", ROOM_ONE, "/prompt first"));
+      await flush();
+      const failed = bridge.handleTimelineEvent(
+        event("$error-steer", ROOM_ONE, explicit ? "/steer failed" : "failed"),
+        async () => {
+          completed.push("failed");
+        },
+      );
+      const later = bridge.handleTimelineEvent(event("$error-later", ROOM_ONE, explicit ? "/steer later" : "later"));
+      acp.steeringReplies[0]?.({ kind: "method_error", operation: "session_steering", fatal: false, methodNotFound });
+      await failed;
+      assert.deepEqual(completed, ["failed"]);
       assert.equal(
-        matrix.sent.some((part) => part.responseKind === "steering_unavailable"),
+        matrix.sent.some((part) => part.content.body === "Steering failed; message was not resubmitted."),
         true,
       );
-    } else {
-      assert.equal(acp.steeringCalls[1]?.text, "later");
-      acp.steeringReplies[1]?.(injected);
-      await later;
+      assert.deepEqual(acp.cancelCalls, []);
+      assert.equal(bridge.fatalError, undefined);
+      if (methodNotFound) {
+        assert.equal(acp.steeringCalls.length, 1);
+        assert.equal(
+          matrix.sent.some((part) => part.responseKind === "steering_unavailable"),
+          true,
+        );
+      } else {
+        assert.equal(acp.steeringCalls[1]?.text, "later");
+        acp.steeringReplies[1]?.(injected);
+        await later;
+      }
+      prompts.get("first")?.(methodError());
+      await first;
+      await flush();
+      if (methodNotFound) {
+        assert.equal(acp.promptCalls[1]?.text, "later");
+        prompts.get("later")?.(methodError());
+        await later;
+      }
+      assert.equal(
+        acp.promptCalls.some((call) => call.text === "failed"),
+        false,
+      );
+      await bridge.stop();
     }
-    prompts.get("first")?.(methodError());
-    await first;
-    await flush();
-    if (methodNotFound) {
-      assert.equal(acp.promptCalls[1]?.text, "later");
-      prompts.get("later")?.(methodError());
-      await later;
-    }
-    assert.equal(
-      acp.promptCalls.some((call) => call.text === "failed"),
-      false,
-    );
-    await bridge.stop();
   }
 });
 
@@ -4271,7 +4273,7 @@ void test("thread roots under steer default start independent prompts; follow-up
   await flush();
   assert.equal(acp.promptCalls.length, 2);
   assert.equal(acp.steeringCalls.length, 0);
-  const followA = bridge.handleTimelineEvent(threadEvent("$steer-follow-a", "$steer-root-a", "correction a"));
+  const followA = bridge.handleTimelineEvent(threadEvent("$steer-follow-a", "$steer-root-a", "/steer correction a"));
   const followB = bridge.handleTimelineEvent(threadEvent("$steer-follow-b", "$steer-root-b", "correction b"));
   assert.deepEqual(
     acp.steeringCalls.map(({ sessionId, text }) => ({ sessionId, text })),
@@ -4566,4 +4568,105 @@ void test("steering admission rejects unauthorized, duplicate and oversized orig
   prompts.get("first")?.(methodError());
   await first;
   await bridge.stop();
+});
+
+void test("idle steering preserves explicit/default provenance through closed dispatch and reset barriers", async () => {
+  for (const explicit of [false, true]) {
+    const acp = new FakeSteeringAcp();
+    const prompts = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({
+      config: steeringConfig(),
+      acp,
+      matrix,
+      steering: true,
+      dispatchOpen: false,
+    });
+    const completed: string[] = [];
+    const first = bridge.handleTimelineEvent(
+      event("$idle-provenance", ROOM_ONE, explicit ? "/steer /steer literal" : "/steering literal"),
+      async () => {
+        completed.push("first");
+      },
+    );
+    assert.equal(matrix.sent.length, 0);
+    bridge.enableDispatch();
+    await flush();
+    assert.equal(acp.promptCalls[0]?.text, explicit ? "/steer literal" : "/steering literal");
+    assert.deepEqual([...completed], []);
+    const reset = bridge.handleTimelineEvent(event("$provenance-reset", ROOM_ONE, "/reset"));
+    const later = bridge.handleTimelineEvent(
+      event("$provenance-after-reset", ROOM_ONE, explicit ? "/steer later" : "later"),
+      async () => {
+        completed.push("later");
+      },
+    );
+    await flush();
+    assert.deepEqual(
+      matrix.sent.filter((part) => part.responseKind === "steering_idle").map((part) => part.inboundEventId),
+      explicit ? ["$idle-provenance", "$provenance-after-reset"] : [],
+    );
+    assert.equal(acp.steeringCalls.length, 0);
+    prompts.get(acp.promptCalls[0].text)?.(methodError());
+    await first;
+    await reset;
+    await flush();
+    assert.deepEqual(acp.promptCalls.at(-1), { sessionId: "session-2", text: "later" });
+    assert.deepEqual(completed, ["first"]);
+    prompts.get("later")?.(methodError());
+    await later;
+    assert.deepEqual(completed, ["first", "later"]);
+    await bridge.stop();
+  }
+});
+
+void test("mixed setup batches preserve idle and promptRequired provenance and tracked FIFO identity", async () => {
+  for (const explicitFirst of [false, true]) {
+    const acp = new FakeSteeringAcp();
+    const prompts = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    let releaseSetup!: (session: AcpSession) => void;
+    acp.createSession = () =>
+      new Promise((resolve) => {
+        releaseSetup = resolve;
+      });
+    const bridge = new BridgeCoordinator({ config: steeringConfig(), acp, matrix, steering: true });
+    const completed: string[] = [];
+    const bodies = [explicitFirst ? "/steer first" : "first", "default boundary", "/steer explicit boundary"];
+    const batch = bodies.map((body, index) =>
+      bridge.handleTimelineEvent(event(`$mixed-${index}`, ROOM_ONE, body), async () => {
+        completed.push(`$mixed-${index}`);
+      }),
+    );
+    await flush();
+    assert.equal(acp.steeringCalls.length, 0);
+    releaseSetup({ sessionId: "mixed-session" });
+    await flush();
+    assert.equal(acp.steeringCalls[0]?.text, "default boundary");
+    acp.steeringReplies[0]?.(promptRequired);
+    await flush();
+    assert.equal(acp.steeringCalls[1]?.text, "explicit boundary");
+    acp.steeringReplies[1]?.(promptRequired);
+    await flush();
+    assert.deepEqual(
+      matrix.sent.filter((part) => part.responseKind === "steering_idle").map((part) => part.inboundEventId),
+      explicitFirst ? ["$mixed-0", "$mixed-2"] : ["$mixed-2"],
+    );
+    assert.deepEqual([...completed], []);
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 2);
+    assert.equal(bridge.unresolvedPromptCount, 1);
+    for (const [index, payload] of ["first", "default boundary", "explicit boundary"].entries()) {
+      assert.equal(acp.promptCalls[index]?.text, payload);
+      prompts.get(payload)?.(methodError());
+      await batch[index];
+      await flush();
+      assert.deepEqual(
+        completed,
+        Array.from({ length: index + 1 }, (_, completedIndex) => `$mixed-${completedIndex}`),
+      );
+    }
+    assert.equal(acp.steeringCalls.length, 2);
+    await bridge.waitForIdle();
+    await bridge.stop();
+  }
 });
