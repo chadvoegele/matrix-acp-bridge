@@ -16,9 +16,13 @@ export function conversationIdentityForEvent(
   event: ThreadRoutingMetadata & { readonly roomId: MatrixRoomId; readonly eventId: MatrixEventId },
   responseMode: ResponseMode,
 ): ConversationIdentity {
-  return responseMode === "room"
-    ? { kind: "room", roomId: event.roomId }
-    : { kind: "thread", roomId: event.roomId, threadRootEventId: event.threadRootEventId ?? event.eventId };
+  if (responseMode === "room") {
+    return { kind: "room", roomId: event.roomId };
+  } else if (responseMode === "thread") {
+    return { kind: "thread", roomId: event.roomId, threadRootEventId: event.threadRootEventId ?? event.eventId };
+  } else {
+    throw new TypeError("Unknown responseMode");
+  }
 }
 
 /** A tuple encoding keeps mode, room and opaque event IDs unambiguous. */

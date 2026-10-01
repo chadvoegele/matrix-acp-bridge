@@ -199,6 +199,15 @@ type ValidatedRelation =
  * reply; either reply shape can carry a rich-reply body fallback.
  */
 function relationFromContent(content: RecordLike, responseMode: ResponseMode): ValidatedRelation {
+  let allowThreads: boolean;
+  if (responseMode === "room") {
+    allowThreads = false;
+  } else if (responseMode === "thread") {
+    allowThreads = true;
+  } else {
+    throw new TypeError("Unknown responseMode");
+  }
+
   if (!hasOwn(content, "m.relates_to")) {
     return { valid: true };
   }
@@ -208,7 +217,7 @@ function relationFromContent(content: RecordLike, responseMode: ResponseMode): V
     return { valid: false };
   }
 
-  const isThread = responseMode === "thread" && relatesTo.rel_type === "m.thread";
+  const isThread = allowThreads && relatesTo.rel_type === "m.thread";
   if (isThread) {
     const allowedKeys = new Set(["rel_type", "event_id", "is_falling_back", "m.in_reply_to"]);
     if (

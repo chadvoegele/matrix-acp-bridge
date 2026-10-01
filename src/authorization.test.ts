@@ -8,7 +8,7 @@ import {
   stripReplyFallback,
   type InboundAuthorizationDecision,
 } from "./authorization.js";
-import { parseConfigText } from "./config.js";
+import { parseConfigText, type ResponseMode } from "./config.js";
 import { StderrDiagnosticSink } from "./diagnostics.js";
 import type { InboundMatrixEvent } from "./matrix-client.js";
 import { FakeClock } from "./test-support/fake-clock.js";
@@ -485,4 +485,25 @@ cwd = "/tmp"
 `);
   assert.equal(createInboundAuthorizer(config).authorize(threadEvent()).accepted, true);
   assert.throws(() => createInboundAuthorizer(options({ responseMode: "invalid" as "room" })), /responseMode/u);
+});
+
+void test("authorization rejects unknown runtime response modes before accepting any relation shape", () => {
+  for (const responseMode of ["invalid", "", "THREAD", 1, {}]) {
+    for (const event of [
+      makeEvent(),
+      makeEvent({
+        content: {
+          msgtype: "m.text",
+          body: "private-body",
+          "m.relates_to": { "m.in_reply_to": { event_id: "$private-reply" } },
+        },
+      }),
+      threadEvent({ event_id: "$private-root" }, "private-body"),
+    ]) {
+      assert.throws(() => authorizeInboundEvent(event, options({ responseMode: responseMode as ResponseMode })), {
+        name: "TypeError",
+        message: "responseMode must be either room or thread",
+      });
+    }
+  }
 });

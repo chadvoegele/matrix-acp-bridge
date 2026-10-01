@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { ResponseMode } from "./config.js";
 import { conversationIdentityForEvent, conversationKey, type ConversationIdentity } from "./conversation-identity.js";
 
 const roomId = "!room:example.org";
@@ -21,6 +22,20 @@ void test("room identity is unchanged by roots and ordinary replies become new t
     conversationIdentityForEvent(ordinaryReply, "thread"),
     conversationIdentityForEvent(topLevel, "thread"),
   );
+});
+
+void test("conversation identity rejects unknown runtime response modes without exposing event content", () => {
+  for (const responseMode of ["invalid", "", "ROOM", null, undefined, 1, {}]) {
+    for (const event of [
+      { roomId, eventId: "$private-event" },
+      { roomId, eventId: "$private-event", threadRootEventId: "$private-root" },
+    ]) {
+      assert.throws(() => conversationIdentityForEvent(event, responseMode as ResponseMode), {
+        name: "TypeError",
+        message: "Unknown responseMode",
+      });
+    }
+  }
 });
 
 void test("conversation keys distinguish mode, rooms, roots and opaque delimiter content", () => {
