@@ -1,7 +1,8 @@
 +++
 name = "Steering silent idle provenance developer"
 creation_date = 2026-10-01T23:36:13Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # Developer: explicit versus default steering idle fallback
