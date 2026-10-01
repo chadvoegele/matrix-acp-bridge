@@ -46,9 +46,10 @@ restore your own pre-upgrade schema-12 backup to `bridge-state.json` as the serv
 user, retaining private ownership and permissions. If you have no pre-upgrade
 backup, there is no downgrade/export tool.
 
-Start the older binary with its matching configuration (remove `response_mode`
-and `max_queued_turns_per_thread` if unsupported). Leave SDK-owned recovery and
-crypto files intact. Do not run old and new binaries against the same state
+Start the older binary with its matching configuration: remove `response_mode`
+if unsupported and use the legacy `max_queued_turns_per_room` key in place of
+`max_queued_turns_per_conversation`. Leave SDK-owned recovery and crypto files
+intact. Do not run old and new binaries against the same state
 directory concurrently.
 
 **Restoring loses every post-migration bridge-state change**, including thread

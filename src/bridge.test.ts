@@ -54,8 +54,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       maxOutputBytes: 10_000,
       maxMatrixMessageBytes: 10_000,
       maxActivityEventsPerMessage: 10,
-      maxQueuedTurnsPerRoom: 1,
-      maxQueuedTurnsPerThread: 16,
+      maxQueuedTurnsPerConversation: 1,
       maxConcurrentPrompts: 2,
       maxTurnSeconds: 60,
       shutdownGraceSeconds: 1,
@@ -327,7 +326,7 @@ void test("buffers startup events within active-plus-waiting capacity and recove
   const promptResults: Array<(outcome: AcpOutcome) => void> = [];
   acp.promptImpl = () => new Promise<AcpOutcome>((resolve) => promptResults.push(resolve));
   const bridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp,
     matrix,
     clock,
@@ -791,7 +790,7 @@ void test("receipts are exactly once for eligible dispositions and absent for po
       busyResolvers.push(resolve);
     });
   const busyBridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp: busyAcp,
     matrix: busyMatrix,
   });
@@ -952,7 +951,7 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
       queuedResolvers.push(resolve);
     });
   const queuedBridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp: queuedAcp,
     matrix: queuedMatrix,
   });
@@ -1068,7 +1067,7 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
       finishCatchup = resolve;
     });
   const catchupBridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 1 }),
+    config: config({ maxQueuedTurnsPerConversation: 1 }),
     acp: catchupAcp,
     matrix: catchupMatrix,
   });
@@ -1202,7 +1201,7 @@ void test("reset stays in room order, is busy when the bounded queue is full, an
     };
   };
   const bridge = new BridgeCoordinator({
-    config: config({ maxQueuedTurnsPerRoom: 2 }),
+    config: config({ maxQueuedTurnsPerConversation: 2 }),
     acp,
     matrix,
   });
@@ -2656,7 +2655,7 @@ void test("validated thread routing survives eager text, activity retries and la
 });
 
 function threadConfig(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
-  const settings = config(overrides);
+  const settings = config({ maxQueuedTurnsPerConversation: 16, ...overrides });
   return { ...settings, matrix: { ...settings.matrix, responseMode: "thread" } };
 }
 
@@ -2782,12 +2781,55 @@ void test("unknown threads and rejected roots never create context; top-level re
   await bridge.stop();
 });
 
+for (const mode of ["room", "thread"] as const) {
+  void test(`${mode} mode applies the conversation limit only to waiting turns`, async () => {
+    const acp = new FakeAcp();
+    const pending = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    const settings = config({ maxQueuedTurnsPerConversation: 2 });
+    const bridge = new BridgeCoordinator({
+      config: { ...settings, matrix: { ...settings.matrix, responseMode: mode } },
+      acp,
+      matrix,
+    });
+    const first = bridge.handleTimelineEvent(event("$limit-root", ROOM_ONE, "active"));
+    await waitFor(() => acp.promptCalls.length === 1);
+    const followUp = (eventId: string, body: string) =>
+      mode === "thread" ? threadEvent(eventId, "$limit-root", body) : event(eventId, ROOM_ONE, body);
+    const second = bridge.handleTimelineEvent(followUp("$limit-second", "second"));
+    const third = bridge.handleTimelineEvent(followUp("$limit-third", "third"));
+    await bridge.handleTimelineEvent(followUp("$limit-rejected", "rejected"));
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 2);
+    assert.equal(matrix.sent.at(-1)?.responseKind, "busy");
+    assert.equal(matrix.sent.at(-1)?.threadRootEventId, mode === "thread" ? "$limit-root" : undefined);
+
+    const other = bridge.handleTimelineEvent(event("$limit-other", mode === "thread" ? ROOM_ONE : ROOM_TWO, "other"));
+    await waitFor(() => acp.promptCalls.length === 2);
+    pending.get("other")?.(methodError());
+    await other;
+    pending.get("active")?.(methodError());
+    await first;
+    await waitFor(() => acp.promptCalls.length === 3);
+    pending.get("second")?.(methodError());
+    await second;
+    await waitFor(() => acp.promptCalls.length === 4);
+    pending.get("third")?.(methodError());
+    await third;
+    assert.deepEqual(
+      acp.promptCalls.map(({ text }) => text),
+      ["active", "other", "second", "third"],
+    );
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 0);
+    await bridge.stop();
+  });
+}
+
 void test("each thread bounds only its waiting queue and selected permit waiters do not count", async () => {
   const acp = new FakeAcp();
   const pending = heldPrompts(acp);
   const matrix = new FakeMatrix();
   const bridge = new BridgeCoordinator({
-    config: threadConfig({ maxConcurrentPrompts: 1, maxQueuedTurnsPerThread: 1, maxQueuedTurnsPerRoom: 1 }),
+    config: threadConfig({ maxConcurrentPrompts: 1, maxQueuedTurnsPerConversation: 1 }),
     acp,
     matrix,
   });

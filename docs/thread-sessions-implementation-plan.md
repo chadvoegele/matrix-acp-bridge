@@ -16,7 +16,7 @@ Room mode remains the default. Thread mode scopes queue/session identity to `(ro
 
 `max_concurrent_prompts` retains its existing prompt-only semantics; creation/loading does not count. No session unloading, setup-concurrency control, aggregate backlog cap, automatic history expiry or unsolicited MCP thread routing is added.
 
-Thread mode uses an independent `max_queued_turns_per_thread` default of 16. Busy/oversized rejected top-level roots remain unknown. Reset retains durable sessionless thread identity when loading is supported. Both modes retain their records across switches; removed rooms are pruned. Users must back up private bridge state before upgrading; rollback requires restoring their own pre-upgrade backup.
+Both modes use `max_queued_turns_per_conversation`, defaulting to 16, to bound waiting work separately for each conversation. Busy/oversized rejected top-level roots remain unknown. Reset retains durable sessionless thread identity when loading is supported. Both modes retain their records across switches; removed rooms are pruned. Users must back up private bridge state before upgrading; rollback requires restoring their own pre-upgrade backup.
 
 ## Ticket DAG
 

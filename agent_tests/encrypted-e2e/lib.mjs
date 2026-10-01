@@ -71,6 +71,7 @@ response_mode = "room"
 cwd = ${tomlString(environment.acpCwd)}
 
 [limits]
+max_queued_turns_per_conversation = 16
 startup_timeout_seconds = 120
 shutdown_grace_seconds = 30
 `;

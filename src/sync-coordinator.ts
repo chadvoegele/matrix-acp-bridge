@@ -195,7 +195,7 @@ export class MatrixSyncCoordinator {
         const maxAgeMs = this.#config.limits.maxCatchupAgeSeconds * 1000;
         const selectedLimit = Math.min(
           this.#config.limits.maxCatchupEventsPerRoom,
-          1 + this.#config.limits.maxQueuedTurnsPerRoom,
+          1 + this.#config.limits.maxQueuedTurnsPerConversation,
         );
         for (const room of batch.rooms) {
           const events = (eligible.get(room.roomId) ?? []).filter((event) => event.eventId !== undefined);

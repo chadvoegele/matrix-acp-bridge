@@ -996,10 +996,7 @@ export class BridgeCoordinator {
       active: undefined,
       sessionId: undefined,
     };
-    const queueLimit =
-      identity.kind === "thread"
-        ? this.#config.limits.maxQueuedTurnsPerThread
-        : this.#config.limits.maxQueuedTurnsPerRoom;
+    const queueLimit = this.#config.limits.maxQueuedTurnsPerConversation;
     if (conversation.active !== undefined && conversation.waiting.length >= queueLimit) {
       if (event.isCatchUp === true) {
         this.#diagnostic("warn", "catch-up-event-omitted", {

@@ -1,7 +1,7 @@
 +++
 status = "final"
 created = 2026-08-09
-last_update = 2026-08-12
+last_update = 2026-10-01
 +++
 
 # Milestone 2 — restart continuity
@@ -184,7 +184,7 @@ Both limits must be positive integers. Zero is invalid.
 - If more eligible messages exist, keep the newest messages and preserve their
   original order. Warn with room ID and omitted count, never message content.
 - The effective count is also capped at
-  `1 + max_queued_turns_per_room`, so startup catch-up cannot overflow the
+  `1 + max_queued_turns_per_conversation`, so startup catch-up cannot overflow the
   room's active-plus-waiting capacity.
 - Events omitted by the catch-up policy receive no `busy` response and are not
   sent to ACP.

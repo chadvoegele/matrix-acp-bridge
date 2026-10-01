@@ -36,8 +36,7 @@ export interface BridgeLimits {
   readonly maxOutputBytes: number;
   readonly maxMatrixMessageBytes: number;
   readonly maxActivityEventsPerMessage: number;
-  readonly maxQueuedTurnsPerRoom: number;
-  readonly maxQueuedTurnsPerThread: number;
+  readonly maxQueuedTurnsPerConversation: number;
   readonly maxConcurrentPrompts: number;
   readonly maxTurnSeconds: number;
   readonly shutdownGraceSeconds: number;
@@ -64,8 +63,7 @@ export const DEFAULT_LIMITS: BridgeLimits = {
   maxOutputBytes: 262_144,
   maxMatrixMessageBytes: 32_768,
   maxActivityEventsPerMessage: 10,
-  maxQueuedTurnsPerRoom: 16,
-  maxQueuedTurnsPerThread: 16,
+  maxQueuedTurnsPerConversation: 16,
   maxConcurrentPrompts: 4,
   maxTurnSeconds: 1800,
   shutdownGraceSeconds: 30,
@@ -80,8 +78,7 @@ const LIMIT_KEYS = [
   "max_output_bytes",
   "max_matrix_message_bytes",
   "max_activity_events_per_message",
-  "max_queued_turns_per_room",
-  "max_queued_turns_per_thread",
+  "max_queued_turns_per_conversation",
   "max_concurrent_prompts",
   "max_turn_seconds",
   "shutdown_grace_seconds",
@@ -108,7 +105,7 @@ const TABLE_KEYS: Readonly<Record<TomlTable, ReadonlySet<string>>> = {
     "response_mode",
   ]),
   acp: new Set(["cwd"]),
-  limits: new Set(LIMIT_KEYS),
+  limits: new Set([...LIMIT_KEYS, "max_queued_turns_per_room"]),
 };
 
 const REQUIRED_KEYS: ReadonlyArray<readonly [TomlTable, string]> = [
@@ -441,8 +438,7 @@ function validateLimits(limits: BridgeLimits): void {
     max_output_bytes: limits.maxOutputBytes,
     max_matrix_message_bytes: limits.maxMatrixMessageBytes,
     max_activity_events_per_message: limits.maxActivityEventsPerMessage,
-    max_queued_turns_per_room: limits.maxQueuedTurnsPerRoom,
-    max_queued_turns_per_thread: limits.maxQueuedTurnsPerThread,
+    max_queued_turns_per_conversation: limits.maxQueuedTurnsPerConversation,
     max_concurrent_prompts: limits.maxConcurrentPrompts,
     max_turn_seconds: limits.maxTurnSeconds,
     shutdown_grace_seconds: limits.shutdownGraceSeconds,
@@ -536,11 +532,20 @@ function requireMatrixIdList(values: readonly string[], field: string, prefix: "
 }
 
 function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
+  const legacyQueueKey = "max_queued_turns_per_room";
+  const hasLegacyQueueLimit = entries.has(entryName("limits", legacyQueueKey));
+  if (hasLegacyQueueLimit && entries.has(entryName("limits", "max_queued_turns_per_conversation"))) {
+    throw new ConfigurationError(
+      "limits.max_queued_turns_per_conversation and legacy limits.max_queued_turns_per_room cannot both be set",
+    );
+  }
+
   const values = new Map<LimitKey, number>();
   for (const key of LIMIT_KEYS) {
-    const value = entries.get(entryName("limits", key));
+    const inputKey = key === "max_queued_turns_per_conversation" && hasLegacyQueueLimit ? legacyQueueKey : key;
+    const value = entries.get(entryName("limits", inputKey));
     const defaultValue = DEFAULT_LIMITS[limitProperty(key)];
-    const parsed = value === undefined ? defaultValue : requireInteger(value, `limits.${key}`);
+    const parsed = value === undefined ? defaultValue : requireInteger(value, `limits.${inputKey}`);
     values.set(key, parsed);
   }
 
@@ -571,8 +576,7 @@ function parseLimits(entries: ReadonlyMap<string, TomlValue>): BridgeLimits {
     maxOutputBytes,
     maxMatrixMessageBytes,
     maxActivityEventsPerMessage,
-    maxQueuedTurnsPerRoom: values.get("max_queued_turns_per_room")!,
-    maxQueuedTurnsPerThread: values.get("max_queued_turns_per_thread")!,
+    maxQueuedTurnsPerConversation: values.get("max_queued_turns_per_conversation")!,
     maxConcurrentPrompts: values.get("max_concurrent_prompts")!,
     maxTurnSeconds: values.get("max_turn_seconds")!,
     shutdownGraceSeconds: values.get("shutdown_grace_seconds")!,
@@ -634,8 +638,7 @@ function limitProperty(key: LimitKey): keyof BridgeLimits {
     max_output_bytes: "maxOutputBytes",
     max_matrix_message_bytes: "maxMatrixMessageBytes",
     max_activity_events_per_message: "maxActivityEventsPerMessage",
-    max_queued_turns_per_room: "maxQueuedTurnsPerRoom",
-    max_queued_turns_per_thread: "maxQueuedTurnsPerThread",
+    max_queued_turns_per_conversation: "maxQueuedTurnsPerConversation",
     max_concurrent_prompts: "maxConcurrentPrompts",
     max_turn_seconds: "maxTurnSeconds",
     shutdown_grace_seconds: "shutdownGraceSeconds",
