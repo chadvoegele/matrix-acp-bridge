@@ -1,0 +1,7 @@
+# Matrix reply naming work log
+
+- 2026-10-01: Read agent/ticket instructions and applicable WAAP, git-repositories, and password-secrets skills. No applicable repository AGENTS.md found. Validated WAAP state and marked ticket in-progress.
+- Fetched origin/feat/thread-scoped-sessions and rebased the isolated task branch onto b2a0dec. Auditing internal property references in source, tests, harnesses, and documentation; installing locked dependencies for required checks.
+- Renamed threadFallbackEventId to threadInReplyToEventId throughout 12 source/test/harness files; clarified API comments and review documentation. No alias added. Verified executable changes are exactly the rename, preserving wire fields, root default, validation/error text, transaction IDs, byte accounting, edit routing, and persisted state.
+- Checks: npm ci succeeded; npm run check passed (Prettier, ESLint, TypeScript, build, 390 tests passed, zero failures/skips). git diff --check passed and git grep found no old-name references. Full check output: /tmp/aa-matrix-reply-naming-codex-61-sol-check.log.
+- Committed 2dca2c8b6412bc5e62c403eab74aef947230e70e (Align internal thread reply target naming with Matrix). Fetched and rebased immediately before pushing; latest remote remained b2a0dec, so no concurrent changes or rebase adjustments were needed. Non-forced push HEAD:feat/thread-scoped-sessions succeeded, updating PR #16. Source worktree is clean. No production changes, service restarts, merge, or public comment.
