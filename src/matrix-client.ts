@@ -22,7 +22,7 @@ import type {
 } from "./crypto-contracts.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 import { renderMatrixText } from "./matrix-text-rendering.js";
-import { matrixHtmlContent, matrixThreadRelation, type MatrixOutputRouting } from "./matrix-message-content.js";
+import { matrixHtmlContent, type MatrixHtmlBody, type MatrixOutputRouting } from "./matrix-message-content.js";
 import type { MatrixSafeHtml } from "./matrix-html.js";
 import type { MatrixCryptoAdapter } from "./crypto-contracts.js";
 
@@ -1535,8 +1535,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       throw new MatrixAdapterError("send_message", "The Matrix message part is invalid", permanentFailure());
     }
 
-    this.#validateOutputRouting(part);
-    const content = matrixHtmlContent(renderMatrixText(part.content.body, part));
+    const content = this.#outputContent(renderMatrixText(part.content.body, part));
     await this.#sendTextContent(part.roomId, content, part.transactionId);
   }
 
@@ -1554,8 +1553,7 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     ) {
       throw new MatrixAdapterError("send_message", "The Matrix HTML message is invalid", permanentFailure());
     }
-    this.#validateOutputRouting(message);
-    const content = matrixHtmlContent(message, message.targetEventId);
+    const content = this.#outputContent(message, message.targetEventId);
     const response = await this.#sendTextContent(message.roomId, content, message.transactionId);
     if (message.targetEventId !== undefined) return message.targetEventId;
     if (!isRecord(response) || !isValidMatrixEventId(response.event_id)) {
@@ -1564,9 +1562,9 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     return response.event_id;
   }
 
-  #validateOutputRouting(routing: MatrixOutputRouting): void {
+  #outputContent(body: MatrixHtmlBody, targetEventId?: MatrixEventId): Readonly<Record<string, unknown>> {
     try {
-      matrixThreadRelation(routing);
+      return matrixHtmlContent(body, targetEventId);
     } catch {
       throw new MatrixAdapterError("send_message", "The Matrix thread routing is invalid", permanentFailure());
     }

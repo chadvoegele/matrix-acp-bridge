@@ -387,7 +387,8 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     return this.#enqueue(async () => {
       const current = this.#state;
       const key = conversationKey(accepted);
-      if (current?.threads.has(key) && current.threads.get(key)?.sessionId === accepted.sessionId) {
+      const existing = current?.threads.get(key);
+      if (existing !== undefined && existing.sessionId === accepted.sessionId) {
         return false;
       }
       const next: InternalState = {

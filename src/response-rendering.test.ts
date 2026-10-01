@@ -37,6 +37,9 @@ void test("renders every response kind with exact fallback and status text", () 
     [{ kind: "empty" }, "empty", RESPONSE_TEXT.empty],
     [{ kind: "busy" }, "busy", RESPONSE_TEXT.busy],
     [{ kind: "oversized" }, "oversized", RESPONSE_TEXT.oversized],
+    [{ kind: "reset" }, "reset", RESPONSE_TEXT.reset],
+    [{ kind: "unknown_thread" }, "unknown_thread", RESPONSE_TEXT.unknown_thread],
+    [{ kind: "thread_reset_guidance" }, "thread_reset_guidance", RESPONSE_TEXT.thread_reset_guidance],
     [{ kind: "timeout" }, "timeout", RESPONSE_TEXT.timeout],
     [{ kind: "max_tokens" }, "max_tokens", RESPONSE_TEXT.max_tokens],
     [{ kind: "max_turn_requests" }, "max_turn_requests", RESPONSE_TEXT.max_turn_requests],
@@ -82,6 +85,15 @@ void test("renders every response kind with exact fallback and status text", () 
   });
   assert.equal(methodError[0]?.responseKind, "error");
   assert.equal(methodError[0]?.content.body, RESPONSE_TEXT.error);
+});
+
+void test("synthetic descriptors ignore supplied text and reject unknown or inherited response kinds", () => {
+  for (const kind of ["empty", "busy", "oversized", "reset", "unknown_thread", "thread_reset_guidance"] as const) {
+    assert.equal(render({ kind, text: "must not replace guidance" })[0]?.content.body, RESPONSE_TEXT[kind]);
+  }
+  for (const kind of ["unsupported", "toString", "constructor", "__proto__"]) {
+    assert.throws(() => render({ kind } as RenderableResponse), /unsupported response kind/u);
+  }
 });
 
 void test("joins non-end stop status after agent text and keeps status outside the output limit", () => {

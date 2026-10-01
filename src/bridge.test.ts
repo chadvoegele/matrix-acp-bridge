@@ -2723,6 +2723,27 @@ void test("thread mode gives top-level messages independent sessions and follows
   await bridge.stop();
 });
 
+void test("a quoted thread prompt ending in reset remains prompt text and preserves its session", async () => {
+  const acp = new FakeAcp();
+  acp.promptImpl = async () => methodError();
+  const matrix = new FakeMatrix();
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix });
+  await bridge.handleTimelineEvent(event("$quote-root"));
+  const body = "> Discuss this command\n\n/reset";
+  await bridge.handleTimelineEvent(threadEvent("$quoted-reset", "$quote-root", body));
+  await bridge.handleTimelineEvent(threadEvent("$after-quote", "$quote-root"));
+  assert.equal(acp.promptCalls[1]?.text, body);
+  assert.deepEqual(
+    acp.promptCalls.map(({ sessionId }) => sessionId),
+    ["session-1", "session-1", "session-1"],
+  );
+  assert.equal(
+    matrix.sent.some(({ responseKind }) => responseKind === "reset"),
+    false,
+  );
+  await bridge.stop();
+});
+
 void test("unknown threads and rejected roots never create context; top-level reset is unthreaded guidance", async () => {
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();

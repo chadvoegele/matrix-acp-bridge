@@ -386,7 +386,14 @@ export class InboundAuthorizer {
       return this.#reject(event, INBOUND_REJECTION_REASONS.invalidRelation);
     }
 
-    const body = relation.inReplyTo === undefined ? content.body : stripReplyFallback(content.body);
+    // Thread compatibility replies often have m.in_reply_to without a quoted
+    // fallback. Require the Matrix sender envelope before removing quote lines;
+    // otherwise ordinary Markdown blockquotes would be lost. Room replies keep
+    // their established normalization behavior.
+    const hasReplyFallback =
+      relation.inReplyTo !== undefined &&
+      (relation.threadRootEventId === undefined || /^> (?:\* )?<@[^\s<>]+:[^\s<>]+>/u.test(content.body));
+    const body = hasReplyFallback ? stripReplyFallback(content.body) : content.body;
     const routing: NormalizedInboundRouting = {
       roomId: record.roomId,
       eventId: record.eventId,
