@@ -1,7 +1,8 @@
 +++
 name = "Remove state backup Codex 6.1 Sol"
 creation_date = 2026-10-01T17:59:05Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Implement WAAP ticket tt-remove-automatic-migration-backup at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-remove-automatic-migration-backup/ticket.md. Read fully and follow repository instructions. User wants no automatic backup of bridge state; backup is the user's responsibility.
