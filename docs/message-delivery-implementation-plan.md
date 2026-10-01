@@ -36,7 +36,7 @@ Delivery branch: `feat/message-delivery-steering`. Do not merge to `main`.
 
 ## Execution and review
 
-Use WAAP developer agents via Codex model `gpt-6.1-sol`, reasoning effort `xhigh`.
+Use WAAP developer agents via Codex model `gpt-6.1-sol`, reasoning effort `medium`.
 Each agent works only in its WAAP-created worktree and commits its changes.
 The coordinator integrates finished agent branches into the delivery branch;
 WAAP ticket completion follows integration and verification. Parallel agents
