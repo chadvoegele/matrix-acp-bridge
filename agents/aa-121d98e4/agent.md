@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-10-01T22:37:11Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # Developer/testing assignment: actual live Matrix steering for PR22
