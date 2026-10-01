@@ -1530,12 +1530,17 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
       typeof part.transactionId !== "string" ||
       !isRecord(part.content) ||
       part.content.msgtype !== "m.text" ||
-      typeof part.content.body !== "string"
+      typeof part.content.body !== "string" ||
+      (part.formattedBody !== undefined && typeof part.formattedBody !== "string")
     ) {
       throw new MatrixAdapterError("send_message", "The Matrix message part is invalid", permanentFailure());
     }
 
-    const content = this.#outputContent(renderMatrixText(part.content.body, part));
+    const rendered =
+      part.formattedBody === undefined
+        ? { ...part, ...renderMatrixText(part.content.body) }
+        : { ...part, body: part.content.body, formattedBody: part.formattedBody };
+    const content = this.#outputContent(rendered);
     await this.#sendTextContent(part.roomId, content, part.transactionId);
   }
 
@@ -1562,7 +1567,10 @@ export class MatrixClientAdapterImpl implements MatrixClientAdapter {
     return response.event_id;
   }
 
-  #outputContent(body: MatrixHtmlBody, targetEventId?: MatrixEventId): Readonly<Record<string, unknown>> {
+  #outputContent(
+    body: MatrixHtmlBody & MatrixOutputRouting,
+    targetEventId?: MatrixEventId,
+  ): Readonly<Record<string, unknown>> {
     try {
       return matrixHtmlContent(body, targetEventId);
     } catch {

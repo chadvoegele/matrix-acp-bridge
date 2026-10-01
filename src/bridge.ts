@@ -2,7 +2,7 @@ import { createCancellationController } from "./cancellation.js";
 import { createHash } from "node:crypto";
 import { AcpActivityModel, type AcpActivity } from "./acp-activity.js";
 import { AcpActivityBatches, type ActivityBatch } from "./acp-activity-batches.js";
-import { renderMatrixTextChunk } from "./matrix-text-rendering.js";
+import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
 import type { MatrixSafeHtml } from "./matrix-html.js";
 import { systemClock } from "./clock.js";
 import type { CancellationController, Unsubscribe } from "./cancellation.js";
@@ -1940,27 +1940,28 @@ export class BridgeCoordinator {
     turn.lastTextGroup = undefined;
     if (this.#matrix.sendHtmlMessage === undefined || turn.liveFailed || !group.text.trim()) return;
     this.#enqueueLive(turn, async () => {
-      const characters = [...group.text];
-      let offset = 0;
-      while (offset < characters.length && !turn.liveFailed) {
-        const chunk = renderMatrixTextChunk(
-          characters,
-          offset,
-          this.#config.limits.maxMatrixMessageBytes,
-          routingForTurn(turn),
+      let chunks: readonly MatrixHtmlBody[];
+      try {
+        const routing = routingForTurn(turn);
+        chunks = renderMatrixTextChunks(group.text, this.#config.limits.maxMatrixMessageBytes, (rendered) =>
+          matrixHtmlContentBytes({ ...rendered, ...routing }),
         );
-        if (chunk === undefined) {
-          turn.liveFailed = true;
-          this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
-          break;
-        }
-        const id = await this.#deliverLive(turn, `text-${turn.groups.indexOf(group)}`, offset, chunk.rendered);
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        turn.liveFailed = true;
+        this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
+        return;
+      }
+      let offset = 0;
+      for (const chunk of chunks) {
+        if (turn.liveFailed) break;
+        const id = await this.#deliverLive(turn, `text-${turn.groups.indexOf(group)}`, offset, chunk);
         if (id === undefined) {
           turn.liveFailed = true;
           break;
         }
-        offset = chunk.nextOffset;
-        group.sentLength += chunk.rendered.body.length;
+        offset += [...chunk.body].length;
+        group.sentLength += chunk.body.length;
       }
     });
   }

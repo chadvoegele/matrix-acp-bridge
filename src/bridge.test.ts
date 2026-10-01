@@ -2620,7 +2620,7 @@ void test("validated thread routing survives eager text, activity retries and la
     await flush();
     clock.advanceBy(300);
     await completion;
-    const text = matrix.html.filter((message) => message.body.startsWith("<&😀"));
+    const text = matrix.html.filter((message) => /^(?:[<&]|😀)+$/u.test(message.body));
     assert.ok(text.length > 1);
     assert.equal(text.map((message) => message.body).join(""), "<&😀".repeat(200));
     for (const message of matrix.html) {

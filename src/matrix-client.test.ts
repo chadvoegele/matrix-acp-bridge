@@ -21,6 +21,9 @@ import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
 import type { CryptoStatePaths } from "./crypto-contracts.js";
 import type { InboundMatrixEvent, MatrixSyncBatch } from "./matrix-client.js";
 import { renderMatrixResponse, RESPONSE_TEXT } from "./response-rendering.js";
+import { renderMatrixText, renderMatrixTextChunks } from "./matrix-text-rendering.js";
+import type { MatrixHtmlBody } from "./matrix-message-content.js";
+import type { MatrixSafeHtml } from "./matrix-html.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
 
 const ROOM_ID = "!room:example.org";
@@ -2128,6 +2131,74 @@ void test("shutdown during a transient outage emits no false restoration", async
 });
 
 for (const encryption of ["disabled", "required"] as const) {
+  void test(`${encryption} live HTML sends retain whitespace-only and definition-only chunks`, async () => {
+    const fake = readyClient();
+    const adapter = encryption === "required" ? requiredAdapterFor(fake) : adapterFor(fake);
+    if (encryption === "required") {
+      fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
+      await adapter.initializeCrypto(CRYPTO_STATE);
+    }
+    await adapter.start();
+    const routing = { threadRootEventId: "$root", threadFallbackEventId: "$reply" };
+    const measure = (rendered: MatrixHtmlBody): number => matrixHtmlContentBytes({ ...rendered, ...routing });
+    const link = "[" + "a".repeat(378) + "](https://example.org)";
+    const text = link + " " + link;
+    const limit = measure(renderMatrixText(link));
+    const chunks = renderMatrixTextChunks(text, limit, measure);
+    assert.deepEqual(
+      chunks.map(({ body }) => body),
+      [link, " ", link],
+    );
+    chunks.push(renderMatrixText("[ref]: https://example.org\n"));
+    for (const [index, chunk] of chunks.entries()) {
+      await adapter.sendHtmlMessage({
+        ...routing,
+        ...chunk,
+        roomId: ROOM_ID,
+        transactionId: `empty-html-${index}`,
+        formattedBody: chunk.formattedBody as MatrixSafeHtml,
+      });
+    }
+    assert.equal(fake.sent.length, chunks.length);
+    assert.equal(
+      fake.sent
+        .slice(0, 3)
+        .map(({ content }) => content.body)
+        .join(""),
+      text,
+    );
+    assert.ok(fake.sent.every(({ content }) => Buffer.byteLength(JSON.stringify(content)) <= limit));
+    await adapter.stop();
+  });
+
+  void test(`${encryption} adapter sends reference-aware multipart HTML without re-rendering each part`, async () => {
+    const fake = readyClient();
+    const adapter = encryption === "required" ? requiredAdapterFor(fake) : adapterFor(fake);
+    if (encryption === "required") {
+      fake.rooms.set(ROOM_ID, room(ROOM_ID, "join", true));
+      await adapter.initializeCrypto(CRYPTO_STATE);
+    }
+    await adapter.start();
+    const text = "[Read more][ref]\n\n" + "Other paragraph.\n\n".repeat(50) + "[ref]: https://example.org\n";
+    const parts = renderMatrixResponse({
+      roomId: ROOM_ID,
+      inboundEventId: "$input",
+      threadRootEventId: "$root",
+      outcome: { kind: "agent", text },
+      maxOutputBytes: 4096,
+      maxMatrixMessageBytes: 512,
+    });
+    assert.ok(parts.length > 1);
+    assert.equal(parts[0]?.content.body.includes("[ref]:"), false);
+    for (const part of parts) await adapter.sendMessage(part);
+    assert.match(String(fake.sent[0]?.content.formatted_body), /<a href="https:\/\/example.org">Read more<\/a>/u);
+    for (const [index, send] of fake.sent.entries()) {
+      assert.equal(send.content.formatted_body, parts[index]?.formattedBody);
+      assert.ok(Buffer.byteLength(JSON.stringify(send.content)) <= 512);
+    }
+    await adapter.stop();
+  });
+
   void test(`${encryption} adapter preserves threads for multipart text, HTML edits, activity and synthetic responses`, async () => {
     const fake = readyClient();
     const adapter = encryption === "required" ? requiredAdapterFor(fake) : adapterFor(fake);

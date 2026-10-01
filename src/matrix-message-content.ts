@@ -20,7 +20,7 @@ export interface MatrixTextMessageContent {
   readonly "m.relates_to"?: MatrixThreadRelation;
 }
 
-export interface MatrixHtmlBody extends MatrixOutputRouting {
+export interface MatrixHtmlBody {
   readonly body: string;
   readonly formattedBody: string;
 }
@@ -52,7 +52,10 @@ export function matrixTextContent(body: string, routing: MatrixOutputRouting = {
 }
 
 /** Build the exact wire content used for both delivery and byte accounting. */
-export function matrixHtmlContent(message: MatrixHtmlBody, targetEventId?: string): Readonly<Record<string, unknown>> {
+export function matrixHtmlContent(
+  message: MatrixHtmlBody & MatrixOutputRouting,
+  targetEventId?: string,
+): Readonly<Record<string, unknown>> {
   const newContent = {
     ...matrixTextContent(message.body, message),
     format: MATRIX_HTML_FORMAT,
@@ -70,11 +73,11 @@ export function matrixHtmlContent(message: MatrixHtmlBody, targetEventId?: strin
       };
 }
 
-export function matrixHtmlContentBytes(message: MatrixHtmlBody, targetEventId?: string): number {
+export function matrixHtmlContentBytes(message: MatrixHtmlBody & MatrixOutputRouting, targetEventId?: string): number {
   return Buffer.byteLength(JSON.stringify(matrixHtmlContent(message, targetEventId)), "utf8");
 }
 
 /** Reserve the edit envelope before its target event ID is known. */
-export function matrixHtmlEditContentBytes(message: MatrixHtmlBody): number {
+export function matrixHtmlEditContentBytes(message: MatrixHtmlBody & MatrixOutputRouting): number {
   return matrixHtmlContentBytes(message, `$${"x".repeat(254)}`);
 }

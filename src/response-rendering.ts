@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import type { MatrixEventId, MatrixRoomId } from "./matrix-client.js";
 import type { AcpOutcome, AcpStopReason } from "./acp-client.js";
 import { matrixHtmlContentBytes, matrixTextContent, type MatrixOutputRouting } from "./matrix-message-content.js";
-import { renderMatrixText } from "./matrix-text-rendering.js";
+import { renderMatrixMultipartText, renderMatrixText } from "./matrix-text-rendering.js";
+import { packMarkdownText } from "./markdown-packing.js";
+import { markdownReferences } from "./matrix-markdown.js";
+import type { MatrixSafeHtml } from "./matrix-html.js";
 import type { ThreadRoutingMetadata } from "./conversation-identity.js";
 import { utf8ByteLength } from "./text-utils.js";
 
@@ -36,6 +39,8 @@ export interface RenderedMatrixPart extends MatrixOutputRouting {
   readonly partCount: number;
   readonly transactionId: MatrixTransactionId;
   readonly content: MatrixTextMessageContent;
+  /** Pre-rendered thread HTML preserves references defined in another part. */
+  readonly formattedBody?: MatrixSafeHtml;
 }
 
 /** The marker is part of the user-visible response contract. */
@@ -212,43 +217,20 @@ function codePointEnd(value: string, start: number, maxBytes: number): number {
   return end;
 }
 
-function fittingChunkEnd(
-  value: string,
-  start: number,
-  maxBytes: number,
-  prefix: string,
-  measure: (body: string) => number,
-): number {
-  let maxCodePointEnd = codePointEnd(value, start, maxBytes - utf8ByteLength(prefix));
-  if (measure !== utf8ByteLength) {
-    const candidateText = value.slice(start, maxCodePointEnd);
-    const characters = [...candidateText];
-    let low = 1;
-    let high = characters.length;
-    let fitting = 0;
-    while (low <= high) {
-      const middle = Math.floor((low + high) / 2);
-      if (measure(`${prefix}${characters.slice(0, middle).join("")}`) <= maxBytes) {
-        fitting = middle;
-        low = middle + 1;
-      } else high = middle - 1;
-    }
-    maxCodePointEnd = start + characters.slice(0, fitting).join("").length;
-  }
+function fittingChunkEnd(value: string, start: number, maxBytes: number): number {
+  const maxCodePointEnd = codePointEnd(value, start, maxBytes);
   if (maxCodePointEnd === start) {
     throw new RangeError("maxMatrixMessageBytes cannot fit one Unicode code point");
   }
 
   // Delimiters belong to the preceding part.  Paragraph boundaries have
   // priority even when a later line boundary would fit more text.
-  const boundary =
+  return (
     lastParagraphBoundary(value, start, maxCodePointEnd) ??
     lastLineBoundary(value, start, maxCodePointEnd) ??
     lastGraphemeBoundary(value, start, maxCodePointEnd) ??
-    maxCodePointEnd;
-  // Markdown formatting may change non-monotonically at a delimiter. Keep
-  // the tested prefix if the preferred boundary would exceed the wire budget.
-  return measure(`${prefix}${value.slice(start, boundary)}`) <= maxBytes ? boundary : maxCodePointEnd;
+    maxCodePointEnd
+  );
 }
 
 function splitWithAssumedPartCount(
@@ -257,15 +239,20 @@ function splitWithAssumedPartCount(
   assumedPartCount: number,
   measure: (body: string) => number,
 ): string[] {
+  if (measure !== utf8ByteLength) {
+    return packMarkdownText(value, maxMatrixMessageBytes, measure, (index) => `[${index + 1}/${assumedPartCount}]\n`);
+  }
+  // Preserve the established plain-text room-mode boundaries.
   const parts: string[] = [];
   let offset = 0;
   while (offset < value.length) {
     const partNumber = parts.length + 1;
     const prefix = `[${partNumber}/${assumedPartCount}]\n`;
-    if (measure(prefix) >= maxMatrixMessageBytes) {
+    const capacity = maxMatrixMessageBytes - utf8ByteLength(prefix);
+    if (capacity <= 0) {
       throw new RangeError("maxMatrixMessageBytes cannot fit a multipart prefix");
     }
-    const end = fittingChunkEnd(value, offset, maxMatrixMessageBytes, prefix, measure);
+    const end = fittingChunkEnd(value, offset, capacity);
     if (end <= offset) {
       throw new Error("multipart splitter failed to make progress");
     }
@@ -283,6 +270,7 @@ export function splitMatrixResponseText(
   value: string,
   maxMatrixMessageBytes: number,
   measure: (body: string) => number = utf8ByteLength,
+  measurePart: (body: string) => number = measure,
 ): string[] {
   assertPositiveInteger(maxMatrixMessageBytes, "maxMatrixMessageBytes");
   if (measure(value) <= maxMatrixMessageBytes) {
@@ -299,7 +287,7 @@ export function splitMatrixResponseText(
       break;
     }
     seen.add(assumedPartCount);
-    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, assumedPartCount, measure);
+    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, assumedPartCount, measurePart);
     if (parts.length === assumedPartCount) {
       return parts;
     }
@@ -311,7 +299,7 @@ export function splitMatrixResponseText(
   // nonempty value when every prefix can fit at least one code point.
   const upperBound = Math.max(2, value.length);
   for (let candidate = 2; candidate <= upperBound; candidate += 1) {
-    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, candidate, measure);
+    const parts = splitWithAssumedPartCount(value, maxMatrixMessageBytes, candidate, measurePart);
     if (parts.length === candidate) {
       return parts;
     }
@@ -469,11 +457,17 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
   };
   // Room mode keeps its established body budget and wire shape. Thread parts
   // include Markdown HTML and relations in their full serialized payload budget.
-  const measure =
-    request.threadRootEventId === undefined
-      ? utf8ByteLength
-      : (body: string): number => matrixHtmlContentBytes(renderMatrixText(body, routing));
-  const bodies = splitMatrixResponseText(normalized.text, request.maxMatrixMessageBytes, measure);
+  const references = request.threadRootEventId === undefined ? {} : markdownReferences(normalized.text);
+  const threaded = request.threadRootEventId !== undefined;
+  const render = (body: string) => renderMatrixText(body, references);
+  const renderPart = (body: string) => renderMatrixMultipartText(body, references);
+  const measure = threaded
+    ? (body: string): number => matrixHtmlContentBytes({ ...render(body), ...routing })
+    : utf8ByteLength;
+  const measurePart = threaded
+    ? (body: string): number => matrixHtmlContentBytes({ ...renderPart(body), ...routing })
+    : utf8ByteLength;
+  const bodies = splitMatrixResponseText(normalized.text, request.maxMatrixMessageBytes, measure, measurePart);
   const partCount = bodies.length;
 
   return bodies.map((body, index) => {
@@ -493,6 +487,9 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
         ...(routing.threadRootEventId === undefined ? {} : { threadRootEventId: routing.threadRootEventId }),
       }),
       content: matrixTextContent(body, routing),
+      ...(threaded
+        ? { formattedBody: (partCount > 1 ? renderPart(body) : render(body)).formattedBody as MatrixSafeHtml }
+        : {}),
     };
   });
 }

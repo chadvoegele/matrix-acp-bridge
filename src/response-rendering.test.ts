@@ -129,6 +129,14 @@ void test("truncates only at valid UTF-8 code-point boundaries", () => {
   assert.equal(Buffer.from(result, "utf8").toString("utf8"), result);
 });
 
+function partPayloadBytes(part: RenderedMatrixPart): number {
+  return matrixHtmlContentBytes({
+    ...part,
+    body: part.content.body,
+    formattedBody: part.formattedBody ?? renderMatrixText(part.content.body).formattedBody,
+  });
+}
+
 function removePrefix(body: string): string {
   return body.replace(/^\[\d+\/\d+\]\n/u, "");
 }
@@ -286,7 +294,7 @@ void test("thread multipart output and retries retain routing and budget the com
       "m.in_reply_to": { event_id: EVENT_ID },
       is_falling_back: true,
     });
-    assert.ok(matrixHtmlContentBytes(renderMatrixText(part.content.body, part)) <= 512);
+    assert.ok(partPayloadBytes(part) <= 512);
   }
   assert.deepEqual(renderMatrixResponse(request), parts);
   const ids = new Set(parts.map((part) => part.transactionId));
@@ -302,10 +310,58 @@ void test("thread multipart output and retries retain routing and budget the com
   }
 });
 
+void test("thread multipart packing keeps a complete link at the exact payload boundary", () => {
+  const link = "[" + "a".repeat(378) + "](https://example.org)";
+  const text = link + " " + "z".repeat(3000);
+  const parts = renderMatrixResponse({
+    roomId: ROOM_ID,
+    inboundEventId: "$reply",
+    threadRootEventId: "$root",
+    threadFallbackEventId: "$reply",
+    outcome: { kind: "agent", text },
+    maxOutputBytes: 10_000,
+    maxMatrixMessageBytes: 1043,
+  });
+  assert.equal(removePrefix(parts[0]!.content.body), link);
+  assert.match(parts[0]!.formattedBody!, /<a href="https:\/\/example.org">/u);
+  assert.equal(parts.map(({ content }) => removePrefix(content.body)).join(""), text);
+  for (const part of parts) assert.ok(partPayloadBytes(part) <= 1043);
+  assert.deepEqual(
+    renderMatrixResponse({
+      roomId: ROOM_ID,
+      inboundEventId: "$reply",
+      threadRootEventId: "$root",
+      threadFallbackEventId: "$reply",
+      outcome: { kind: "agent", text },
+      maxOutputBytes: 10_000,
+      maxMatrixMessageBytes: 1043,
+    }),
+    parts,
+  );
+});
+
+void test("multipart labels do not turn intact indented code blocks into paragraphs", () => {
+  const text = "Before.\n\n    code <one>\n    code <two>\n\n" + "Following paragraph.\n\n".repeat(30);
+  const parts = renderMatrixResponse({
+    roomId: ROOM_ID,
+    inboundEventId: EVENT_ID,
+    threadRootEventId: "$root",
+    outcome: { kind: "agent", text },
+    maxOutputBytes: 4096,
+    maxMatrixMessageBytes: 512,
+  });
+  assert.ok(parts.length > 1);
+  assert.ok(parts.some(({ formattedBody }) => formattedBody?.includes("<pre><code>code &lt;one&gt;")));
+  assert.equal(parts.map(({ content }) => removePrefix(content.body)).join(""), text);
+  for (const part of parts) {
+    assert.ok(matrixHtmlContentBytes({ ...part, body: part.content.body, formattedBody: part.formattedBody! }) <= 512);
+  }
+});
+
 void test("thread response exact payload limits include JSON escaping, HTML and relations", () => {
   const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadFallbackEventId: "$fallback" };
   const text = '<&😀"\\'.repeat(12);
-  const exact = matrixHtmlContentBytes(renderMatrixText(text, routing));
+  const exact = matrixHtmlContentBytes({ ...renderMatrixText(text), ...routing });
   const request = {
     roomId: ROOM_ID,
     inboundEventId: EVENT_ID,
@@ -318,7 +374,7 @@ void test("thread response exact payload limits include JSON escaping, HTML and 
   const split = renderMatrixResponse({ ...request, maxMatrixMessageBytes: exact - 1 });
   assert.ok(split.length > 1);
   assert.equal(split.map((part) => removePrefix(part.content.body)).join(""), text);
-  for (const part of split) assert.ok(matrixHtmlContentBytes(renderMatrixText(part.content.body, part)) < exact);
+  for (const part of split) assert.ok(partPayloadBytes(part) < exact);
 });
 
 void test("synthetic thread errors and unthreaded reset guidance have exact text and distinct IDs", () => {
