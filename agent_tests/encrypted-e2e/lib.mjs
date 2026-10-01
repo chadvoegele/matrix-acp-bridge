@@ -65,7 +65,7 @@ access_token_file = ${tomlString(identity.tokenFile)}
 allowed_rooms = [${tomlString(environment.roomId)}]
 allowed_senders = [${tomlString(allowedSender)}]
 encryption = "required"
-response_mode = ${tomlString(process.env.E2E_RESPONSE_MODE ?? "room")}
+response_mode = "room"
 
 [acp]
 cwd = ${tomlString(environment.acpCwd)}

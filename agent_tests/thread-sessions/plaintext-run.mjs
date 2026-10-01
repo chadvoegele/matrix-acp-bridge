@@ -5,9 +5,9 @@ import { join } from "node:path";
 
 import { runSender, startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { ThreadSessionMonitor } from "../e2e-support/thread-sessions.mjs";
-import { defaultEnvironmentPath, readEnvironment, testDir, writePrivateFile } from "./lib.mjs";
+import { defaultEnvironmentPath, readEnvironment, testDir, writePrivateFile } from "./plaintext-lib.mjs";
 
-const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
+const environmentPath = process.argv[2] ?? process.env.THREAD_PLAINTEXT_ENVIRONMENT_FILE ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const marker = randomBytes(6).toString("hex").toUpperCase();
 const monitor = new ThreadSessionMonitor();
@@ -26,7 +26,7 @@ function startPair() {
 async function exchange(prompt, expected, options = {}) {
   const args = ["--prompt", prompt, "--expect", expected, "--expect-thread"];
   if (options.threadRootEventId !== undefined) args.push("--thread-root", options.threadRootEventId);
-  const result = await runSender({ environmentPath, senderPath: join(testDir, "sender.mjs"), args });
+  const result = await runSender({ environmentPath, senderPath: join(testDir, "plaintext-sender.mjs"), args });
   persistSessionIds = persistSessionIds.then(() =>
     writePrivateFile(sessionIdsPath, `${JSON.stringify([...sessionIds], null, 2)}\n`),
   );

@@ -38,9 +38,9 @@ shared `agent_tests/e2e-support/thread-sessions.mjs` monitor now reads the actua
 ACP v1 `agentCapabilities.loadSession` field. Both senders verify the response
 root separately from its fallback target, which is the latest inbound event.
 Support tests exercise these assertions against actual bridge-rendered content
-and representative initialize/create/load/prompt wire frames. The existing activity
-wire runners also check every original and replacement thread relation when
-`E2E_RESPONSE_MODE=thread`. Encrypted SAS setup now honors the configured private
+and representative initialize/create/load/prompt wire frames. The dedicated thread
+activity runners also check every original and replacement thread relation.
+Encrypted SAS setup honors the configured private
 environment-file override. The unsafe-backup test explicitly sets public fixture
 permissions, so a private process umask cannot invalidate its failure injection.
 
@@ -55,10 +55,13 @@ shutdown, avoiding a filesystem cleanup race without changing production checks.
 
 ## External validation and operational limits
 
-Both live entry points were attempted on 2026-09-30:
+Both live scenarios were attempted on 2026-09-30. Their entry points now live
+in the dedicated thread suite:
 
-- `agent_tests/unencrypted-e2e/thread-sessions-test.sh`
-- `agent_tests/encrypted-e2e/thread-sessions-test.sh`
+- `agent_tests/thread-sessions/plaintext-test.sh`
+- `agent_tests/thread-sessions/encrypted-test.sh`
+
+The relocated harnesses have local regression coverage but have not been rerun live.
 
 Initial invocations without the private test configuration exited with status 2
 and `E2E_HOMESERVER is required`. Further inspection found the repository's private
@@ -76,8 +79,8 @@ wire types, correct root/fallback relations and reuse of one ACP session.
 The activity runners support live tests with the existing scripted ACP peer:
 
 ```sh
-E2E_RESPONSE_MODE=thread agent_tests/unencrypted-e2e/test-activity.sh
-E2E_RESPONSE_MODE=thread agent_tests/encrypted-e2e/test-activity.sh
+agent_tests/thread-sessions/plaintext-test-activity.sh
+agent_tests/thread-sessions/encrypted-test-activity.sh
 ```
 
 They inspect thoughts, tools, eager text, archived edits, replacement content and
@@ -85,8 +88,8 @@ thread relations; encrypted output must remain encrypted on the wire. The
 observer scopes reused encrypted histories by the current test prompt's server
 timestamp rather than by expected routing, so misrouted new output still fails.
 Both live activity scenarios passed on 2026-09-30 using the approved setup,
-`activity-wire.mjs` runners and cleanup. Plaintext used the standalone
-`E2E_RESPONSE_MODE=thread agent_tests/unencrypted-e2e/test-activity.sh` entry point;
+`activity-wire.mjs` runners and cleanup. Before the suite separation, plaintext used
+`E2E_RESPONSE_MODE=thread agent_tests/unencrypted-e2e/test-activity.sh`;
 encrypted used the provisioned private environment with the scripted ACP peer.
 The peer waits one second between updates so intermediate status backgrounds can
 be observed over live Matrix delivery. All original assertions remain enabled.

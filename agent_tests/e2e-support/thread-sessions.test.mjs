@@ -16,7 +16,7 @@ test("live thread assertions accept bridge follow-ups with distinct roots and fa
     maxOutputBytes: 4096,
     maxMatrixMessageBytes: 4096,
   });
-  const content = matrixHtmlContent(renderMatrixText(response.content.body, response));
+  const content = matrixHtmlContent({ ...renderMatrixText(response.content.body), ...response });
   assertThreadResponse(content, "$root", "$followup");
   assert.throws(() => assertThreadResponse(content, "$other-root", "$followup"), /thread root/u);
   assert.throws(() => assertThreadResponse(content, "$root", "$root"), /fallback reply/u);

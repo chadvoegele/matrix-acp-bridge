@@ -107,25 +107,5 @@ command.
 
 ## Thread-scoped sessions
 
-Run the thread-mode live scenario with the existing encrypted test room:
-
-```sh
-agent_tests/encrypted-e2e/thread-sessions-test.sh
-```
-
-It sends an encrypted top-level root and an encrypted follow-up. The sender
-authenticates and decrypts both prompts and replies, checks each raw wire event
-is `m.room.encrypted`, and verifies that prompt and response relations point to
-the expected Matrix thread root. The shared cleanup removes persisted thread
-session mappings through ACP as well as revoking test devices.
-
-To inspect thread relations on scripted thought/tool activity, eager text and
-replacement content using the same live Matrix room, run:
-
-```sh
-E2E_RESPONSE_MODE=thread agent_tests/encrypted-e2e/test-activity.sh
-```
-
-This uses the existing deterministic ACP peer and checks the thread root and
-fallback on every original and on each edit's `m.new_content`. The edit envelope
-keeps its `m.replace` relation. Raw event types must remain encrypted; authenticated decrypted content is inspected.
+Thread tests are a separate suite: [thread-sessions](../thread-sessions/README.md).
+This suite always uses room mode, including its senders and activity tests.

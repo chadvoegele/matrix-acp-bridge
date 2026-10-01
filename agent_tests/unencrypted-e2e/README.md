@@ -151,29 +151,5 @@ coverage. Device and session cleanup still run through the usual harness.
 
 ## Thread-scoped sessions
 
-Run the thread-mode live scenario with the same two test accounts and an
-unencrypted room:
-
-```sh
-agent_tests/unencrypted-e2e/thread-sessions-test.sh
-```
-
-It sends two roots concurrently, verifies independent ACP sessions and actual
-Matrix thread relations on plaintext prompts and responses, then restarts the
-bridge and checks lazy thread resume when ACP advertises `loadSession`. Without
-that capability it checks that old thread follow-ups receive the unknown
-session response. When loading is supported, it also verifies thread-local
-reset and fresh-session creation. An unknown-root follow-up must not reach ACP.
-Every observed ACP session ID, including sessions detached by reset, is saved
-under the ignored private state so normal cleanup can delete them.
-
-To inspect thread relations on scripted thought/tool activity, eager text and
-replacement content using the same live Matrix room, run:
-
-```sh
-E2E_RESPONSE_MODE=thread agent_tests/unencrypted-e2e/test-activity.sh
-```
-
-This uses the existing deterministic ACP peer and checks the thread root and
-fallback on every original and on each edit's `m.new_content`. The edit envelope
-keeps its `m.replace` relation. Raw plaintext events and full payload sizes are inspected.
+Thread tests are a separate suite: [thread-sessions](../thread-sessions/README.md).
+This suite always uses room mode, including its senders and activity tests.

@@ -22,6 +22,9 @@ case $environment_file in
   *) environment_file=$(pwd)/$environment_file ;;
 esac
 
+# Setup runs from the repository root; keep its path identical to cleanup's.
+export "$environment_variable=$environment_file"
+
 cleanup_on_exit() {
   status=$?
   trap - EXIT HUP INT TERM

@@ -5,9 +5,9 @@ import { join } from "node:path";
 
 import { runSender, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
 import { ThreadSessionMonitor } from "../e2e-support/thread-sessions.mjs";
-import { defaultEnvironmentPath, readEnvironment, testDir } from "./lib.mjs";
+import { defaultEnvironmentPath, readEnvironment, testDir } from "./encrypted-lib.mjs";
 
-const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
+const environmentPath = process.argv[2] ?? process.env.THREAD_ENCRYPTED_ENVIRONMENT_FILE ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const marker = randomBytes(6).toString("hex").toUpperCase();
 const monitor = new ThreadSessionMonitor();
@@ -16,7 +16,7 @@ let pair;
 async function exchange(prompt, expected, threadRootEventId) {
   const args = ["--prompt", prompt, "--expect", expected, "--expect-thread"];
   if (threadRootEventId !== undefined) args.push("--thread-root", threadRootEventId);
-  return runSender({ environmentPath, senderPath: join(testDir, "sender.mjs"), args });
+  return runSender({ environmentPath, senderPath: join(testDir, "encrypted-sender.mjs"), args });
 }
 
 try {
