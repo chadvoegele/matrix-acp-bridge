@@ -1,7 +1,8 @@
 +++
 name = "Self contained source guidance Codex 6.1 Sol"
 creation_date = 2026-10-01T18:01:57Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Implement WAAP ticket tt-remove-project-doc-references-from-source at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-remove-project-doc-references-from-source/ticket.md. Read fully and follow repository guidance. Remove repository-doc links from source code/comments/runtime guidance, keep recovery instructions self-contained.
