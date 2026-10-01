@@ -8,43 +8,35 @@ last_update = 2026-10-01
 
 ## Purpose
 
-Let Matrix users choose between a new agent turn and steering a running turn.
-Delegate agent-side queueing to pi-acp and Pi rather than holding every Matrix
-message until the current turn finishes. Retain bounded dispatch, tracked
-completion, conversation isolation, and restart safety.
+Let Matrix users steer a running agent turn without waiting for the next prompt.
+Keep the bridge's existing prompt FIFO and tracked turn completion, while adding
+a separate bounded path for steering requests.
 
 ## Context
 
 [pi-acp PR #115](https://github.com/svkozak/pi-acp/pull/115) proposes the optional
-ACP extension `_session/steering`. Support is advertised in the initialize
-response at `_meta.steering.supported = true`.
+ACP extension `_session/steering`, advertised in the initialize response at
+`_meta.steering.supported = true`.
 
-The relevant queues serve different purposes:
+The response timings differ:
 
-| Interface               | Queue owner and behavior                                                                                    | Response timing                         |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| ACP `session/prompt`    | pi-acp queues concurrent requests as separate future turns in the same session.                             | After that request's turn completes.    |
-| ACP `_session/steering` | pi-acp forwards input to Pi's native steering queue. Pi decides when to deliver it within the running turn. | After Pi acknowledges the steering RPC. |
-| Pi native follow-up     | Pi waits until the agent has no more tool calls or steering messages.                                       | Not separately exposed by PR #115.      |
+- `session/prompt` resolves when its requested turn finishes. Assistant text and
+  activity arrive separately through `session/update` notifications.
+- `_session/steering` returns `injected` after pi-acp awaits Pi's native `steer`
+  RPC successfully. This is an agent-server acknowledgement delivered by the SDK,
+  not a result synthesized by the SDK. It acknowledges acceptance, not consumption.
+- With `_meta.steering.idleBehavior = "promptRequired"`, idle steering returns
+  `promptRequired` with reason `noRunningTurn`, without starting a turn. The bridge
+  can automatically submit a tracked prompt; the user need not resend anything.
 
-Pi steering is delivered after current tool execution and before a subsequent
-LLM call. Pi controls delivery mode (all messages or one at a time). The bridge
-must not reimplement these agent queues. Steering is not cancellation, immediate
-tool interruption, or pi's `/steering` command for configuring delivery mode.
+Pi owns its steering queue and consumption policy. Steering is delivered after
+current tool execution and before a subsequent LLM call. It is not cancellation,
+immediate tool interruption, or pi's `/steering` queue-mode command.
 
-The bridge currently holds a per-conversation FIFO through prompt completion,
-output drain, and Matrix delivery. The ACP adapter has one text collector per
-session; the coordinator likewise has one turn collector per session. Both
-assume only one unresolved prompt per session. Delegating prompt queueing therefore
-requires more than replacing the dispatch call.
-
-Two protocol constraints matter:
-
-- `session/prompt` has no separate acceptance acknowledgement. Successful local
-  submission is not proof of server acceptance; its response is turn completion.
-- ACP updates identify a session, not the originating prompt request. With
-  multiple outstanding prompts, the bridge needs reliable turn boundaries to
-  attribute streaming output, activity, timeouts, and Matrix replies.
+The bridge currently keeps one unresolved prompt per conversation, followed by
+output drain and Matrix delivery. Retaining that behavior avoids the need to
+correlate updates from multiple outstanding prompts in one session. Only steering
+bypasses the running prompt's completion barrier.
 
 The upstream PR remains open and must be rechecked before implementation. This
 proposal extends the plaintext, persistence, thread-session, and verbose-output
@@ -54,18 +46,18 @@ specifications.
 
 - Support `/prompt <message>` and `/steer <message>` overrides.
 - Configure delivery of unprefixed messages globally.
-- Dispatch ready input without waiting for the previous turn to finish when the
-  agent contract supports it; let pi-acp/Pi own accepted input queues.
-- Separate local dispatch backlog from outstanding requests and durable completion.
-- Preserve compatibility with agents that do not advertise steering.
+- Send steering during an active prompt without replacing its collector or timer.
+- Automatically convert idle steering to a tracked prompt.
+- Preserve bounded intake, conversation isolation, and durable completion.
 
 ## Non-goals
 
-- Reimplementing Pi's steering/follow-up queues or their consumption policy.
+- Concurrent `session/prompt` requests within one conversation or delegating the
+  existing prompt FIFO to pi-acp.
+- Reimplementing Pi's steering queue or consumption policy.
 - Cancelling or restarting a turn to approximate steering.
 - Images, attachments, edits, reactions, or new Matrix event types.
-- Detached, untracked ACP turns or exactly-once ACP input.
-- Claiming a local backlog limit bounds input already accepted by Pi.
+- Detached turns, exactly-once ACP input, or consumption acknowledgements.
 - Implementing the feature in this documentation PR.
 
 ## Specification
@@ -97,54 +89,62 @@ payload is agent text, not a bridge reset. Other slash commands remain agent tex
 and use the configured default; the bridge does not configure Pi's queue modes.
 
 Authorization, encryption policy, relation validation, deduplication, and input
-byte limits must precede dispatch. Byte limits include the original normalized
-body, not only the stripped payload. Diagnostics must not log message payloads
-or raw ACP errors.
+byte limits must precede admission. Byte limits include the original normalized
+body, not only the stripped payload. Diagnostics must not log payloads or raw
+ACP errors.
 
 ### Conversation routing
 
 Both delivery modes target the existing conversation identity: room in room mode,
-or `(room ID, thread root event ID)` in thread mode. A valid thread follow-up must
-never select another session by sender, room activity, or fallback reply target.
+or `(room ID, thread root event ID)` in thread mode. Thread follow-ups must never
+select another session by sender, room activity, or fallback reply target.
 Unknown threads retain the existing error without an ACP call.
 
 In thread mode, a top-level message, including `/prompt` or `/steer`, starts a
-new independent conversation. Since that conversation is idle, steering delivery
-must become a tracked prompt as described below. It must not steer an unrelated
-active thread. Applicable responses and acknowledgements belong in the new
-message's thread. Reset retains its existing thread-mode guidance and scope.
+new independent conversation. Since that conversation has no running prompt,
+steering-selected input automatically becomes a tracked prompt. It must not steer
+an unrelated active thread. Applicable output belongs in the new message's thread.
+Reset retains its existing thread-mode guidance and scope.
 
-### Prompt delivery and local dispatch
+### Prompt FIFO and steering admission
 
-Prompt delivery must issue a tracked `session/prompt` request with the selected
-payload. For an agent with a verified concurrent-prompt/turn-boundary contract,
-the bridge must not wait for the previous prompt to resolve before submitting
-another prompt in the same session. pi-acp owns the future-turn FIFO.
+Prompt-selected input must keep the existing per-conversation FIFO. Its active
+entry remains active through prompt completion, output drain, and Matrix delivery.
+There must still be at most one unresolved `session/prompt` per conversation.
 
-The local queue holds only work awaiting session setup, dispatch readiness,
-transport capacity, or an outstanding-request limit. Once submitted, remove a
-prompt from that queue and retain a separate outstanding-request record until
-terminal handling. Do not label submission as confirmed server acceptance.
+Steering-selected input is eligible for a steering RPC only when dispatch is
+open, support is advertised, the target session has an unresolved prompt, and
+the run has not entered cancellation, timeout, shutdown, or fatal handling.
+Session setup/loading, permit waiting, idle state, and post-prompt output drain
+are not eligible. In those cases, automatically enqueue the stripped payload as
+an ordinary tracked prompt. Do not require a second user command.
 
-Dispatch must preserve admission order within a conversation. Waiting for a
-request's response must not block dispatch of later eligible input. Streaming
-output drain and Matrix delivery must not unnecessarily block input submission.
+Maintain a bounded steering lane separate from the prompt FIFO. It may send input
+to the running turn while ordinary prompts wait for future turns. An earlier
+queued ordinary prompt does not block steering: choosing steering explicitly,
+or configuring it as the default, selects the running turn rather than a future
+turn. This cross-lane behavior must be documented.
 
-`max_queued_turns_per_conversation` must bound local waiting input, not the
-agent's queue or all submitted requests. Existing `max_concurrent_prompts` must
-continue bounding unresolved `session/prompt` requests globally, including those
-queued at pi-acp. A prompt can consequently wait for a permit; this is capacity
-backpressure, not a mandatory turn-completion barrier. Steering must not require
-a prompt permit. Queue-full behavior retains the existing busy response.
+Pending steering entries, including an unresolved steering RPC, plus waiting
+prompt entries must share `max_queued_turns_per_conversation`. The active prompt
+remains excluded. A full queue retains the existing busy response without ACP
+input. Serialize steering requests within a conversation in admission order,
+with at most one unresolved steering RPC per conversation.
 
-### Steering contract
+Steering must not acquire a global prompt permit, increase `unresolvedPrompts`,
+replace a text/activity collector, or restart the active turn's timeout. Bound
+steering RPC lifetime by `startup_timeout_seconds`. A timeout has an ambiguous
+outcome and must not trigger automatic prompt redelivery.
+
+### Capability and wire contract
 
 Enable steering only when initialize metadata contains boolean
 `_meta.steering.supported = true`. Absent, false, or malformed optional metadata
 means unsupported, not a startup failure. Preserve other capabilities, including
 `loadSession`.
 
-Issue `_session/steering` as a JSON-RPC request on the shared connection:
+Issue `_session/steering` as a JSON-RPC request on the shared connection, with
+these params:
 
 ```json
 {
@@ -154,182 +154,145 @@ Issue `_session/steering` as a JSON-RPC request on the shared connection:
 }
 ```
 
-Every call must include the idle opt-in. Let the agent determine whether it is
-running; a bridge active entry is not authoritative during setup, turn transitions,
-or output drain. Steering requests must not replace prompt collectors, acquire
-prompt permits, or restart any active turn's timeout.
+Every request must include the idle opt-in. The local unresolved prompt is an
+eligibility check, not proof that the agent is still running when it receives
+the request. The agent response resolves this boundary race.
 
-After validated `injected`, remove the entry from local dispatch tracking, durably
-complete its Matrix event, then acknowledge
-`Steering accepted.` This means RPC acceptance, not model consumption or completion.
-Pi owns subsequent delivery of that input. Do not resend it as a prompt.
+For validated `injected`, remove the entry from the steering lane, durably
+complete its Matrix event, then send `Steering accepted.` Pi owns subsequent
+delivery. Do not submit the payload through `session/prompt` or wait for model
+consumption. The original prompt's completion remains independent.
 
-For `promptRequired` with reason `noRunningTurn`, convert the same entry to a
-tracked prompt with the same payload and event identity exactly once. Preserve
-its position ahead of later unsent input; do not allocate a second local queue
-slot. No detached turn may be started by the bridge.
+For `promptRequired` with reason `noRunningTurn`, convert that same entry to a
+tracked prompt with the same payload and event identity exactly once. Transfer
+its waiting capacity rather than allocating a second slot. Place converted input
+in the prompt FIFO according to original admission order relative to other
+waiting prompts; do not overtake the active entry. Send
+`No running turn; message queued as a prompt.` The event remains incomplete until
+that prompt reaches its normal terminal boundary.
 
-Serialize steering submission per conversation, with at most one unresolved
-steering RPC per conversation. Bound waiting steering input through the same
-local backlog limit as prompts. Use `startup_timeout_seconds` to bound a steering
-RPC; timeout means ambiguous delivery, not safe prompt fallback.
+The coordinator must settle outstanding steering decisions before starting the
+next prompt or reset in the conversation, even if the original prompt resolves
+first. Steering entries that have not been sent must be reevaluated when the
+running prompt ends and converted if no longer eligible. Late responses must
+not attach to a replacement session or a later turn's collector.
 
 Unknown/malformed outcomes and `startedNewTurn` despite the idle opt-in must be
-fatal protocol failures. Additional unrelated result metadata may be ignored.
+fatal protocol failures: detached turns cannot be safely tracked. Additional
+unrelated result metadata may be ignored.
 
-### Compatibility fallback
+### Compatibility and reset
 
-If steering is unsupported, steering-selected input must use ordinary prompt
-delivery. Tell the user `Steering unavailable; message submitted as a prompt.`
-only once the prompt is actually submitted. Unsupported agents must retain the
-existing client-side FIFO unless their concurrent prompt and output-attribution
-contract has been verified. Do not assume that generic ACP agents implement
-pi-acp's prompt queue merely because they accept `session/prompt`.
+If steering is unsupported, steering-selected input must use the existing prompt
+FIFO. Send `Steering unavailable; message queued as a prompt.` No startup failure
+or concurrent-prompt assumption is introduced.
 
-A method-not-found response must disable steering for that connection. The failed
-entry must receive an error without automatic redelivery; subsequent messages
-use the compatibility fallback. Other healthy-transport method errors likewise
-must not retry input or cancel unrelated outstanding prompts. Complete the failed
-steering event and send `Steering failed; message was not resubmitted.` An error
-can follow a side effect, so successful fallback must not be inferred from it.
+`/reset` remains an ordered local control command. Earlier admitted steering may
+settle before reset, but later steering must not bypass a queued reset: it becomes
+prompt input behind that barrier and uses the replacement session. Reset must
+wait for the active entry and outstanding steering decisions before changing the
+mapping. Normal queued prompts do not form this steering barrier.
 
-### Outstanding turns and output attribution
+### Output, failures, and lifecycle
 
-Submitted prompts must retain independent event identities, request outcomes,
-terminal-completion callbacks, timeout state, and output routing. Do not overwrite
-a session-keyed collector when another prompt is submitted.
+Assistant text, activity, typing, and final output continue to belong to the
+original running prompt. Steering does not create another response turn. Its
+acknowledgements and errors use its own validated conversation routing. All
+output retains existing encryption, full-payload byte accounting, deterministic
+transaction IDs, and retries. No plaintext fallback is permitted.
 
-Before enabling concurrent prompt submission for pi-acp, establish a reliable
-way to identify when each queued request's turn starts and which request owns
-its updates. The existing queue-depth metadata and human-readable queue notices
-are not sufficient as a stable correlation contract. Choose and verify an
-upstream turn-start/request-identity extension, or a documented ordering contract
-that covers updates and response boundaries. Do not guess attribution from text,
-message IDs, timing, or arrival of the previous prompt response alone.
+A healthy-transport steering method error must not cancel the original prompt.
+Complete the steering event and send
+`Steering failed; message was not resubmitted.` Do not automatically retry or
+forward the payload: an error can follow a side effect. Method-not-found must
+also disable steering for that connection; subsequent messages use FIFO fallback.
 
-This is a delivery prerequisite, not a reason to silently drop output or claim
-server-side queue delegation is complete. Without that contract, retain serial
-prompt fallback and document the limitation. Steering of the single running
-prompt can be supported independently.
+Protocol/transport failures retain existing fail-closed behavior. Timeout or a
+lost response is not proof that injection failed. Failed durable completion is a
+fatal state failure, not grounds to retry ACP input.
 
-Each prompt's assistant text, activity, final output, and applicable errors must
-route to its originating Matrix event/conversation. Steering itself does not
-create a new response turn. Its acknowledgement uses the steering event's
-routing. All output retains existing encryption, full-payload byte accounting,
-deterministic transaction IDs, and retries.
-
-Prompt timeout must distinguish waiting at the agent from executing an active
-turn once reliable turn-start metadata exists. Cancellation is session-scoped:
-pi-acp cancels the running turn and clears queued prompts. The bridge must not
-claim to cancel only one queued request. This lifecycle must be reflected in the
-outcomes and terminal handling of every affected outstanding request.
-
-### Reset, completion, and restart
-
-`/reset` is a local control barrier, not input for Pi. Previously submitted work
-and earlier local input must finish terminal handling before the session mapping
-is reset. Later input must wait behind reset and then use the replacement session.
-Ordinary messages have no equivalent mandatory completion barrier.
-
-Removing input from the dispatch queue must not mark its Matrix event complete.
-Prompts, including idle-steering conversions, reach durable completion only at
-the existing terminal boundary. Injected steering reaches that boundary after
-its validated acknowledgement. State failure remains fatal. Submitted input must
-never be retried solely because its local queue entry has been removed.
-
-Cancellation, shutdown, fatal handling, and `waitForIdle` must account for both
-local backlog and outstanding requests. No new RPC may be sent after dispatch
-closes. Late results must not revive closed collectors or attach to replacement
-sessions. Shutdown remains bounded by existing grace handling; session cancellation
-must account for pi-acp's queued requests as well as its running turn.
+Removing a steering entry after `injected` is distinct from finishing its durable
+callback and Matrix acknowledgement. `waitForIdle`, run finalization, cancellation,
+and shutdown must account for all such work. No new steering RPC may be sent
+after dispatch closes or cancellation begins. Outstanding calls must settle or
+be interrupted within existing bounded shutdown handling; late results must not
+revive closed collectors.
 
 Selected startup catch-up messages must honor explicit commands and the configured
-default, with existing age/count limits. Completed event IDs remain suppressed.
-Catch-up steering is delivered to the agent's current session state, not a
-reconstructed pre-crash turn; if idle, it becomes a tracked prompt. This must be
-documented so historical corrections are not mistaken for guaranteed replay into
-their original turn.
+default, with existing age/count limits. Catch-up steering targets the agent's
+current session state, not a reconstructed pre-crash turn; if idle, it becomes a
+tracked prompt. Document that limitation. Completed injected event IDs must be
+suppressed by the durable ledger. Converted prompts remain incomplete until normal
+terminal handling. No state schema migration is required.
 
-No persistent schema migration is required merely to distinguish dispatch from
-completion. Existing crash gaps remain: server acceptance before durable completion
-can cause replay, and steering acceptance does not prove consumption before a
-crash. Neither agent queues nor bridge outstanding requests are promised to be
-recoverable across restart. Do not claim exactly-once input delivery.
+Existing crash gaps remain: an ACP side effect before durable completion can cause
+replay, and steering acceptance does not prove consumption before a crash. Neither
+agent queues nor in-flight bridge work are promised recoverable. Do not claim
+exactly-once input delivery or that bridge backlog limits bound Pi's accepted queue.
 
-## Delivery scope and prerequisites
+## Delivery scope
 
 Implementation requires coordinated changes to:
 
-- `src/config.ts`, example configuration, and configuration tests: delivery default.
-- `src/acp-client.ts`: capability parsing, a typed steering API, concurrent request
-  tracking, result validation, and per-request output attribution. Verify the
-  extension API in pinned SDK 1.3.0; upgrade only if necessary.
-- `src/bridge.ts`: command selection, dispatch/outstanding separation, bounded
-  admission, reset barriers, and multi-request lifecycle handling.
+- Configuration, example configuration, and tests: the delivery default.
+- `src/acp-client.ts`: optional capability parsing, typed steering results/errors,
+  concurrent extension requests, and result validation. Verify the extension API
+  in pinned SDK 1.3.0; upgrade only if necessary.
+- `src/bridge.ts`: command selection, bounded steering admission, shared backlog
+  accounting, idle conversion, reset barriers, and boundary/lifecycle handling.
 - Response rendering and sync integration: acknowledgements and independent
-  durable terminal callbacks without confusing submission with completion.
-- Fake-agent integration tests and `README.md`: commands, defaults, fallback,
-  capacity limits, cancellation scope, and restart limitations.
+  terminal callbacks without treating queued fallback as completed work.
+- Fake-agent tests and `README.md`: command precedence, lane ordering, unsupported
+  fallback, acceptance versus consumption, and restart limitations.
 
-The inbound encryption path, conversation identities, session mappings, and
-nonblocking sync admission are reusable. No Matrix protocol extension or agent
-spawning is required. The substantial work is multi-request attribution and
-lifecycle handling, not the steering RPC.
-
-The steering extension alone does not provide prompt-acceptance acknowledgements,
-turn correlation, or server queue-capacity signals. If confirmed prompt acceptance
-is required before removing dispatch entries, an upstream acknowledgement extension
-is also needed. Local submission and outstanding tracking are sufficient for this
-proposal, provided they are described honestly.
+The existing prompt FIFO, single-turn collectors, inbound encryption path,
+conversation identities, session mappings, and nonblocking sync admission remain
+reusable. No prompt-acceptance extension, concurrent-prompt correlation contract,
+Matrix protocol extension, or agent spawning is required.
 
 ## Verification
 
 Tests must establish:
 
 - Configuration defaults/validation, explicit override precedence, preserved
-  payloads, empty commands, and `/reset` recognition independent of default.
+  payloads, empty commands, and reset recognition independent of default.
 - Capability true/false/absent/malformed cases, preservation of `loadSession`,
-  exact steering wire payload, and concurrent RPCs on an open prompt connection.
-- Ordinary steer-default input reaches steering without waiting for the turn;
-  prompt-default and `/prompt` reach server queueing without a completion barrier
-  when the required agent contract is available.
-- Injected input is sent once with no extra prompt, permit, or timer reset;
-  idle steering becomes exactly one tracked prompt with the same event identity.
-- Local waiting input is bounded and ordered; dispatched prompts are tracked
-  separately. Global prompt limits still hold and do not block eligible steering.
-- Multiple submitted prompts retain correct text/activity/output attribution,
-  including next-turn updates arriving before the preceding response. Missing
-  correlation support selects serial fallback rather than misrouting output.
-- Unsupported-agent fallback, reset barriers, session-scoped cancellation,
-  per-request terminal callbacks, late results, shutdown, and idle waiting.
+  exact wire params, and a steering response while the prompt Promise is pending.
+- Prompt messages retain serial FIFO behavior; steering bypasses ordinary waiting
+  prompts but not a reset barrier. Steering ordering and shared bounds hold.
+- Injected input is sent once with no extra prompt, collector, permit, or timer
+  reset. Its durable callback is independent of the original prompt's callback.
+- Idle, setup, permit wait, drain, unsupported-agent, and `promptRequired` fallback
+  produces exactly one tracked prompt with the same payload/event identity,
+  without requiring another user command or marking queued input complete.
+- Prompt resolution before the steering response cannot start the next prompt or
+  reset prematurely, misroute late output, or lose terminal callbacks.
 - Unauthorized, duplicate, oversized, queue-full, and unknown-thread input sends
-  no unintended RPC. Separate rooms/threads cannot steer or reply into each other.
-- Top-level thread-mode steering starts an independent tracked prompt; encrypted
-  and threaded acknowledgements retain routing and size limits.
-- Method errors preserve other requests; method-not-found disables support;
+  no unintended RPC. Separate rooms/threads cannot steer each other.
+- Top-level thread-mode steering starts an independent tracked prompt. Encrypted
+  acknowledgements and threaded output retain routing and size limits.
+- Method errors preserve the active prompt; method-not-found disables support;
   malformed outcomes, ambiguous timeouts, and transport/state failures fail closed
   without automatic input retry.
-- Restart suppresses completed injected events; submitted but incomplete prompts
-  retain existing recovery behavior. Catch-up honors delivery selection.
+- Cancellation, shutdown, late results, acknowledgement delivery, and idle waiting
+  account for pending steering work without reviving old sessions.
+- Restart suppresses completed injected events, while converted prompts retain
+  existing recovery behavior. Catch-up honors delivery selection.
 
 Implementation must pass `npm run check`. Manual integration against the finalized
-pi-acp extension must verify both queued prompt submission and steering during a
-running turn, idle fallback, and output correlation. RPC behavior—not whether a
-model happens to follow a correction—is the acceptance criterion.
+pi-acp extension must verify server acknowledgement during a running turn and
+idle automatic prompt fallback. RPC behavior, not whether a model happens to
+follow the correction, is the acceptance criterion.
 
 ## Open questions
 
 - Which finalized pi-acp revision supplies the steering contract?
-- What upstream turn-start/request-correlation contract will make concurrent
-  prompt submission safe? Is a separate prompt-acceptance acknowledgement useful?
-- Does pi-acp expose sufficient queue capacity or queued-request cancellation
-  control for future server-side backpressure? PR #115 does not provide these.
+- Should a later feature add Pi queue-capacity or consumption visibility? PR #115
+  does not provide either; this feature must not assume they exist.
 
 ## References
 
 - [pi-acp PR #115](https://github.com/svkozak/pi-acp/pull/115), reviewed while open.
-- [pi-acp session queue implementation](https://github.com/svkozak/pi-acp/blob/main/src/acp/session.ts).
-- [Pi steering and follow-up implementation](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/agent-session.ts).
 - [Thread-scoped agent sessions](thread-scoped-agent-sessions.md).
 - [Persistence milestone](m2-persistence.md).
 - [Verbose ACP output](verbose-acp-output.md).
