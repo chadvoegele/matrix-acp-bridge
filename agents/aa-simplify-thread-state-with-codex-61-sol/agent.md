@@ -1,7 +1,7 @@
 +++
 name = "Simplify thread state with Codex 6.1 Sol"
 creation_date = 2026-10-01T13:41:08Z
-status = "running"
+status = "completed"
 session_id = "01a0f7b2-b0f3-7ce0-838a-fc032378643d"
 system = "codex"
 +++
