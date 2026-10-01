@@ -5,12 +5,15 @@ import {
   createAcpClient,
   ACP_ACTIVITY_UPDATE_MAX_BYTES,
   type AcpClient,
+  type AcpSteeringOutcome,
   type AcpToolCallUpdate,
   type AcpAgentThoughtChunk,
 } from "./acp-client.js";
 import { AcpActivityModel } from "./acp-activity.js";
 import { renderAcpActivity } from "./acp-activity-rendering.js";
+import { createCancellationController } from "./cancellation.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
+import { FakeClock } from "./test-support/fake-clock.js";
 
 const CWD = "/srv/agent-workspace";
 const INIT_OPTIONS = {
@@ -208,6 +211,11 @@ function newClient(input: FakeInput, output: FakeOutput, extra: Record<string, u
     diagnostics: createDiagnostics(),
     ...extra,
   } as Parameters<typeof createAcpClient>[0]);
+}
+
+function steer(client: AcpClient, sessionId: string, text: string, timeoutMs = 1000): Promise<AcpSteeringOutcome> {
+  if (client.steer === undefined) throw new Error("production client must implement steering");
+  return client.steer(sessionId, text, timeoutMs);
 }
 
 void test("binds exact ACP v1 initialize and lazy session/new requests", async () => {
@@ -1338,5 +1346,450 @@ void test("a writable stream failure is fatal and diagnostics never enter stdout
   const error = await fatal.done;
   assert.equal(error.code, "acp_transport");
   assert.equal(writes, 1);
+  await client.close();
+});
+
+void test("steering capability requires strictly true initialize metadata and preserves loadSession", async () => {
+  const metadata: unknown[] = [
+    undefined,
+    null,
+    false,
+    1,
+    "steering",
+    [],
+    {},
+    { steering: null },
+    { steering: [] },
+    { steering: true },
+    { steering: {} },
+    { steering: { supported: false } },
+    { steering: { supported: "true" } },
+    { steering: { supported: 1 } },
+    { steering: { supported: null } },
+    { steering: { supported: true, unrelated: "ignored" }, unrelated: true },
+  ];
+  for (const [index, value] of metadata.entries()) {
+    const input = createFakeInput();
+    const output = createFakeOutput();
+    const client = newClient(input, output);
+    const fatal = fatalSignal(client);
+    const initializing = client.initialize(INIT_OPTIONS);
+    const frame = await output.nextFrame();
+    const loadSession = index % 2 === 0;
+    input.push(
+      rpcResponse(frame.id, {
+        protocolVersion: 1,
+        // Advertising steering in agentCapabilities must not enable the extension.
+        agentCapabilities: { loadSession, steering: true },
+        ...(value === undefined ? {} : { _meta: value }),
+      }),
+    );
+    const expected = {
+      protocolVersion: 1,
+      agentCapabilities: {
+        loadSession,
+        ...(index === metadata.length - 1 ? { steering: true } : {}),
+      },
+    };
+    assert.deepEqual(await initializing, expected, `metadata case ${index}`);
+    assert.deepEqual(await client.initialize(INIT_OPTIONS), expected);
+    assert.equal(fatal.errors.length, 0);
+    await client.close();
+  }
+});
+
+void test("steering replies concurrently on its own wire ID and preserves prompt text, activity and cancellation", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const clock = new FakeClock();
+  const client = newClient(input, output, { clock });
+  const fatal = fatalSignal(client);
+  await initialize(client, input, output, { protocolVersion: 1, _meta: { steering: { supported: true } } });
+  const sessionId = await createSession(client, input, output);
+  const cancellation = createCancellationController();
+  const updates: unknown[] = [];
+  client.onUpdate((update) => updates.push(update));
+  let promptSettled = false;
+  const prompt = client.prompt(sessionId, "original", cancellation.signal).then((outcome) => {
+    promptSettled = true;
+    return outcome;
+  });
+  const promptFrame = await output.nextFrame();
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "original-message",
+        content: { type: "text", text: "before " },
+      },
+    }),
+  );
+  const steering = steer(client, sessionId, "adjust\nwith Unicode: 🧭", 2000);
+  const frame = await output.nextFrame();
+  assert.notEqual(frame.id, promptFrame.id);
+  assert.deepEqual(frame, {
+    jsonrpc: "2.0",
+    id: frame.id,
+    method: "_session/steering",
+    params: {
+      sessionId,
+      prompt: [{ type: "text", text: "adjust\nwith Unicode: 🧭" }],
+      _meta: { steering: { idleBehavior: "promptRequired" } },
+    },
+  });
+  input.push(rpcResponse(frame.id, { outcome: "injected", _meta: { unrelated: "ignored" } }));
+  assert.deepEqual(await steering, { kind: "steering", outcome: "injected" });
+  assert.equal(promptSettled, false);
+  assert.equal(clock.pendingTimerCount, 0);
+  assert.equal(output.frames.length, 0);
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "original-tool",
+        title: "read",
+        status: "pending",
+      },
+    }),
+  );
+  // eslint-disable-next-line unicorn/no-array-push-push -- distinct ordered ACP frames
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "original-message",
+        content: { type: "text", text: "after" },
+      },
+    }),
+  );
+  cancellation.cancel("original turn cancelled");
+  assert.deepEqual(await output.nextFrame(), { jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+  input.push(rpcResponse(promptFrame.id, { stopReason: "cancelled" }));
+  assert.deepEqual(await prompt, { kind: "turn", stopReason: "cancelled", text: "before after" });
+  assert.equal(updates.length, 3);
+  assert.equal((updates[1] as { kind: string }).kind, "tool_call");
+  assert.equal(fatal.errors.length, 0);
+  await client.close();
+});
+
+void test("idle opt-in promptRequired returns a decision without automatically sending a prompt", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const client = newClient(input, output);
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const steering = steer(client, sessionId, "idle");
+  const frame = await output.nextFrame();
+  assert.equal(frame.method, "_session/steering");
+  assert.deepEqual(frame.params, {
+    sessionId,
+    prompt: [{ type: "text", text: "idle" }],
+    _meta: { steering: { idleBehavior: "promptRequired" } },
+  });
+  input.push(rpcResponse(frame.id, { outcome: "promptRequired", reason: "noRunningTurn", extra: true }));
+  assert.deepEqual(await steering, { kind: "steering", outcome: "promptRequired", reason: "noRunningTurn" });
+  assert.equal(output.frames.length, 0);
+  await client.close();
+});
+
+void test("a prompt may finish before steering without losing the outstanding steering decision", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const client = newClient(input, output);
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const prompt = client.prompt(sessionId, "original", createCancellationController().signal);
+  const promptFrame = await output.nextFrame();
+  let steeringSettled = false;
+  const steering = steer(client, sessionId, "boundary").then((outcome) => {
+    steeringSettled = true;
+    return outcome;
+  });
+  const frame = await output.nextFrame();
+  input.push(rpcResponse(promptFrame.id, { stopReason: "end_turn" }));
+  assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn" });
+  assert.equal(steeringSettled, false);
+  input.push(rpcResponse(frame.id, { outcome: "promptRequired", reason: "noRunningTurn" }));
+  assert.deepEqual(await steering, { kind: "steering", outcome: "promptRequired", reason: "noRunningTurn" });
+  assert.equal(output.frames.length, 0);
+  await client.close();
+});
+
+void test("healthy steering errors distinguish method-not-found, preserve the prompt and redact raw errors", async () => {
+  for (const code of [-32_603, -32_602, -32_601, -32_000]) {
+    const input = createFakeInput();
+    const output = createFakeOutput();
+    const clock = new FakeClock();
+    const diagnostics: unknown[] = [];
+    const client = newClient(input, output, {
+      clock,
+      diagnostics: {
+        ...createDiagnostics(),
+        emit(...values: unknown[]) {
+          diagnostics.push(values);
+        },
+      },
+    });
+    const fatal = fatalSignal(client);
+    await initialize(client, input, output);
+    const sessionId = await createSession(client, input, output);
+    const prompt = client.prompt(sessionId, "original", createCancellationController().signal);
+    const promptFrame = await output.nextFrame();
+    const steering = steer(client, sessionId, "private-steering-input");
+    const frame = await output.nextFrame();
+    input.push({
+      jsonrpc: "2.0",
+      id: frame.id,
+      error: {
+        code,
+        message: "private-steering-error",
+        data: { secret: "private-steering-data" },
+      },
+    });
+    assert.deepEqual(await steering, {
+      kind: "method_error",
+      operation: "session_steering",
+      fatal: false,
+      methodNotFound: code === -32_601,
+    });
+    assert.equal(fatal.errors.length, 0);
+    assert.equal(clock.pendingTimerCount, 0);
+    assert.equal(JSON.stringify(diagnostics).includes("private-steering"), false);
+    assert.equal(output.frames.length, 0);
+    input.push(
+      rpcNotification("session/update", {
+        sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "intact" },
+        },
+      }),
+    );
+    // eslint-disable-next-line unicorn/no-array-push-push -- distinct ordered ACP frames
+    input.push(rpcResponse(promptFrame.id, { stopReason: "end_turn" }));
+    assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn", text: "intact" });
+    // The same transport remains usable even when its extension was unavailable.
+    assert.equal(await createSession(client, input, output), "session-1");
+    await client.close();
+  }
+});
+
+void test("malformed, unknown and detached steering outcomes fail closed without redelivery", async () => {
+  const results: unknown[] = [
+    null,
+    [],
+    "injected",
+    1,
+    {},
+    { outcome: null },
+    { outcome: "unknown-private-outcome" },
+    { outcome: "promptRequired" },
+    { outcome: "promptRequired", reason: "unknown" },
+    { outcome: "promptRequired", reason: null },
+    { outcome: "startedNewTurn" },
+  ];
+  for (const result of results) {
+    const input = createFakeInput();
+    const output = createFakeOutput();
+    const clock = new FakeClock();
+    const diagnostics: unknown[] = [];
+    const client = newClient(input, output, {
+      clock,
+      diagnostics: {
+        ...createDiagnostics(),
+        emit(...values: unknown[]) {
+          diagnostics.push(values);
+        },
+      },
+    });
+    const fatal = fatalSignal(client);
+    await initialize(client, input, output);
+    const prompt = client.prompt("session-1", "original", createCancellationController().signal);
+    await output.nextFrame();
+    const steering = steer(client, "session-1", "private-steering-input");
+    const frame = await output.nextFrame();
+    input.push(rpcResponse(frame.id, result));
+    assert.deepEqual(await steering, { kind: "protocol_error", operation: "session_steering", fatal: true });
+    assert.deepEqual(await prompt, { kind: "protocol_error", operation: "session_prompt", fatal: true });
+    assert.equal(fatal.errors.length, 1);
+    assert.equal(fatal.errors[0]?.code, "acp_protocol");
+    assert.equal(clock.pendingTimerCount, 0);
+    assert.equal(output.frames.length, 0);
+    assert.equal(JSON.stringify(diagnostics).includes("private"), false);
+    assert.deepEqual(await steer(client, "session-1", "late"), {
+      kind: "protocol_error",
+      operation: "session_steering",
+      fatal: true,
+    });
+    assert.equal(output.frames.length, 0);
+    await client.close();
+  }
+});
+
+void test("lost steering response times out fatally without retry, cancellation or prompt fallback", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const clock = new FakeClock();
+  const client = newClient(input, output, { clock });
+  const fatal = fatalSignal(client);
+  await initialize(client, input, output);
+  const prompt = client.prompt("session-1", "original", createCancellationController().signal);
+  await output.nextFrame();
+  let settled = false;
+  const steering = steer(client, "session-1", "ambiguous", 2000).then((outcome) => {
+    settled = true;
+    return outcome;
+  });
+  await output.nextFrame();
+  clock.advanceBy(1999);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(fatal.errors.length, 0);
+  clock.advanceBy(1);
+  assert.deepEqual(await steering, { kind: "transport_error", operation: "session_steering", fatal: true });
+  assert.deepEqual(await prompt, { kind: "transport_error", operation: "session_prompt", fatal: true });
+  assert.equal(fatal.errors.length, 1);
+  assert.equal(fatal.errors[0]?.code, "acp_transport");
+  assert.equal(clock.pendingTimerCount, 0);
+  assert.equal(output.frames.length, 0);
+  await client.close();
+});
+
+void test("steering transport and wire failures settle both outstanding requests exactly once", async () => {
+  const cases: Array<{ trigger: (input: FakeInput, id: unknown) => void; kind: string }> = [
+    { trigger: (input) => input.close(), kind: "transport_error" },
+    { trigger: (input) => input.fail(new Error("private-read-error")), kind: "transport_error" },
+    { trigger: (input) => input.push("malformed-private-json\n"), kind: "protocol_error" },
+    { trigger: (input) => input.push(rpcResponse("unknown-id", { outcome: "injected" })), kind: "protocol_error" },
+    { trigger: (input, id) => input.push({ jsonrpc: "2.0", id, error: { code: "private" } }), kind: "protocol_error" },
+  ];
+  for (const { trigger, kind } of cases) {
+    const input = createFakeInput();
+    const output = createFakeOutput();
+    const clock = new FakeClock();
+    const client = newClient(input, output, { clock });
+    const fatal = fatalSignal(client);
+    await initialize(client, input, output);
+    const prompt = client.prompt("session-1", "original", createCancellationController().signal);
+    await output.nextFrame();
+    const steering = steer(client, "session-1", "adjust");
+    const frame = await output.nextFrame();
+    trigger(input, frame.id);
+    assert.deepEqual(await steering, { kind, operation: "session_steering", fatal: true });
+    assert.deepEqual(await prompt, { kind, operation: "session_prompt", fatal: true });
+    assert.equal(fatal.errors.length, 1);
+    assert.equal(clock.pendingTimerCount, 0);
+    assert.equal(output.frames.length, 0);
+    await client.close();
+  }
+});
+
+void test("close interrupts steering and prompt and prevents new steering RPCs", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const clock = new FakeClock();
+  const client = newClient(input, output, { clock });
+  const fatal = fatalSignal(client);
+  await initialize(client, input, output);
+  const prompt = client.prompt("session-1", "original", createCancellationController().signal);
+  await output.nextFrame();
+  const steering = steer(client, "session-1", "adjust");
+  const frame = await output.nextFrame();
+  const closing = client.close();
+  assert.deepEqual(await steer(client, "session-1", "late"), {
+    kind: "transport_error",
+    operation: "session_steering",
+    fatal: true,
+  });
+  // A response racing orderly close must not revive an injection decision.
+  input.push(rpcResponse(frame.id, { outcome: "injected" }));
+  assert.deepEqual(await steering, { kind: "transport_error", operation: "session_steering", fatal: true });
+  assert.deepEqual(await prompt, { kind: "transport_error", operation: "session_prompt", fatal: true });
+  await closing;
+  assert.equal(clock.pendingTimerCount, 0);
+  assert.equal(fatal.errors.length, 0);
+  assert.equal(output.frames.length, 0);
+});
+
+void test("a steering write failure closes the connection and settles the original prompt", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const clock = new FakeClock();
+  let failWrites = false;
+  let writes = 0;
+  const failingOutput = new WritableStream<Uint8Array>({
+    async write(chunk) {
+      writes += 1;
+      if (failWrites) throw new Error("private-steering-write-error");
+      const writer = output.stream.getWriter();
+      try {
+        await writer.write(chunk);
+      } finally {
+        writer.releaseLock();
+      }
+    },
+  });
+  const client = newClient(input, output, { output: failingOutput, clock });
+  const fatal = fatalSignal(client);
+  await initialize(client, input, output);
+  const prompt = client.prompt("session-1", "original", createCancellationController().signal);
+  await output.nextFrame();
+  failWrites = true;
+  assert.deepEqual(await steer(client, "session-1", "adjust"), {
+    kind: "transport_error",
+    operation: "session_steering",
+    fatal: true,
+  });
+  assert.deepEqual(await prompt, { kind: "transport_error", operation: "session_prompt", fatal: true });
+  assert.equal(fatal.errors.length, 1);
+  assert.equal(fatal.errors[0]?.code, "acp_transport");
+  assert.equal(writes, 3);
+  assert.equal(clock.pendingTimerCount, 0);
+  assert.equal(output.frames.length, 0);
+  await client.close();
+});
+
+void test("duplicate steering responses cannot be routed to the still-running prompt", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const client = newClient(input, output);
+  const fatal = fatalSignal(client);
+  await initialize(client, input, output);
+  const prompt = client.prompt("session-1", "original", createCancellationController().signal);
+  await output.nextFrame();
+  const steering = steer(client, "session-1", "adjust");
+  const frame = await output.nextFrame();
+  input.push(rpcResponse(frame.id, { outcome: "injected" }));
+  assert.deepEqual(await steering, { kind: "steering", outcome: "injected" });
+  input.push(rpcResponse(frame.id, { outcome: "injected" }));
+  assert.deepEqual(await prompt, { kind: "protocol_error", operation: "session_prompt", fatal: true });
+  assert.equal(fatal.errors.length, 1);
+  assert.equal(fatal.errors[0]?.code, "acp_protocol");
+  assert.equal(output.frames.length, 0);
+  await client.close();
+});
+
+void test("independent sessions can have simultaneous steering requests with reversed responses", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const clock = new FakeClock();
+  const client = newClient(input, output, { clock });
+  await initialize(client, input, output);
+  const first = steer(client, "session-first", "first");
+  const second = steer(client, "session-second", "second");
+  const firstFrame = await output.nextFrame();
+  const secondFrame = await output.nextFrame();
+  assert.notEqual(firstFrame.id, secondFrame.id);
+  assert.equal((firstFrame.params as { sessionId: string }).sessionId, "session-first");
+  assert.equal((secondFrame.params as { sessionId: string }).sessionId, "session-second");
+  input.push(rpcResponse(secondFrame.id, { outcome: "promptRequired", reason: "noRunningTurn" }));
+  assert.deepEqual(await second, { kind: "steering", outcome: "promptRequired", reason: "noRunningTurn" });
+  assert.equal(clock.pendingTimerCount, 1);
+  input.push(rpcResponse(firstFrame.id, { outcome: "injected" }));
+  assert.deepEqual(await first, { kind: "steering", outcome: "injected" });
+  assert.equal(clock.pendingTimerCount, 0);
   await client.close();
 });
