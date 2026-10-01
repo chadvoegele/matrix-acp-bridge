@@ -1,4 +1,3 @@
-import type { MatrixOutputRouting } from "./matrix-message-content.js";
 import type { AcpActivity } from "./acp-activity.js";
 import { renderAcpActivity, type RenderedAcpActivity } from "./acp-activity-rendering.js";
 
@@ -14,7 +13,6 @@ interface MutableActivityBatch extends ActivityBatch {
 }
 
 export interface ActivityBatchLimits {
-  readonly routing?: MatrixOutputRouting;
   readonly maxEvents: number;
   readonly maxMessageBytes: number;
   readonly measure: (rendered: RenderedAcpActivity) => number;
@@ -69,7 +67,7 @@ export class AcpActivityBatches {
       const entries = batch.events.map((event) => renderAcpActivity(event, budget));
       const body = entries.map((entry) => entry.body).join("\n");
       const formattedBody = `${wrapperStart}${entries.map((entry) => entry.formattedBody).join("\n")}${wrapperEnd}`;
-      const rendered = { ...this.limits.routing, body, formattedBody };
+      const rendered = { body, formattedBody };
       if (this.limits.measure(rendered) <= this.limits.maxMessageBytes || budget <= 16) return rendered;
       budget = Math.max(16, Math.floor(budget * 0.7));
     }

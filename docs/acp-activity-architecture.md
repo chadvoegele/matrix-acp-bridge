@@ -25,8 +25,9 @@ previews, details, diffs, escaping, and HTML budgets.
 `acp-activity-batches.ts` owns batch presentation: event grouping, batch boundaries,
 collapsing older batches, and composing event renderings. It reports changed
 batches to its caller. It has no room IDs, message IDs, send queues, or retries.
-The caller supplies a byte-cost function so the presentation budget can account
-for its delivery envelope without knowing that envelope's implementation.
+It returns only plain text and HTML. The caller supplies a byte-cost function
+that adds routing and reserves the edit envelope, so the presentation budget
+accounts for the exact payload without owning routing or wire construction.
 
 `matrix-text-rendering.ts` renders Markdown message bodies and splits live
 agent text into Unicode-safe, size-bounded chunks. `matrix-markdown.ts` supplies Markdown

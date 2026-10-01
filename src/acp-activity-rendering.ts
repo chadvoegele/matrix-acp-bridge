@@ -1,4 +1,3 @@
-import type { MatrixOutputRouting } from "./matrix-message-content.js";
 import type { AcpActivity, AcpToolActivity } from "./acp-activity.js";
 import { ACTIVITY_RESULT_DETAIL_BYTES, ACTIVITY_TITLE_DETAIL_BYTES, cleanActivityText } from "./acp-activity.js";
 import { takeBytes } from "./bounded-text.js";
@@ -8,7 +7,7 @@ export const ACTIVITY_RESULT_PREVIEW_BYTES = 256;
 
 export const ACTIVITY_TITLE_PREVIEW_BYTES = 160;
 
-export interface RenderedAcpActivity extends MatrixOutputRouting {
+export interface RenderedAcpActivity {
   readonly body: string;
   readonly formattedBody: string;
 }

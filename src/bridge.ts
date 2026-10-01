@@ -1249,8 +1249,7 @@ export class BridgeCoordinator {
         activityBatches: new AcpActivityBatches({
           maxEvents: this.#config.limits.maxActivityEventsPerMessage,
           maxMessageBytes: this.#config.limits.maxMatrixMessageBytes,
-          measure: matrixHtmlEditContentBytes,
-          routing,
+          measure: (rendered) => matrixHtmlEditContentBytes({ ...rendered, ...routing }),
         }),
         batchDeliveries: new WeakMap(),
         outboundTail: Promise.resolve(),
@@ -1997,7 +1996,10 @@ export class BridgeCoordinator {
           state.dirty = false;
           const rendered = first ?? turn.activityBatches.render(batch);
           first = undefined;
-          if (matrixHtmlEditContentBytes(rendered) > this.#config.limits.maxMatrixMessageBytes) {
+          if (
+            matrixHtmlEditContentBytes({ ...rendered, ...routingForTurn(turn) }) >
+            this.#config.limits.maxMatrixMessageBytes
+          ) {
             turn.liveFailed = true;
             this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
             break;

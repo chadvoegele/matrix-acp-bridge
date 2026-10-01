@@ -89,13 +89,12 @@ void test("batch rendering budgets escaped HTML and the collapsed wrapper", () =
   assert.doesNotMatch(rendered.body, /�/u);
 });
 
-void test("thread activity budgets and retains routing through expansion, archive and later revisions", () => {
+void test("caller-supplied measurement budgets thread edits through expansion, archive and later revisions", () => {
   const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadInReplyToEventId: "$follow-up" };
   const presentation = new AcpActivityBatches({
     maxEvents: 10,
     maxMessageBytes: 2048,
-    measure: matrixHtmlEditContentBytes,
-    routing,
+    measure: (rendered) => matrixHtmlEditContentBytes({ ...rendered, ...routing }),
   });
   const event = thought("<&😀".repeat(2000));
   const [batch] = presentation.accept(event);
@@ -107,9 +106,8 @@ void test("thread activity budgets and retains routing through expansion, archiv
   assert.deepEqual(presentation.accept(event), [batch]);
   const revised = presentation.render(batch);
   for (const rendered of [expanded, archived, revised]) {
-    assert.equal(rendered.threadRootEventId, routing.threadRootEventId);
-    assert.equal(rendered.threadInReplyToEventId, routing.threadInReplyToEventId);
-    assert.ok(matrixHtmlEditContentBytes(rendered) <= 2048);
+    assert.deepEqual(Object.keys(rendered).sort(), ["body", "formattedBody"]);
+    assert.ok(matrixHtmlEditContentBytes({ ...rendered, ...routing }) <= 2048);
   }
   assert.match(archived.formattedBody, /Past agent events/);
   assert.match(revised.formattedBody, /later &lt;result&gt;/);
