@@ -1,7 +1,7 @@
 +++
 name = "Consolidate per conversation queue limit"
 creation_date = 2026-10-01T18:05:33Z
-status = "in-progress"
+status = "completed"
 +++
 
 # Consolidate queue limits per conversation
