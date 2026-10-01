@@ -1,7 +1,7 @@
 +++
 name = "Explicitly handle known response modes"
 creation_date = 2026-10-01T13:45:54Z
-status = "pending"
+status = "in-progress"
 +++
 
 # Explicit response-mode dispatch
