@@ -24,6 +24,7 @@ const config: BridgeConfig = {
     allowedSenders: [SENDER],
     encryption: "disabled",
     responseMode: "room",
+    defaultMessageDelivery: "prompt",
   },
   acp: { cwd: "/tmp" },
   limits: {

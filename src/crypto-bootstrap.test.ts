@@ -29,6 +29,7 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
     allowedSenders: ["@alice:example.org"],
     encryption: "required",
     responseMode: "room",
+    defaultMessageDelivery: "prompt",
   },
   acp: { cwd: "/unused" },
   limits: {

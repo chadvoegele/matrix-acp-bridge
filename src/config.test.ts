@@ -8,6 +8,7 @@ import {
   acquireStateLock,
   ConfigurationError,
   DEFAULT_LIMITS,
+  type MessageDelivery,
   loadConfigurationText,
   openPrivateStateFile,
   parseConfigText,
@@ -81,6 +82,7 @@ void test("parses the documented shape and applies every default limit", () => {
 
   assert.deepEqual(config.limits, DEFAULT_LIMITS);
   assert.equal(config.matrix.responseMode, "room");
+  assert.equal(config.matrix.defaultMessageDelivery, "prompt");
   assert.equal(config.stateDir, "/tmp/matrix-acp-config-state/state");
   assert.deepEqual(config.matrix.allowedRooms, ["!room:example.test"]);
   assert.deepEqual(config.matrix.allowedSenders, ["@alice:example.test", "@bob:example.test"]);
@@ -421,6 +423,72 @@ void test("response mode defaults to room and accepts only explicit room or thre
       matrix: { ...parsed.matrix, responseMode: "invalid" as "room" },
     }),
   );
+});
+
+void test("default message delivery defaults to prompt and accepts explicit prompt or steer", () => {
+  const valid = validConfigText("/tmp/matrix-acp-config-state");
+  for (const responseMode of ["room", "thread"] as const) {
+    const source = valid.replace("[matrix]", `[matrix]\nresponse_mode = "${responseMode}"`);
+    for (const delivery of [undefined, "prompt", "steer"] as const) {
+      const configured =
+        delivery === undefined
+          ? source
+          : source.replace("[matrix]", `[matrix]\ndefault_message_delivery = "${delivery}"`);
+      assert.equal(parseConfigText(configured).matrix.defaultMessageDelivery, delivery ?? "prompt");
+    }
+  }
+});
+
+void test("rejects invalid default message delivery values and types without exposing their contents", async () => {
+  const valid = validConfigText("/tmp/matrix-acp-config-state");
+  for (const value of [
+    '"unknown-secret-value"',
+    '"PROMPT"',
+    '"STEER"',
+    '" prompt"',
+    '"steer "',
+    '""',
+    "0",
+    "1.5",
+    "true",
+    "false",
+    "[]",
+    '["prompt"]',
+    '{ delivery = "steer" }',
+    "2026-10-01",
+    "inf",
+    "nan",
+  ]) {
+    const error = await expectConfigurationError(() =>
+      parseConfigText(valid.replace("[matrix]", `[matrix]\ndefault_message_delivery = ${value}`)),
+    );
+    assert.equal(error.message, 'matrix.default_message_delivery must be either "prompt" or "steer"');
+  }
+});
+
+void test("validates default message delivery on normalized configuration before filesystem access", async () => {
+  const parsed = parseConfigText(validConfigText("/tmp/matrix-acp-config-state"));
+  for (const value of [undefined, null, true, 1, [], {}, "", "invalid", "STEER"]) {
+    const error = await expectConfigurationError(() =>
+      validateConfiguration({
+        ...parsed,
+        matrix: { ...parsed.matrix, defaultMessageDelivery: value as MessageDelivery },
+      }),
+    );
+    assert.equal(error.message, 'matrix.default_message_delivery must be either "prompt" or "steer"');
+  }
+});
+
+void test("preserves both default message delivery values through filesystem normalization", async () => {
+  await withTemporaryRoot(async (root) => {
+    const tokenFile = join(root, "access-token");
+    await writeToken(tokenFile, "matrix-token\n");
+    for (const delivery of ["prompt", "steer"] as const) {
+      const source = validConfigText(root).replace("[matrix]", `[matrix]\ndefault_message_delivery = "${delivery}"`);
+      const config = await validateConfiguration(parseConfigText(source));
+      assert.equal(config.matrix.defaultMessageDelivery, delivery);
+    }
+  });
 });
 
 void test("conversation queue defaults to 16 in both response modes", () => {
