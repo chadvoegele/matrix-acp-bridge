@@ -1,7 +1,7 @@
 +++
 name = "Remove automatic migration backup"
 creation_date = 2026-10-01T17:58:46Z
-status = "in-progress"
+status = "completed"
 +++
 
 # Remove automatic pre-migration state backup
