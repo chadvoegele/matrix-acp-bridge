@@ -134,7 +134,8 @@ function resolveOptions(options: InboundAuthorizationConfig): ResolvedAuthorizat
   const bridgeUserId = candidate.bridgeUserId ?? matrix?.userId;
   const maxInputBytes = candidate.maxInputBytes ?? limits?.maxInputBytes;
   const encryption = candidate.encryption ?? matrix?.encryption ?? "disabled";
-  const responseMode = candidate.responseMode ?? matrix?.responseMode ?? "room";
+  const configuredResponseMode = candidate.responseMode === undefined ? matrix?.responseMode : candidate.responseMode;
+  const responseMode = configuredResponseMode === undefined ? "room" : configuredResponseMode;
 
   if (allowedRooms === undefined) {
     throw new TypeError("allowedRooms is required");

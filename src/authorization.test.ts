@@ -485,10 +485,18 @@ cwd = "/tmp"
 `);
   assert.equal(createInboundAuthorizer(config).authorize(threadEvent()).accepted, true);
   assert.throws(() => createInboundAuthorizer(options({ responseMode: "invalid" as "room" })), /responseMode/u);
+  assert.throws(
+    () =>
+      createInboundAuthorizer({
+        ...config,
+        matrix: { ...config.matrix, responseMode: null as unknown as ResponseMode },
+      }),
+    /responseMode/u,
+  );
 });
 
 void test("authorization rejects unknown runtime response modes before accepting any relation shape", () => {
-  for (const responseMode of ["invalid", "", "THREAD", 1, {}]) {
+  for (const responseMode of ["invalid", "", "THREAD", null, 1, {}]) {
     for (const event of [
       makeEvent(),
       makeEvent({
