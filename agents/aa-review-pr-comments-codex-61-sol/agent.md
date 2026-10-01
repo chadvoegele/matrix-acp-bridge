@@ -1,7 +1,8 @@
 +++
 name = "Review PR comments Codex 6.1 Sol"
 creation_date = 2026-10-01T18:00:45Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Implement WAAP ticket tt-review-remaining-pr-16-comments at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-review-remaining-pr-16-comments/ticket.md. Read fully and follow repository instructions. This run is scheduled after backup removal. Fetch latest origin/feat/thread-scoped-sessions and create your task branch in isolated WAAP worktree.
