@@ -23,6 +23,7 @@ const MATRIX: MatrixConfig = {
   allowedSenders: ["@operator:example.org"],
   encryption: "required",
   responseMode: "room",
+  defaultMessageDelivery: "prompt",
 };
 
 const FINGERPRINTS = {

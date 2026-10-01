@@ -16,6 +16,8 @@ export type EncryptionMode = "disabled" | "required";
 
 export type ResponseMode = "room" | "thread";
 
+export type MessageDelivery = "prompt" | "steer";
+
 export interface MatrixConfig {
   readonly homeserver: string;
   readonly userId: MatrixUserId;
@@ -25,6 +27,7 @@ export interface MatrixConfig {
   readonly allowedSenders: readonly MatrixUserId[];
   readonly encryption: EncryptionMode;
   readonly responseMode: ResponseMode;
+  readonly defaultMessageDelivery: MessageDelivery;
 }
 
 export interface AcpConfig {
@@ -103,6 +106,7 @@ const TABLE_KEYS: Readonly<Record<TomlTable, ReadonlySet<string>>> = {
     "allowed_senders",
     "encryption",
     "response_mode",
+    "default_message_delivery",
   ]),
   acp: new Set(["cwd"]),
   limits: new Set([...LIMIT_KEYS, "max_queued_turns_per_room"]),
@@ -209,6 +213,7 @@ export function parseConfigText(source: string): BridgeConfig {
     allowedSenders: requiredStringArray(entries, "matrix", "allowed_senders"),
     encryption: requiredEncryption(entries),
     responseMode: optionalResponseMode(entries),
+    defaultMessageDelivery: optionalDefaultMessageDelivery(entries),
   };
   const acp: AcpConfig = {
     cwd: requiredString(entries, "acp", "cwd"),
@@ -429,6 +434,9 @@ function validateShape(stateDir: string, matrix: MatrixConfig, acp: AcpConfig, l
   if (matrix.responseMode !== "room" && matrix.responseMode !== "thread") {
     throw new ConfigurationError('matrix.response_mode must be either "room" or "thread"');
   }
+  if (matrix.defaultMessageDelivery !== "prompt" && matrix.defaultMessageDelivery !== "steer") {
+    throw new ConfigurationError('matrix.default_message_delivery must be either "prompt" or "steer"');
+  }
   validateLimits(limits);
 }
 
@@ -628,6 +636,14 @@ function optionalResponseMode(entries: ReadonlyMap<string, TomlValue>): Response
   const value = entries.get(entryName("matrix", "response_mode")) ?? "room";
   if (value !== "room" && value !== "thread") {
     throw new ConfigurationError('matrix.response_mode must be either "room" or "thread"');
+  }
+  return value;
+}
+
+function optionalDefaultMessageDelivery(entries: ReadonlyMap<string, TomlValue>): MessageDelivery {
+  const value = entries.get(entryName("matrix", "default_message_delivery")) ?? "prompt";
+  if (value !== "prompt" && value !== "steer") {
+    throw new ConfigurationError('matrix.default_message_delivery must be either "prompt" or "steer"');
   }
   return value;
 }

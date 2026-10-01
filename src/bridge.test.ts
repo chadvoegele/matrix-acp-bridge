@@ -47,6 +47,7 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       allowedSenders: [SENDER],
       encryption: "disabled",
       responseMode: "room",
+      defaultMessageDelivery: "prompt",
     },
     acp: { cwd: "/tmp" },
     limits: {

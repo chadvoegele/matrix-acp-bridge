@@ -68,6 +68,7 @@ const MATRIX_CONFIG: MatrixConfig = {
   allowedSenders: [ALICE],
   encryption: "disabled",
   responseMode: "room",
+  defaultMessageDelivery: "prompt",
 };
 
 const CONFIG: BridgeConfig = {
