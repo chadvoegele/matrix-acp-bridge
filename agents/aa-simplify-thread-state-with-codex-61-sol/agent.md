@@ -1,7 +1,8 @@
 +++
 name = "Simplify thread state with Codex 6.1 Sol"
 creation_date = 2026-10-01T13:41:08Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Implement WAAP ticket tt-simplify-persisted-thread-record-shape in /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-simplify-persisted-thread-record-shape/ticket.md. Read the ticket completely and follow repository/user instructions.
