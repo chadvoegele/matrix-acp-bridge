@@ -92,58 +92,6 @@ max_catchup_age_seconds = 900
 max_catchup_events_per_room = 4
 ```
 
-### Room and thread response modes
-
-The default `response_mode = "room"` keeps one ACP session per room and
-continues to reject inbound Matrix thread relations. Set
-`[matrix].response_mode = "thread"` to give each authorized top-level message
-its own ACP conversation. An ordinary Matrix reply without an `m.thread`
-relation also starts a new conversation. A message with a valid thread relation
-continues the conversation for that room and thread root; its reply fallback is
-removed before the text is sent to the agent. Agent responses, activity, errors
-and reset acknowledgements are sent in the originating thread. Clients without
-thread support may display reply fallbacks in the main timeline.
-When `encryption = "required"`, threaded responses use the same validated
-encrypted-room path as other responses and are never sent as plaintext.
-
-`allowed_senders` is one global allowlist for every configured room. Every
-message is authorized before its thread session is looked up or loaded; a
-persisted session does not grant its sender access. Keep allowed senders and
-rooms restricted to trusted operators.
-
-In thread mode, `max_queued_turns_per_thread` defaults to 16 independently of
-`max_queued_turns_per_room`, even if the room limit is customized. Prompts and
-resets run in order within each thread. Different threads can run concurrently,
-bounded by `max_concurrent_prompts`, which counts unresolved ACP prompt
-requests only. Session creation and lazy session loading do not consume prompt
-slots. Room mode continues to use `max_queued_turns_per_room`. Thread mode has
-no room-wide backlog cap, so queued work can grow with the number of threads.
-
-An unknown thread receives `Unknown thread agent session. Please start a new
-thread.` Start a new top-level message to create a conversation. Oversized
-top-level messages also leave no thread session behind, so follow-ups to their
-error replies are unknown. An exact `/reset` inside a known thread clears only
-that thread's ACP session when the reset reaches the front of its queue; the
-next prompt starts a fresh session. `/reset` at the top level returns
-`Use /reset inside a thread to reset its agent session.` Neither form deletes
-agent-owned history.
-
-Thread mappings are retained without an age or count limit and are loaded only
-when a thread next receives work. This does not unload sessions kept in memory
-by the ACP agent. If the ACP agent does not support
-`session/load`, old room and thread sessions cannot resume after a bridge
-restart; start a new top-level thread. Room and thread contexts stay separate
-when switching response modes, and removing a room from `allowed_rooms` removes
-both. Removing a sender from `allowed_senders` blocks their messages but keeps
-the stored mappings.
-
-The first startup with this schema automatically migrates bridge state and
-creates a private `bridge-state.pre-v13.json` backup in `state_dir`. For
-recovery guidance and the stop-and-restore rollback procedure, see
-[`docs/thread-sessions-state.md`](docs/thread-sessions-state.md). Restoring the
-backup loses bridge-state changes made after migration, including thread
-mappings and completed-event IDs.
-
 ## Encryption Setup
 
 Stop the daemon and then run:
