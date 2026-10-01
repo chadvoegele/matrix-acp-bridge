@@ -16,7 +16,7 @@ Provision through the existing documented harnesses. Set a distinct ignored
 `STEERING_EVIDENCE_FILE` under `node_modules/` for each invocation. The runner
 sets the temporary bridge config to default steering and the selected response
 mode. Existing startup-ready and sender initial-sync gates run before any input. A
-two-second baseline observation requires zero recovered prompt requests. Use
+two-second baseline observation requires zero session creation/loading, prompts, or steering requests. Use
 fresh isolated state for a different response mode; do not switch a retained
 thread suite into room mode without first preserving its session IDs for cleanup.
 
@@ -74,3 +74,9 @@ can contain identifiers. Publish a sanitized report; raw traces are for private
 inspection. Unsupported-agent and unauthorized/unknown-thread cases remain
 hermetic regression coverage unless separately exercised with controlled live
 fixtures.
+
+Success is emitted only after awaited teardown and a health audit of all observed
+RPC errors and Matrix failure markers, including startup and shutdown. Private
+evidence includes phase labels and child diagnostics. Preserve failed-run evidence
+securely outside disposable launcher worktrees before cleanup removes them. See
+[msg3 investigation](msg3-investigation-report.md) for the historical replay error.
