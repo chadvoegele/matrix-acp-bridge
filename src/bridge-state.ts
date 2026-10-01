@@ -841,19 +841,25 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     }
     const threads = new Map<string, ThreadConversationRecord>();
     for (const rawRecord of value) {
+      if (!isRecord(rawRecord)) {
+        throw this.#failure("corrupt");
+      }
+      // Schema 13 accepts old tagged records and minimal untagged records.
+      // Preserve any supplied kind so validation still rejects invalid tags.
+      const record = { kind: "thread", ...rawRecord };
       try {
-        this.#validateConversationRecord(rawRecord);
+        this.#validateConversationRecord(record);
       } catch {
         throw this.#failure("corrupt");
       }
-      if (rawRecord.kind !== "thread") {
+      if (record.kind !== "thread") {
         throw this.#failure("corrupt");
       }
-      const key = conversationKey(rawRecord);
+      const key = conversationKey(record);
       if (threads.has(key)) {
         throw this.#failure("corrupt");
       }
-      threads.set(key, { ...rawRecord });
+      threads.set(key, record);
     }
     return threads;
   }
@@ -1055,7 +1061,11 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       sessions,
       threads: [...state.threads.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([, record]) => record),
+        .map(([, record]) => ({
+          roomId: record.roomId,
+          threadRootEventId: record.threadRootEventId,
+          sessionId: record.sessionId,
+        })),
       completedEventIds,
     })}\n`;
   }

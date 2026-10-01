@@ -405,6 +405,75 @@ function legacyState(overrides: Record<string, unknown> = {}): Record<string, un
   };
 }
 
+void test("persisted threads write only identity and optional session while snapshots retain kind across reset/restart", async () => {
+  await withStateDir(async (stateDir) => {
+    const store = await openStore(stateDir);
+    await store.setConversationRecord({ ...THREAD_ONE, sessionId: "thread-one" });
+    await store.setConversationRecord(THREAD_TWO);
+    const raw = JSON.parse(await readFile(store.statePath, "utf8")) as Record<string, unknown>;
+    assert.equal(raw.schemaVersion, 13);
+    assert.deepEqual(raw.threads, [
+      { roomId: ROOM_ONE, threadRootEventId: EVENT_ONE, sessionId: "thread-one" },
+      { roomId: ROOM_ONE, threadRootEventId: EVENT_TWO },
+    ]);
+    assert.deepEqual(store.getSnapshot().threadRecords, [{ ...THREAD_ONE, sessionId: "thread-one" }, THREAD_TWO]);
+
+    assert.equal(await store.resetConversation(THREAD_ONE), true);
+    const resetRaw = JSON.parse(await readFile(store.statePath, "utf8")) as Record<string, unknown>;
+    assert.deepEqual(resetRaw.threads, [
+      { roomId: ROOM_ONE, threadRootEventId: EVENT_ONE },
+      { roomId: ROOM_ONE, threadRootEventId: EVENT_TWO },
+    ]);
+    const reopened = await openStore(stateDir);
+    assert.deepEqual(reopened.getSnapshot(), store.getSnapshot());
+    assert.deepEqual(reopened.getSnapshot().threadRecords, [THREAD_ONE, THREAD_TWO]);
+    assert.deepEqual(reopened.getConversationRecord(THREAD_ONE), THREAD_ONE);
+    assert.equal(await reopened.resetConversation(THREAD_ONE), false);
+    assert.equal(await reopened.setConversationRecord({ ...THREAD_ONE, sessionId: "fresh-session" }), true);
+    assert.equal((await openStore(stateDir)).getConversationRecord(THREAD_ONE)?.sessionId, "fresh-session");
+  });
+});
+
+void test("schema 13 reads tagged and untagged mapped/sessionless threads and writes the minimal form on mutation", async () => {
+  const mapped = { roomId: ROOM_ONE, threadRootEventId: EVENT_ONE, sessionId: "thread-one" };
+  const sessionless = { roomId: ROOM_ONE, threadRootEventId: EVENT_TWO };
+  for (const threads of [
+    [
+      { kind: "thread", ...mapped },
+      { kind: "thread", ...sessionless },
+    ],
+    [mapped, sessionless],
+    [{ kind: "thread", ...mapped }, sessionless],
+  ]) {
+    await withStateDir(async (stateDir) => {
+      await writeRawState(stateDir, validState({ threads }));
+      const statePath = join(stateDir, BRIDGE_STATE_FILE_NAME);
+      const original = await readFile(statePath);
+      const store = await openStore(stateDir);
+      assert.deepEqual(store.getSnapshot(), {
+        schemaVersion: 13,
+        identity,
+        initialized: true,
+        sessionMappings: { [ROOM_ONE]: "session-one" },
+        threadRecords: [
+          { kind: "thread", ...mapped },
+          { kind: "thread", ...sessionless },
+        ],
+        completedEventIds: { [ROOM_ONE]: [EVENT_ONE] },
+      });
+      assert.deepEqual(await readFile(statePath), original);
+      assert.equal((await readdir(stateDir)).includes(BRIDGE_STATE_BACKUP_FILE_NAME), false);
+      await store.markEventCompleted(ROOM_ONE, EVENT_TWO);
+      const raw = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+      assert.deepEqual(
+        raw,
+        validState({ threads: [mapped, sessionless], completedEventIds: { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] } }),
+      );
+      assert.deepEqual((await openStore(stateDir)).getSnapshot(), store.getSnapshot());
+    });
+  }
+});
+
 void test("thread records isolate modes, roots and rooms, persist sessionless admission, and survive reset/restart", async () => {
   await withStateDir(async (stateDir) => {
     let store = await openStore(stateDir);
@@ -488,17 +557,29 @@ void test("state snapshots and accepted thread operations do not share mutable r
 });
 
 void test("strict thread schema rejects malformed records, duplicate identities, and sessionless rooms without rewriting", async () => {
+  const untagged = { roomId: ROOM_ONE, threadRootEventId: EVENT_ONE };
   const invalidThreads: readonly unknown[] = [
     {},
     null,
+    [null],
+    [[]],
+    [{}],
     [{ ...THREAD_ONE, kind: "room" }],
-    [{ ...THREAD_ONE, threadRootEventId: "bad-root" }],
-    [{ ...THREAD_ONE, roomId: "bad-room" }],
-    [{ ...THREAD_ONE, sessionId: "" }],
-    [{ ...THREAD_ONE, sessionId: null }],
-    [{ ...THREAD_ONE, sessionId: "secret\nvalue" }],
-    [{ ...THREAD_ONE, extra: "secret" }],
+    [{ kind: "room", roomId: ROOM_ONE, sessionId: "room-session" }],
+    ...["invalid", null, 13].map((kind) => [{ ...THREAD_ONE, kind }]),
+    ...[THREAD_ONE, untagged].flatMap((record) => [
+      [{ ...record, threadRootEventId: "bad-root" }],
+      [{ ...record, threadRootEventId: null }],
+      [{ ...record, roomId: "bad-room" }],
+      [{ ...record, roomId: null }],
+      [{ ...record, sessionId: "" }],
+      [{ ...record, sessionId: null }],
+      [{ ...record, sessionId: "secret\nvalue" }],
+      [{ ...record, extra: "secret" }],
+    ]),
     [THREAD_ONE, { ...THREAD_ONE, sessionId: "duplicate" }],
+    [untagged, { ...untagged, sessionId: "duplicate" }],
+    [THREAD_ONE, { ...untagged, sessionId: "duplicate" }],
   ];
   for (const threads of invalidThreads) {
     await withStateDir(async (stateDir) => {
