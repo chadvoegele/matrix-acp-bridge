@@ -1,7 +1,7 @@
 +++
 name = "Steering silent idle fallback for default delivery"
 creation_date = 2026-10-01T23:34:45Z
-status = "pending"
+status = "in-progress"
 depends_on = ["tt-steering-integrated-verification-and-operator-docs"]
 +++
 
