@@ -88,15 +88,26 @@ async function flush(): Promise<void> {
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
-  for (let index = 0; index < 100; index += 1) {
-    if (condition()) {
-      return;
-    }
+  // Filesystem-backed setup may need more than 100 timer ticks on a busy CI runner.
+  const deadline = performance.now() + 5000;
+  while (!condition() && performance.now() < deadline) {
     await flush();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
   }
   assert.equal(condition(), true, "condition did not become true");
 }
+
+void test("fixture waits allow asynchronous setup beyond a fixed 100 timer turns", async () => {
+  let ready = false;
+  const timer = setTimeout(() => {
+    ready = true;
+  }, 200);
+  try {
+    await waitFor(() => ready);
+  } finally {
+    clearTimeout(timer);
+  }
+});
 
 class FakeMatrix implements MatrixClientAdapter {
   readonly sent: RenderedMatrixPart[] = [];
