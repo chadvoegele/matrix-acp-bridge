@@ -8,11 +8,10 @@ room and root event ID. A known thread may have no session ID after admission or
 reset. The next prompt can create a fresh session, including after restart when
 ACP session loading is supported.
 
-Each record in the schema-13 `threads` array writes only `roomId`,
-`threadRootEventId` and an optional `sessionId`. The reader also accepts existing
-schema-13 records with `kind: "thread"`; subsequent writes omit that tag without
-changing the schema version. Other kind values and malformed fields remain
-invalid. In-memory conversation records retain their `kind` discriminator.
+Each record in the schema-13 `threads` array contains only `roomId`,
+`threadRootEventId` and an optional `sessionId`. Unexpected fields, including
+`kind: "thread"`, and malformed fields are rejected. The reader reconstructs the
+`kind` discriminator for in-memory conversation records.
 
 Room and thread records remain separate across response-mode changes. Removing a
 room from `allowed_rooms` prunes both kinds of record. Sender changes do not

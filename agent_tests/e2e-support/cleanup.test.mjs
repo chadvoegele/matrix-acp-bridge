@@ -16,9 +16,9 @@ test("cleanup collects room, thread, and detached ACP sessions", async (t) => {
     JSON.stringify({
       sessions: { "!room:example.org": "room-session" },
       threads: [
-        { kind: "thread", roomId: "!room:example.org", threadRootEventId: "$root", sessionId: "thread-session" },
-        { kind: "thread", roomId: "!room:example.org", threadRootEventId: "$reset", sessionId: "detached-session" },
-        { kind: "thread", roomId: "!room:example.org", threadRootEventId: "$known" },
+        { roomId: "!room:example.org", threadRootEventId: "$root", sessionId: "thread-session" },
+        { roomId: "!room:example.org", threadRootEventId: "$reset", sessionId: "detached-session" },
+        { roomId: "!room:example.org", threadRootEventId: "$known" },
       ],
     }),
   );

@@ -844,15 +844,17 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       if (!isRecord(rawRecord)) {
         throw this.#failure("corrupt");
       }
-      // Schema 13 accepts old tagged records and minimal untagged records.
-      // Preserve any supplied kind so validation still rejects invalid tags.
-      const record = { kind: "thread", ...rawRecord };
+      const keys = ["roomId", "threadRootEventId"];
+      if (Object.hasOwn(rawRecord, "sessionId")) {
+        keys.push("sessionId");
+      }
+      if (!hasExactKeys(rawRecord, keys)) {
+        throw this.#failure("corrupt");
+      }
+      const record = { ...rawRecord, kind: "thread" as const };
       try {
         this.#validateConversationRecord(record);
       } catch {
-        throw this.#failure("corrupt");
-      }
-      if (record.kind !== "thread") {
         throw this.#failure("corrupt");
       }
       const key = conversationKey(record);
