@@ -115,9 +115,17 @@ There must still be at most one unresolved `session/prompt` per conversation.
 Steering-selected input is eligible for a steering RPC only when dispatch is
 open, support is advertised, the target session has an unresolved prompt, and
 the run has not entered cancellation, timeout, shutdown, or fatal handling.
-Session setup/loading, permit waiting, idle state, and post-prompt output drain
-are not eligible. In those cases, automatically enqueue the stripped payload as
-an ordinary tracked prompt. Do not require a second user command.
+Choose the delivery mode at admission, but evaluate running-turn eligibility at
+dispatch. Preserve steering selection while dispatch is closed or an earlier
+prompt is starting (session setup/loading or permit waiting); do not eagerly
+convert a whole admitted batch to prompts merely because setup has not finished.
+Once the earlier prompt is submitted, waiting steering may target that turn.
+
+If the conversation has no active or starting prompt, the first steering-selected
+entry automatically becomes a tracked prompt. Later steering-selected entries
+wait for that prompt to start, then are reevaluated. During post-prompt output
+drain, input may wait for drain to finish before applying the same rule. Do not
+require a second user command. These rules apply to live and catch-up input alike.
 
 Maintain a bounded steering lane separate from the prompt FIFO. It may send input
 to the running turn while ordinary prompts wait for future turns. An earlier
@@ -158,10 +166,11 @@ Every request must include the idle opt-in. The local unresolved prompt is an
 eligibility check, not proof that the agent is still running when it receives
 the request. The agent response resolves this boundary race.
 
-For validated `injected`, remove the entry from the steering lane, durably
-complete its Matrix event, then send `Steering accepted.` Pi owns subsequent
-delivery. Do not submit the payload through `session/prompt` or wait for model
-consumption. The original prompt's completion remains independent.
+For validated `injected`, remove the entry from the steering lane and durably
+complete its Matrix event. Successful injection must be silent: send no Matrix
+acknowledgement message. Pi owns subsequent delivery. Do not submit the payload
+through `session/prompt` or wait for model consumption. The original prompt's
+completion remains independent. Errors and prompt-fallback notices remain visible.
 
 For `promptRequired` with reason `noRunningTurn`, convert that same entry to a
 tracked prompt with the same payload and event identity exactly once. Transfer
@@ -173,9 +182,10 @@ that prompt reaches its normal terminal boundary.
 
 The coordinator must settle outstanding steering decisions before starting the
 next prompt or reset in the conversation, even if the original prompt resolves
-first. Steering entries that have not been sent must be reevaluated when the
-running prompt ends and converted if no longer eligible. Late responses must
-not attach to a replacement session or a later turn's collector.
+first. Unsent steering entries must be reevaluated at dispatch: if no prompt is
+active or starting, convert the first eligible entry to a prompt and let later
+steering wait for it to start. Late responses must not attach to a replacement
+session or a later turn's collector.
 
 Unknown/malformed outcomes and `startedNewTurn` despite the idle opt-in must be
 fatal protocol failures: detached turns cannot be safely tracked. Additional
@@ -212,18 +222,23 @@ lost response is not proof that injection failed. Failed durable completion is a
 fatal state failure, not grounds to retry ACP input.
 
 Removing a steering entry after `injected` is distinct from finishing its durable
-callback and Matrix acknowledgement. `waitForIdle`, run finalization, cancellation,
+callback. `waitForIdle`, run finalization, cancellation,
 and shutdown must account for all such work. No new steering RPC may be sent
 after dispatch closes or cancellation begins. Outstanding calls must settle or
 be interrupted within existing bounded shutdown handling; late results must not
 revive closed collectors.
 
-Selected startup catch-up messages must honor explicit commands and the configured
-default, with existing age/count limits. Catch-up steering targets the agent's
-current session state, not a reconstructed pre-crash turn; if idle, it becomes a
-tracked prompt. Document that limitation. Completed injected event IDs must be
-suppressed by the durable ledger. Converted prompts remain incomplete until normal
-terminal handling. No state schema migration is required.
+Selected startup catch-up messages must use the same delivery rules as live input,
+with existing age/count limits. `/prompt` selects prompt, `/steer` selects steering,
+and unprefixed text uses the default. In a recovered conversation with no running
+turn, the first steering-selected message starts a tracked prompt; later selected
+messages may steer it once it starts. Admission while the startup dispatch gate is
+closed must preserve these choices. No special catch-up conversion policy applies.
+
+Catch-up targets current session state, not a reconstructed pre-crash turn.
+Completed injected event IDs must be suppressed by the durable ledger. Converted
+prompts remain incomplete until normal terminal handling. No state schema
+migration is required.
 
 Existing crash gaps remain: an ACP side effect before durable completion can cause
 replay, and steering acceptance does not prove consumption before a crash. Neither
@@ -262,22 +277,26 @@ Tests must establish:
   prompts but not a reset barrier. Steering ordering and shared bounds hold.
 - Injected input is sent once with no extra prompt, collector, permit, or timer
   reset. Its durable callback is independent of the original prompt's callback.
-- Idle, setup, permit wait, drain, unsupported-agent, and `promptRequired` fallback
-  produces exactly one tracked prompt with the same payload/event identity,
-  without requiring another user command or marking queued input complete.
+- Idle, unsupported-agent, and `promptRequired` fallback produces exactly one
+  tracked prompt with the same payload/event identity, without requiring another
+  user command or marking queued input complete. Dispatch gates, setup, permit
+  waiting, and drain must preserve later entries' steering selection.
 - Prompt resolution before the steering response cannot start the next prompt or
   reset prematurely, misroute late output, or lose terminal callbacks.
 - Unauthorized, duplicate, oversized, queue-full, and unknown-thread input sends
   no unintended RPC. Separate rooms/threads cannot steer each other.
-- Top-level thread-mode steering starts an independent tracked prompt. Encrypted
-  acknowledgements and threaded output retain routing and size limits.
+- Top-level thread-mode steering starts an independent tracked prompt. Successful
+  injection sends no acknowledgement; encrypted fallback notices and threaded
+  output retain routing and size limits.
 - Method errors preserve the active prompt; method-not-found disables support;
   malformed outcomes, ambiguous timeouts, and transport/state failures fail closed
   without automatic input retry.
-- Cancellation, shutdown, late results, acknowledgement delivery, and idle waiting
+- Cancellation, shutdown, late results, durable completion, and idle waiting
   account for pending steering work without reviving old sessions.
 - Restart suppresses completed injected events, while converted prompts retain
-  existing recovery behavior. Catch-up honors delivery selection.
+  existing recovery behavior. Live and catch-up batches both permit the first
+  steering-selected message to start a prompt and later messages to steer it,
+  including when the batch is admitted before dispatch or session setup completes.
 
 Implementation must pass `npm run check`. Manual integration against the finalized
 pi-acp extension must verify server acknowledgement during a running turn and
