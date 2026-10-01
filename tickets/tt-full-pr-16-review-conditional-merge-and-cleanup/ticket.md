@@ -1,7 +1,7 @@
 +++
 name = "Full PR 16 review conditional merge and cleanup"
 creation_date = 2026-10-01T18:12:40Z
-status = "pending"
+status = "in-progress"
 depends_on = ["tt-consolidate-per-conversation-queue-limit"]
 +++
 
