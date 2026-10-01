@@ -1,7 +1,7 @@
 +++
 name = "Steering ACP extension transport"
 creation_date = 2026-10-01T20:30:17Z
-status = "in-progress"
+status = "completed"
 +++
 
 # ACP steering extension transport
