@@ -72,18 +72,7 @@ export const BRIDGE_STATE_FILE_NAME = "bridge-state.json";
 
 export const BRIDGE_STATE_SCHEMA_VERSION = 13;
 
-/** The first original schema-12 document; never replaced by subsequent startups. */
-export const BRIDGE_STATE_BACKUP_FILE_NAME = "bridge-state.pre-v13.json";
-
-export type BridgeStateFaultPoint =
-  | "write"
-  | "file-fsync"
-  | "rename"
-  | "directory-fsync"
-  | "backup-write"
-  | "backup-file-fsync"
-  | "backup-link"
-  | "backup-directory-fsync";
+export type BridgeStateFaultPoint = "write" | "file-fsync" | "rename" | "directory-fsync";
 
 /** Test-only fault boundary; injected failures are sanitized before escaping. */
 export type BridgeStateFaultInjector = (point: BridgeStateFaultPoint) => void | Promise<void>;
@@ -99,9 +88,7 @@ export type BridgeStateFailureCategory =
   | "write"
   | "file-fsync"
   | "rename"
-  | "directory-fsync"
-  | "backup"
-  | "migration";
+  | "directory-fsync";
 
 /**
  * A sanitized fatal state failure. The message contains only a stable
@@ -118,11 +105,11 @@ export class BridgeStateError extends Error {
   readonly statePath: string;
 
   readonly recoveryGuidance =
-    "Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem. See docs/thread-sessions-state.md for recovery and restore-backup rollback; do not delete state to bypass this error.";
+    "Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem. See docs/thread-sessions-state.md for recovery and restoring your own pre-upgrade backup to downgrade; do not delete state to bypass this error.";
 
   constructor(category: BridgeStateFailureCategory, statePath: string) {
     super(
-      `Private bridge state failure (${category}) at ${statePath}. Stop the bridge and inspect the private state; see docs/thread-sessions-state.md for recovery and restore-backup rollback. Do not delete state to bypass this error.`,
+      `Private bridge state failure (${category}) at ${statePath}. Stop the bridge and inspect the private state; see docs/thread-sessions-state.md for recovery and restoring your own pre-upgrade backup to downgrade. Do not delete state to bypass this error.`,
     );
     this.name = "BridgeStateError";
     this.category = category;
@@ -585,7 +572,8 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
         completedEventIds: cloneCompletedEventIds(state.completedEventIds),
       };
       if (state.schemaVersion === 12) {
-        await this.#migrate(next, bytes);
+        await this.#persist(next);
+        this.#emit("debug", "private-state-migrated", { fromVersion: 12, toVersion: BRIDGE_STATE_SCHEMA_VERSION });
       }
       this.#state = next;
       this.#emit("debug", "private-state-loaded", {
@@ -604,78 +592,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
     }
   }
 
-  /** Runs under the caller's existing state-directory lock; never touches SDK files. */
-  async #migrate(state: InternalState, originalBytes: Uint8Array): Promise<void> {
-    await this.#ensureOriginalBackup(originalBytes);
-    const rollbackPath = join(this.#stateDir, `.${BRIDGE_STATE_FILE_NAME}.${randomUUID()}.tmp`);
-    try {
-      // Hold the original inode until replacement is durably committed. A reported
-      // post-rename failure restores it; a process crash leaves the private backup.
-      await fs.link(this.statePath, rollbackPath);
-      await this.#persist(state, rollbackPath);
-      this.#emit("debug", "private-state-migrated", { fromVersion: 12, toVersion: BRIDGE_STATE_SCHEMA_VERSION });
-    } catch (error) {
-      if (error instanceof BridgeStateError) {
-        throw error;
-      }
-      throw this.#failure("migration");
-    } finally {
-      await unlinkQuietly(rollbackPath);
-    }
-  }
-
-  async #ensureOriginalBackup(originalBytes: Uint8Array): Promise<void> {
-    const backupPath = join(this.#stateDir, BRIDGE_STATE_BACKUP_FILE_NAME);
-    const temporaryPath = join(this.#stateDir, `.${BRIDGE_STATE_FILE_NAME}.${randomUUID()}.tmp`);
-    let handle: FileHandle | undefined;
-    try {
-      let exists = false;
-      try {
-        this.#validateStatePathStat(await fs.lstat(backupPath));
-        exists = true;
-      } catch (error) {
-        if (!isNodeError(error, "ENOENT")) {
-          throw error;
-        }
-      }
-      if (exists) {
-        handle = await fs.open(backupPath, STATE_FILE_FLAGS);
-        this.#validateStatePathStat(await handle.stat());
-        const bytes = await handle.readFile();
-        const parsed: unknown = JSON.parse(new TextDecoder("utf8", { fatal: true }).decode(bytes));
-        if (this.#parseState(parsed).schemaVersion !== 12) {
-          throw this.#failure("backup");
-        }
-        // A crash may have happened after link but before directory fsync. Retry
-        // durability, retaining the first valid original backup byte-for-byte.
-        await this.#inject("backup-file-fsync");
-        await handle.sync();
-      } else {
-        await this.#inject("backup-write");
-        handle = await fs.open(temporaryPath, TEMP_FILE_FLAGS, 0o600);
-        await handle.chmod(0o600);
-        this.#validateStatePathStat(await handle.stat());
-        await handle.writeFile(originalBytes);
-        await this.#inject("backup-file-fsync");
-        await handle.sync();
-        await closeQuietly(handle);
-        handle = undefined;
-        await this.#inject("backup-link");
-        // Exclusive publication of a fully written file: never overwrite a backup
-        // and never mistake a partial write left by a crash for an original.
-        await fs.link(temporaryPath, backupPath);
-      }
-      await this.#inject("backup-directory-fsync");
-      await this.#syncDirectory();
-    } catch {
-      throw this.#failure("backup");
-    } finally {
-      await closeQuietly(handle);
-      await unlinkQuietly(temporaryPath);
-    }
-  }
-
-  async #persist(state: InternalState, rollbackPath?: string): Promise<void> {
+  async #persist(state: InternalState): Promise<void> {
     const document = this.#serializeState(state);
     const temporaryPath = join(this.#stateDir, `.${BRIDGE_STATE_FILE_NAME}.${randomUUID()}.tmp`);
     let handle: FileHandle | undefined;
@@ -701,14 +618,6 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       await this.#inject("directory-fsync");
       await this.#syncDirectory();
     } catch (error) {
-      if (renamed && rollbackPath !== undefined) {
-        try {
-          await fs.rename(rollbackPath, this.statePath);
-          await this.#syncDirectory();
-        } catch {
-          throw this.#failure("migration");
-        }
-      }
       if (error instanceof BridgeStateError) {
         this.#emitFailure(error);
         throw error;

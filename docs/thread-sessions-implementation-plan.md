@@ -16,7 +16,7 @@ Room mode remains the default. Thread mode scopes queue/session identity to `(ro
 
 `max_concurrent_prompts` retains its existing prompt-only semantics; creation/loading does not count. No session unloading, setup-concurrency control, aggregate backlog cap, automatic history expiry or unsolicited MCP thread routing is added.
 
-Thread mode uses an independent `max_queued_turns_per_thread` default of 16. Busy/oversized rejected top-level roots remain unknown. Reset retains durable sessionless thread identity when loading is supported. Both modes retain their records across switches; removed rooms are pruned. State migration creates a private backup and rollback requires restoring it.
+Thread mode uses an independent `max_queued_turns_per_thread` default of 16. Busy/oversized rejected top-level roots remain unknown. Reset retains durable sessionless thread identity when loading is supported. Both modes retain their records across switches; removed rooms are pruned. Users must back up private bridge state before upgrading; rollback requires restoring their own pre-upgrade backup.
 
 ## Ticket DAG
 
@@ -43,7 +43,7 @@ Durable identities    Matrix output and edits
 | Stage           | WAAP ticket                                                          | Main responsibility                                                                             |
 | --------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Foundations     | `tt-thread-sessions-configuration-and-routing-foundations`           | Config, conversation identity, authorized inbound thread metadata and fallback handling         |
-| Persistence     | `tt-thread-sessions-durable-identities-and-migration`                | Room/thread records, sessionless identity, atomic reset, migration/backup and rollback          |
+| Persistence     | `tt-thread-sessions-durable-identities-and-migration`                | Room/thread records, sessionless identity, atomic reset, migration and user-managed rollback    |
 | Output          | `tt-thread-sessions-matrix-output-and-edit-routing`                  | Text/HTML relations, edit envelopes, byte budgets, synthetic responses and encryption           |
 | Coordinator     | `tt-thread-sessions-coordinator-queues-reset-and-lifecycle`          | Independent queues/sessions, prompt semaphore, reset/recovery, activity routing and room typing |
 | Regression      | `tt-thread-sessions-integrated-regression-and-operator-documen-8d5b` | Spec coverage audit, failure-path tests, compatibility and operator documentation               |

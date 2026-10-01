@@ -183,12 +183,14 @@ Returning to a mode must resume its retained context without assigning sessions
 from the other mode. Removed-room cleanup still applies to both sets of mappings.
 
 Existing state must migrate automatically, preserving account identity, sync
-recovery state, completed-event IDs, and room sessions. Before replacing state
-with the new schema, create a private pre-migration backup. A failed backup or
-migration must stop startup without overwriting the original state.
+recovery state, completed-event IDs, and room sessions. Users must back up private
+bridge state before upgrading; the bridge creates no automatic backup. Migration
+uses the normal atomic write/file-fsync/rename/directory-fsync sequence. Failures
+stop startup; pre-rename failures retain original state, while post-rename fsync
+failures have an indeterminate disk commit.
 
-Rollback to an older binary requires stopping the bridge and restoring that
-backup; post-migration state changes are lost. Document this procedure. Unsupported
+Rollback to an older binary requires stopping the bridge and restoring the user's
+own pre-upgrade backup; post-migration state changes are lost. Document this procedure. Unsupported
 or invalid state must fail startup with recovery guidance, never silently reset.
 A downgrade/export tool is not required.
 
@@ -226,9 +228,11 @@ A downgrade/export tool is not required.
 - No inactivity or age-based cleanup removes persisted mappings. Removing a
   room from `allowed_rooms` prunes its mappings; removing a sender rejects their
   messages without removing mappings.
-- State migration preserves existing recovery state and sessions, creates a
-  private backup, and leaves original state intact on failure. Restore-based
-  rollback is documented and tested; incompatible state is never silently erased.
+- State migration preserves existing recovery state and sessions without creating
+  a backup. Atomic writes retain original state on pre-rename failure; all write
+  failures are fatal. Existing backups are untouched. Restore-based rollback using
+  a user-managed pre-upgrade backup is documented and tested; incompatible state
+  is never silently erased.
 - Mode switching retains both sets of mappings and sessionless thread identities
   when loading is supported, and never cross-associates sessions.
 - Concurrent turns preserve room typing state until the last relevant turn ends.

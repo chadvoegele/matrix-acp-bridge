@@ -20,71 +20,38 @@ prune records. There is no age, inactivity or count eviction. Startup without
 old threads become unknown. Live in-process identities remain available through
 reset. The state boundary performs no ACP session loading.
 
-Before replacement, migration writes a byte-for-byte copy of the original to
-`bridge-state.pre-v13.json` in `state_dir`. The directory remains service-owned
-and private (0700), and the backup is service-owned with mode 0600. The backup is
-published exclusively after file fsync, then the directory is fsynced before
-migration. A retry validates and retains an existing original backup; repeated
-startup never refreshes it. Keep this private file out of source control.
+Before upgrading, stop the bridge and back up private `bridge-state.json` using
+your own backup procedure. Backups are the user's responsibility; the bridge
+creates no automatic backup and does not inspect or alter existing backup files.
+Keep state and backups service-owned, private (directory 0700, files 0600) and out
+of source control. Use the existing backup procedures for SDK recovery/crypto
+state and agent history when needed; migration does not alter those stores.
 
-The bridge does not alter SDK-owned sync cursors, recovery files or crypto state.
-The backup covers the bridge document only. It is not a backup of agent history,
-Matrix history or the entire state directory. Use the existing backup procedure
-for those separate stores when needed.
-
-Backup failure stops startup before replacing bridge state. Migration uses the
-existing atomic write/file-fsync/rename/directory-fsync sequence. Reported
-post-rename migration failures attempt an atomic restoration of the original
-inode; the original backup also remains available after a crash or an underlying
-filesystem failure that prevents restoration. Ordinary mutation failures are
-fatal; a post-rename fsync failure has an indeterminate disk commit and must
-never produce a successful reset acknowledgement.
+Migration uses the normal atomic write/file-fsync/rename/directory-fsync sequence.
+Failures stop startup. Failures before rename leave the original state intact;
+a post-rename directory-fsync failure has an indeterminate disk commit and may
+leave schema 13 on disk. State-write failures are fatal and must never produce a
+successful reset acknowledgement.
 
 Unsupported or corrupt documents stop startup with recovery guidance. Verify the
 configured Matrix account/device identity, service ownership, permissions and
 filesystem health. Do not delete state or edit its version number to bypass an
-error. An unsafe, corrupt or incompatible existing migration backup also blocks
-migration; inspect it privately rather than overwriting the first original.
+error.
 
 ## Restore-based rollback
 
-An older binary cannot read schema 13. **Stop the bridge completely** using its
-service manager and ensure it has released the state lock before restoring.
-Save any desired post-upgrade state privately first. Restore the original backup
-as the service user (substitute your configured `state_dir`):
+An older binary cannot read schema 13. Stop the bridge completely and ensure it
+has released the state lock. Save any desired post-upgrade state privately, then
+restore your own pre-upgrade schema-12 backup to `bridge-state.json` as the service
+user, retaining private ownership and permissions. If you have no pre-upgrade
+backup, there is no downgrade/export tool.
 
-```sh
-python3 - /var/lib/matrix-acp-bridge <<'PY'
-import os
-import pathlib
-import shutil
-import sys
-
-state_dir = pathlib.Path(sys.argv[1])
-backup = state_dir / "bridge-state.pre-v13.json"
-target = state_dir / "bridge-state.json"
-temporary = state_dir / "bridge-state.restore.tmp"
-with backup.open("rb") as source, temporary.open("xb") as output:
-    os.fchmod(output.fileno(), 0o600)
-    shutil.copyfileobj(source, output)
-    output.flush()
-    os.fsync(output.fileno())
-os.replace(temporary, target)
-directory_fd = os.open(state_dir, os.O_RDONLY | os.O_DIRECTORY)
-try:
-    os.fsync(directory_fd)
-finally:
-    os.close(directory_fd)
-PY
-```
-
-Then start the older binary with its matching configuration (remove the new
-`response_mode` and `max_queued_turns_per_thread` settings if unsupported). Leave
-SDK-owned recovery and crypto files intact. Do not run old and new binaries
-against the same state directory concurrently.
+Start the older binary with its matching configuration (remove `response_mode`
+and `max_queued_turns_per_thread` if unsupported). Leave SDK-owned recovery and
+crypto files intact. Do not run old and new binaries against the same state
+directory concurrently.
 
 **Restoring loses every post-migration bridge-state change**, including thread
 identities/sessions, later room-session changes and completed-event IDs. It does
-not delete agent-owned history. The retained backup is always the first original,
-so upgrading again after rollback migrates the current schema-12 document but
-keeps that first backup. There is no downgrade/export tool.
+not delete agent-owned history. A later upgrade migrates the restored schema-12
+state again; manage backups yourself before each upgrade.

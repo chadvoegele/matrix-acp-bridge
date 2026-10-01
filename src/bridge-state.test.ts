@@ -18,7 +18,6 @@ import test from "node:test";
 
 import {
   BRIDGE_STATE_FILE_NAME,
-  BRIDGE_STATE_BACKUP_FILE_NAME,
   BRIDGE_STATE_SCHEMA_VERSION,
   BridgeStateError,
   openBridgeStateStore,
@@ -454,7 +453,7 @@ void test("schema 13 reads mapped/sessionless threads and reconstructs kind with
       completedEventIds: { [ROOM_ONE]: [EVENT_ONE] },
     });
     assert.deepEqual(await readFile(statePath), original);
-    assert.equal((await readdir(stateDir)).includes(BRIDGE_STATE_BACKUP_FILE_NAME), false);
+    assert.deepEqual(await readdir(stateDir), [BRIDGE_STATE_FILE_NAME]);
     await store.markEventCompleted(ROOM_ONE, EVENT_TWO);
     const raw = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
     assert.deepEqual(
@@ -579,7 +578,7 @@ void test("strict thread schema rejects unexpected fields, malformed records and
       assert.match(error.message, /Stop the bridge.*recovery/u);
       assert.equal(error.message.includes("secret"), false);
       assert.deepEqual(await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME)), original);
-      assert.equal((await readdir(stateDir)).includes(BRIDGE_STATE_BACKUP_FILE_NAME), false);
+      assert.deepEqual(await readdir(stateDir), [BRIDGE_STATE_FILE_NAME]);
     });
   }
   await withStateDir(async (stateDir) => {
@@ -618,7 +617,7 @@ void test("failed thread reset is fatal, leaves memory unchanged, and cannot ack
   }
 });
 
-void test("schema-12 migration preserves identity/ledger/room sessions, SDK-owned recovery and lock ownership with a private original backup", async () => {
+void test("schema-12 migration preserves identity/ledger/room sessions, SDK-owned recovery and lock ownership without creating a backup", async () => {
   await withStateDir(async (stateDir) => {
     const original = `${JSON.stringify(legacyState(), null, 2)}\n`;
     await writeRawState(stateDir, original);
@@ -636,16 +635,14 @@ void test("schema-12 migration preserves identity/ledger/room sessions, SDK-owne
       assert.deepEqual(store.getSnapshot().threadRecords, []);
       assert.equal(await readFile(sdkPath, "utf8"), sdkBytes);
       await assert.rejects(() => acquireStateLock(stateDir), /already locked/u);
-      const backupPath = join(stateDir, BRIDGE_STATE_BACKUP_FILE_NAME);
-      const originalStat = await lstat(backupPath);
-      assert.equal(originalStat.mode & 0o7777, 0o600);
-      assert.equal(originalStat.uid, process.getuid?.());
-      assert.equal(await readFile(backupPath, "utf8"), original);
+      const migratedStat = await lstat(store.statePath);
+      assert.equal(migratedStat.mode & 0o7777, 0o600);
+      assert.equal(migratedStat.uid, process.getuid?.());
+      assert.equal((await lstat(stateDir)).mode & 0o7777, 0o700);
+      assert.deepEqual((await readdir(stateDir)).sort(), [".lock", BRIDGE_STATE_FILE_NAME, "sdk-sync-recovery.json"]);
       await store.setConversationRecord({ ...THREAD_ONE, sessionId: "new-thread" });
       const reopened = await openStore(stateDir);
       assert.equal(reopened.getConversationRecord(THREAD_ONE)?.sessionId, "new-thread");
-      assert.equal((await lstat(backupPath)).ino, originalStat.ino);
-      assert.equal(await readFile(backupPath, "utf8"), original);
       assert.equal(await readFile(sdkPath, "utf8"), sdkBytes);
       assert.equal(
         (await readdir(stateDir)).some((name) => name.endsWith(".tmp")),
@@ -669,21 +666,12 @@ void test("migration preserves an uninitialized baseline and does not synthesize
   });
 });
 
-void test("backup and migration write/fsync/rename failures leave original bytes and a retryable startup", async () => {
-  const points = [
-    "backup-write",
-    "backup-file-fsync",
-    "backup-link",
-    "backup-directory-fsync",
-    "write",
-    "file-fsync",
-    "rename",
-    "directory-fsync",
-  ] as const;
-  for (const point of points) {
+void test("migration failures are fatal and sanitized; only pre-rename failures preserve original bytes", async () => {
+  for (const point of ["write", "file-fsync", "rename", "directory-fsync"] as const) {
     await withStateDir(async (stateDir) => {
       await writeRawState(stateDir, legacyState());
-      const original = await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME));
+      const statePath = join(stateDir, BRIDGE_STATE_FILE_NAME);
+      const original = await readFile(statePath);
       const error = await expectStateError(
         () =>
           openStore(stateDir, {
@@ -691,29 +679,36 @@ void test("backup and migration write/fsync/rename failures leave original bytes
               if (at === point) throw new Error("raw-secret migration failure");
             },
           }),
-        point.startsWith("backup-") ? "backup" : (point as BridgeStateError["category"]),
+        point,
       );
       assert.equal(error.message.includes("raw-secret"), false);
-      assert.deepEqual(await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME)), original);
-      assert.equal(
-        (await readdir(stateDir)).some((name) => name.endsWith(".tmp")),
-        false,
-      );
+      if (point === "directory-fsync") {
+        // Rename already happened; durability is uncertain and startup must fail.
+        const document = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+        assert.equal(document.schemaVersion, 13);
+        assert.deepEqual(document.threads, []);
+      } else {
+        assert.deepEqual(await readFile(statePath), original);
+      }
+      assert.deepEqual(await readdir(stateDir), [BRIDGE_STATE_FILE_NAME]);
       const reopened = await openStore(stateDir);
       assert.equal(reopened.getSnapshot().schemaVersion, 13);
-      assert.deepEqual(await readFile(join(stateDir, BRIDGE_STATE_BACKUP_FILE_NAME)), original);
+      assert.equal(reopened.getSessionMapping(ROOM_ONE), "legacy-room-session");
+      assert.deepEqual(reopened.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
+      assert.deepEqual(await readdir(stateDir), [BRIDGE_STATE_FILE_NAME]);
     });
   }
 });
 
-void test("an existing unsafe, corrupt or incompatible backup blocks migration without overwriting either file", async () => {
+void test("existing legacy backup paths are ignored and left untouched during migration", async () => {
   for (const mode of ["public", "symlink", "corrupt", "wrong-schema", "wrong-identity", "directory"] as const) {
     await withStateDir(async (stateDir) => {
       await writeRawState(stateDir, legacyState());
-      const original = await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME));
-      const backupPath = join(stateDir, BRIDGE_STATE_BACKUP_FILE_NAME);
+      const backupPath = join(stateDir, "bridge-state.pre-v13.json");
       if (mode === "symlink") {
-        await symlink(join(stateDir, BRIDGE_STATE_FILE_NAME), backupPath);
+        const targetPath = join(stateDir, "operator-backup.json");
+        await writeFile(targetPath, "operator-owned backup", { mode: 0o600 });
+        await symlink(targetPath, backupPath);
       } else if (mode === "directory") {
         await mkdir(backupPath, { mode: 0o700 });
       } else {
@@ -731,25 +726,33 @@ void test("an existing unsafe, corrupt or incompatible backup blocks migration w
         if (mode === "public") await chmod(backupPath, 0o644);
       }
       const before = await lstat(backupPath);
-      await expectStateError(() => openStore(stateDir), "backup");
-      assert.deepEqual(await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME)), original);
-      assert.equal((await lstat(backupPath)).ino, before.ino);
+      const original = mode === "directory" ? undefined : await readFile(backupPath);
+      const store = await openStore(stateDir);
+      assert.equal(store.getSnapshot().schemaVersion, 13);
+      assert.equal(store.getSessionMapping(ROOM_ONE), "legacy-room-session");
+      const after = await lstat(backupPath);
+      assert.equal(after.ino, before.ino);
+      assert.equal(after.mode, before.mode);
+      if (original !== undefined) assert.deepEqual(await readFile(backupPath), original);
     });
   }
 });
 
-void test("stop/restore-backup rollback restores the exact old schema and loses post-migration changes; remigration never replaces the first backup", async () => {
+void test("restoring a user-managed pre-upgrade backup restores schema 12 and loses post-migration changes", async () => {
   await withStateDir(async (stateDir) => {
     await writeRawState(stateDir, legacyState());
     const original = await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME));
+    // The operator creates and protects their own backup before upgrading.
+    const backupPath = join(stateDir, "operator-backup.json");
+    await copyFile(join(stateDir, BRIDGE_STATE_FILE_NAME), backupPath);
+    await chmod(backupPath, 0o600);
+    const backupStat = await lstat(backupPath);
     const store = await openStore(stateDir);
     await store.setConversationRecord({ ...THREAD_ONE, sessionId: "post-migration-thread" });
     await store.setSessionMapping(ROOM_ONE, "post-migration-room");
     await store.markEventCompleted(ROOM_ONE, "$post-migration");
     await store.flush();
     // The daemon must stop/release its lock before this operator procedure.
-    const backupPath = join(stateDir, BRIDGE_STATE_BACKUP_FILE_NAME);
-    const backupStat = await lstat(backupPath);
     const restorePath = join(stateDir, "bridge-state.restore.tmp");
     await copyFile(backupPath, restorePath);
     await chmod(restorePath, 0o600);
@@ -771,15 +774,14 @@ void test("stop/restore-backup rollback restores the exact old schema and loses 
     assert.equal(reopened.isEventCompleted(ROOM_ONE, "$post-migration"), false);
     assert.equal((await lstat(backupPath)).ino, backupStat.ino);
     assert.deepEqual(await readFile(backupPath), original);
-    // If an old binary runs after rollback and changes room state, a later
-    // upgrade still preserves the first backup rather than silently refreshing it.
+    // A later upgrade migrates current state and leaves the operator's backup alone.
     await writeRawState(stateDir, legacyState({ sessions: { [ROOM_ONE]: "old-binary-later-session" } }));
     assert.equal((await openStore(stateDir)).getSessionMapping(ROOM_ONE), "old-binary-later-session");
     assert.deepEqual(await readFile(backupPath), original);
   });
 });
 
-void test("invalid legacy documents fail before backup or migration and retain the exact original", async () => {
+void test("invalid legacy documents fail before migration and retain the exact original", async () => {
   for (const document of [
     legacyState({ sessions: { [ROOM_ONE]: "" } }),
     legacyState({ completedEventIds: { [ROOM_ONE]: [EVENT_ONE, EVENT_ONE] } }),
@@ -794,12 +796,12 @@ void test("invalid legacy documents fail before backup or migration and retain t
       const original = await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME));
       await expectStateError(() => openStore(stateDir));
       assert.deepEqual(await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME)), original);
-      assert.equal((await readdir(stateDir)).includes(BRIDGE_STATE_BACKUP_FILE_NAME), false);
+      assert.deepEqual(await readdir(stateDir), [BRIDGE_STATE_FILE_NAME]);
     });
   }
 });
 
-void test("backup durability precedes schema replacement", async () => {
+void test("migration uses the normal atomic write and durability sequence", async () => {
   await withStateDir(async (stateDir) => {
     await writeRawState(stateDir, legacyState());
     const points: BridgeStateFaultPoint[] = [];
@@ -808,20 +810,11 @@ void test("backup durability precedes schema replacement", async () => {
         points.push(point);
       },
     });
-    assert.deepEqual(points, [
-      "backup-write",
-      "backup-file-fsync",
-      "backup-link",
-      "backup-directory-fsync",
-      "write",
-      "file-fsync",
-      "rename",
-      "directory-fsync",
-    ]);
+    assert.deepEqual(points, ["write", "file-fsync", "rename", "directory-fsync"]);
   });
 });
 
-void test("thread retention has no count or age limit and reopening never refreshes the backup", async () => {
+void test("thread retention has no count or age limit and reopening never rewrites state", async () => {
   await withStateDir(async (stateDir) => {
     await writeRawState(stateDir, legacyState());
     const store = await openStore(stateDir);
@@ -833,7 +826,7 @@ void test("thread retention has no count or age limit and reopening never refres
     await Promise.all(records.map((record) => store.setConversationRecord(record)));
     const reopened = await openStore(stateDir, {
       faultInjector: (point) => {
-        if (point.startsWith("backup-")) throw new Error("backup must never be refreshed");
+        throw new Error(`reopening must not write state: ${point}`);
       },
     });
     for (const record of records) {

@@ -837,7 +837,7 @@ void test("incompatible private state stops startup with restore guidance, prese
     assert.equal(await readFile(statePath, "utf8"), original);
     const diagnostics = diagnosticRecords.join("\n");
     assert.match(diagnostics, /unsupported-version/u);
-    assert.match(diagnostics, /restore-backup rollback/u);
+    assert.match(diagnostics, /restoring your own pre-upgrade backup to downgrade/u);
     assert.equal(diagnostics.includes("raw-state-secret"), false);
     assert.equal(diagnostics.includes("reset it only"), false);
   } finally {
