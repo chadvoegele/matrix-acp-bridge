@@ -77,7 +77,6 @@ function constructEnd(text: string, start: number, balanced: Map<number, number>
   if (marker === "*" || marker === "_" || marker === "~") {
     const length = runLength(text, start);
     if (marker === "~" && length !== 2) return 0;
-    const delimiter = marker.repeat(length);
     let index = start + length;
     if (/\s/u.test(text[index] ?? "")) return 0;
     while (index < text.length) {
@@ -94,7 +93,7 @@ function constructEnd(text: string, start: number, balanced: Map<number, number>
         }
         case marker: {
           const closingLength = runLength(text, index);
-          if (closingLength === delimiter.length && !/\s/u.test(text[index - 1]!)) {
+          if (closingLength === length && !/\s/u.test(text[index - 1]!)) {
             return index + closingLength;
           }
           index += closingLength;

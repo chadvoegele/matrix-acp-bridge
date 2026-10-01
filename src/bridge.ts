@@ -1000,27 +1000,7 @@ export class BridgeCoordinator {
       identity.kind === "thread"
         ? this.#config.limits.maxQueuedTurnsPerThread
         : this.#config.limits.maxQueuedTurnsPerRoom;
-    let completion: Promise<void>;
-    if (conversation.active === undefined || conversation.waiting.length < queueLimit) {
-      // Admission records the routing identity immediately. Follow-ups arriving
-      // during setup/reset remain known; rejected roots never enter this map.
-      room.conversations.set(key, conversation);
-      if (identity.kind === "thread" && !known) this.#sessionStore.setConversationRecord(identity);
-      const entry = makeQueueEntry(
-        {
-          ...normalized,
-          ...(identity.kind === "thread" ? { threadRootEventId: identity.threadRootEventId } : {}),
-        },
-        terminalCompletion,
-      );
-      completion = entry.completion;
-      if (conversation.active === undefined) {
-        conversation.active = entry;
-        this.#pumpConversation(conversation);
-      } else {
-        conversation.waiting.push(entry);
-      }
-    } else {
+    if (conversation.active !== undefined && conversation.waiting.length >= queueLimit) {
       if (event.isCatchUp === true) {
         this.#diagnostic("warn", "catch-up-event-omitted", {
           roomId,
@@ -1034,8 +1014,25 @@ export class BridgeCoordinator {
       await this.#deliverDescriptor(roomId, eventId, { kind: "busy" }, routing);
       return;
     }
+    // Admission records the routing identity immediately. Follow-ups arriving
+    // during setup/reset remain known; rejected roots never enter this map.
+    room.conversations.set(key, conversation);
+    if (identity.kind === "thread" && !known) this.#sessionStore.setConversationRecord(identity);
+    const entry = makeQueueEntry(
+      {
+        ...normalized,
+        ...(identity.kind === "thread" ? { threadRootEventId: identity.threadRootEventId } : {}),
+      },
+      terminalCompletion,
+    );
+    if (conversation.active === undefined) {
+      conversation.active = entry;
+      this.#pumpConversation(conversation);
+    } else {
+      conversation.waiting.push(entry);
+    }
     this.#receipt(event);
-    await completion;
+    await entry.completion;
   }
 
   async #completeTerminal(terminalCompletion: BridgeTerminalCompletion | undefined): Promise<boolean> {

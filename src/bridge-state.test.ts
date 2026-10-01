@@ -728,11 +728,11 @@ void test("invalid legacy documents fail before backup or migration and retain t
   }
 });
 
-void test("thread retention has no count or age limit and backup durability precedes schema replacement", async () => {
+void test("backup durability precedes schema replacement", async () => {
   await withStateDir(async (stateDir) => {
     await writeRawState(stateDir, legacyState());
     const points: BridgeStateFaultPoint[] = [];
-    const store = await openStore(stateDir, {
+    await openStore(stateDir, {
       faultInjector: (point) => {
         points.push(point);
       },
@@ -747,6 +747,13 @@ void test("thread retention has no count or age limit and backup durability prec
       "rename",
       "directory-fsync",
     ]);
+  });
+});
+
+void test("thread retention has no count or age limit and reopening never refreshes the backup", async () => {
+  await withStateDir(async (stateDir) => {
+    await writeRawState(stateDir, legacyState());
+    const store = await openStore(stateDir);
     const records = Array.from({ length: 32 }, (_, index) => ({
       ...THREAD_ONE,
       threadRootEventId: `$retained-${index}`,
