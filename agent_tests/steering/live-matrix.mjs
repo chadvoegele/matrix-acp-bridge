@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { readEnvironment, readToken, writePrivateFile } from "../e2e-support/common.mjs";
+import { assertSteeringBaseline, assertSteeringHealthy } from "../e2e-support/steering-observations.mjs";
 import { cryptoPaths } from "../encrypted-e2e/lib.mjs";
 
 // Opt-in: use only environments provisioned for the documented test rooms.
@@ -41,6 +42,7 @@ const frames = [];
 const events = [];
 const sent = [];
 let pair;
+let successSummary;
 let phase = "startup";
 const pending = new Map();
 const completed = [];
@@ -52,14 +54,14 @@ const check = async (predicate, label, timeout = 180_000) => {
 };
 
 function outbound(frame) {
-  frames.push({ direction: "out", frame, time: Date.now() });
+  frames.push({ direction: "out", frame, phase, time: Date.now() });
   if (frame.method) console.log(JSON.stringify({ rpc: frame.method }));
   if (frame.method === "session/prompt" || frame.method === "_session/steering") pending.set(frame.id, frame);
   if (frame.method === "session/prompt") activeText.set(frame.params.sessionId, { id: frame.id, text: "" });
 }
 
 function inbound(frame) {
-  frames.push({ direction: "in", frame, time: Date.now() });
+  frames.push({ direction: "in", frame, phase, time: Date.now() });
   const update = frame.params?.update;
   if (
     update?.sessionUpdate === "tool_call" ||
@@ -152,11 +154,8 @@ try {
   const initialized = frames.find(({ direction, frame }) => direction === "in" && frame.result?.agentCapabilities);
   assert.equal(initialized?.frame.result?._meta?.steering?.supported, true);
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
-  assert.equal(
-    requests("session/prompt").length,
-    0,
-    "startup recovery must finish before live scenarios; use fresh isolated state",
-  );
+  assertSteeringBaseline(frames);
+  assertSteeringHealthy(frames, events, environment.bridge.userId);
 
   phase = "active steer and explicit prompt FIFO";
   let index = frames.length;
@@ -308,18 +307,16 @@ try {
       assert.equal(rawEvent.type, "m.room.encrypted");
     }
   }
-  console.log(
-    JSON.stringify({
-      result: "passed",
-      transport,
-      responseMode,
-      sent: sent.length,
-      replies: replies.length,
-      prompts: requests("session/prompt").length,
-      steering: requests("_session/steering").length,
-      sessions: requests("session/new").length,
-    }),
-  );
+  successSummary = {
+    result: "passed",
+    transport,
+    responseMode,
+    sent: sent.length,
+    replies: replies.length,
+    prompts: requests("session/prompt").length,
+    steering: requests("_session/steering").length,
+    sessions: requests("session/new").length,
+  };
 } catch (error) {
   console.log(
     JSON.stringify({
@@ -335,12 +332,26 @@ try {
   process.exitCode = 1;
 } finally {
   await writePrivateFile(evidencePath, `${JSON.stringify({ phase, frames, sent, events }, null, 2)}\n`);
+  phase = "shutdown";
   if (pair) await stopBridgePair(pair);
   console.log(JSON.stringify({ cleanup: "bridge and ACP stopped" }));
   await sender.stop().catch(() => {});
   await sender.closeCrypto().catch(() => {});
   console.log(JSON.stringify({ cleanup: "sender stopped" }));
-  await writePrivateFile(evidencePath, `${JSON.stringify({ phase, frames, sent, events }, null, 2)}\n`);
+  await writePrivateFile(
+    evidencePath,
+    `${JSON.stringify({ phase, frames, sent, events, bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
+  );
+}
+
+if (successSummary) {
+  try {
+    assertSteeringHealthy(frames, events, environment.bridge.userId);
+    console.log(JSON.stringify(successSummary));
+  } catch {
+    console.log(JSON.stringify({ result: "failed", phase: "final health audit" }));
+    process.exitCode = 1;
+  }
 }
 
 // Matrix SDK background timers can outlive a stopped client. All child exits and
