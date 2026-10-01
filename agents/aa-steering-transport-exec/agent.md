@@ -1,7 +1,8 @@
 +++
 name = "steering-transport-exec"
 creation_date = 2026-10-01T20:32:13Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP steering delivery developer
