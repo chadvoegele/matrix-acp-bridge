@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matrixHtmlContentBytes } from "./matrix-message-content.js";
+import { matrixHtmlContent, matrixHtmlContentBytes } from "./matrix-message-content.js";
 import { renderMatrixText } from "./matrix-text-rendering.js";
 
 import {
@@ -22,6 +22,37 @@ const LIMITS = {
   maxOutputBytes: 256,
   maxMatrixMessageBytes: 128,
 };
+
+void test("steering notices budget full threaded content and retain event identity across split retries", () => {
+  const routing = {
+    threadRootEventId: `$${"r".repeat(100)}:example.org`,
+    threadInReplyToEventId: `$${"e".repeat(100)}:example.org`,
+  };
+  const maxMatrixMessageBytes = matrixHtmlContentBytes({ ...renderMatrixText(""), ...routing }) + 75;
+  for (const kind of ["steering_idle", "steering_unavailable", "steering_failed"] as const) {
+    const request = {
+      roomId: ROOM_ID,
+      inboundEventId: EVENT_ID,
+      ...routing,
+      outcome: { kind },
+      maxOutputBytes: 256,
+      maxMatrixMessageBytes,
+    };
+    const parts = renderMatrixResponse(request);
+    assert.ok(parts.length > 1);
+    assert.deepEqual(renderMatrixResponse(request), parts);
+    const bodies = [];
+    for (const part of parts) {
+      const content = matrixHtmlContent({ body: part.content.body, formattedBody: part.formattedBody!, ...routing });
+      assert.ok(Buffer.byteLength(JSON.stringify(content), "utf8") <= maxMatrixMessageBytes);
+      assert.equal(part.threadRootEventId, routing.threadRootEventId);
+      assert.equal(part.threadInReplyToEventId, routing.threadInReplyToEventId);
+      assert.equal(part.inboundEventId, EVENT_ID);
+      bodies.push(part.content.body.replace(/^\[\d+\/\d+\]\n/u, ""));
+    }
+    assert.equal(bodies.join(""), RESPONSE_TEXT[kind]);
+  }
+});
 
 function render(outcome: RenderableResponse, limits: typeof LIMITS = LIMITS): RenderedMatrixPart[] {
   return renderMatrixResponse({

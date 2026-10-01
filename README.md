@@ -19,6 +19,8 @@ flowchart LR
 4. catch-up across bridge restarts
 5. SAS verification
 6. encrypted messages
+7. independent conversations in Matrix threads
+8. mid-turn steering for agents that advertise support
 
 ## Installation and verification
 
@@ -72,6 +74,7 @@ access_token_file = "/var/lib/matrix-acp-bridge/matrix-access-token"
 allowed_rooms = ["!private-room:matrix.example.org"]
 allowed_senders = ["@operator:matrix.example.org"]
 response_mode = "room"    # or "thread"; defaults to room
+default_message_delivery = "prompt" # or "steer"; defaults to prompt
 encryption = "disabled"   # or "required"
 
 [acp]
@@ -87,9 +90,71 @@ max_concurrent_prompts = 4
 max_turn_seconds = 1800
 shutdown_grace_seconds = 30
 startup_timeout_seconds = 60
+initial_sync_timeline_limit = 100
 max_catchup_age_seconds = 900
 max_catchup_events_per_room = 4
 ```
+
+## Prompts and steering
+
+Unprefixed messages use `matrix.default_message_delivery`, which defaults to
+`"prompt"`. `/prompt <message>` and `/steer <message>` override that setting for
+one message. The command and separating whitespace are stripped; the remaining
+payload is preserved. Bare commands return usage guidance. Input size limits
+include the original command body. Other slash commands are agent text and use
+the configured default. Exact `/reset` remains an ordered bridge control;
+`/prompt /reset` or `/steer /reset` sends `/reset` as agent text.
+
+Prompts run in FIFO order within each conversation, with one unresolved prompt
+at a time. Steering uses a separate serial lane targeting the running turn. For
+example, while A is running, `/prompt B` waits for A and `/steer C` can reach A
+before B starts. A queued `/reset` is a barrier: later input waits behind reset
+and uses the replacement session. Steering never cancels or restarts A.
+
+When idle, the first steering message automatically becomes a tracked prompt.
+Later steering messages can target it after it starts, including when a batch
+arrives during startup, session setup or a wait for a global prompt slot. The
+bridge displays `No running turn; message queued as a prompt.` for the fallback.
+Agents without steering support use prompt FIFO and display
+`Steering unavailable; message queued as a prompt.` No user resend is needed.
+
+Successful steering is silent. The agent acknowledges acceptance into Pi's
+queue; this does not prove model consumption. Pi schedules steering after current
+tool execution and before a subsequent model call, using its own queue policy.
+The bridge does not set Pi's `/steering` queue mode or interrupt tools. Assistant
+text, activity and typing remain part of the original turn. Healthy method
+errors display `Steering failed; message was not resubmitted.` and leave that
+turn running. A missing method disables steering until the next connection.
+Ambiguous timeouts and protocol, transport or durable-state failures stop the
+bridge without automatically resubmitting input.
+
+`max_queued_turns_per_conversation` covers waiting prompts, resets and pending
+steering, including an unresolved steering request. The active prompt is
+excluded. `max_concurrent_prompts` bounds unresolved prompts globally; steering
+uses no extra prompt slot. Steering requests use `startup_timeout_seconds` and
+do not reset the running turn's `max_turn_seconds`. Accepted steering leaves
+the bridge backlog, so these limits do not bound Pi's accepted queue. Thread
+mode has a separate backlog per root and no aggregate room backlog cap.
+
+In room mode, both commands target that room's session. In thread mode, every
+top-level message starts its own conversation; top-level steering starts a
+tracked prompt. Follow-ups target only their thread root, and notices and output
+use that thread's validated encryption path. Use `/reset` inside a thread to
+reset it; top-level `/reset` returns guidance.
+
+Restart catch-up applies the same rules to selected messages, using current
+session state. Completed injected event IDs are durably suppressed; converted
+prompts remain incomplete until their normal terminal boundary. No steering
+state migration is needed. A crash between ACP acceptance and durable completion
+can replay input; acceptance does not ensure consumption before a crash. Pending
+bridge work and Pi's queue are not promised recoverable. ACP cancellation is
+session-scoped, so accepted steering cannot be cancelled independently from its
+running turn. Exactly-once delivery is not guaranteed.
+
+Pi steering currently requires the build from
+[pi-acp PR #115](https://github.com/svkozak/pi-acp/pull/115), which remains open.
+See [steering transport verification](docs/steering-acp-transport.md) for the
+tested revision, commands and integration limits.
 
 ## Encryption Setup
 
