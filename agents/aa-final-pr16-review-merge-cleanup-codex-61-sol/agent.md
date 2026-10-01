@@ -1,7 +1,8 @@
 +++
 name = "Final PR16 review merge cleanup Codex 6.1 Sol"
 creation_date = 2026-10-01T18:12:58Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Carry out WAAP ticket tt-full-pr-16-review-conditional-merge-and-cleanup at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-full-pr-16-review-conditional-merge-and-cleanup/ticket.md. Read it completely and follow repository/user guidance. This run is scheduled after the queue-limit ticket completes. User explicitly requests full PR #16 review, then merge if okay, then safe cleanup.
