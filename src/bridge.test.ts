@@ -3609,6 +3609,67 @@ void test("steering bypasses ordinary prompts, stays serial, and shares waiting 
   await bridge.stop();
 });
 
+void test("recovered room and thread batches preserve steering while session/load is pending and suppress history", async () => {
+  for (const mode of ["room", "thread"] as const) {
+    await withThreadState(async (store, stateDir) => {
+      const identity =
+        mode === "room"
+          ? ({ kind: "room", roomId: ROOM_ONE } as const)
+          : ({ kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$loading-root" } as const);
+      await store.setConversationRecord({ ...identity, sessionId: "recovered-session" });
+      const acp = new FakeSteeringAcp();
+      const prompts = heldPrompts(acp);
+      const matrix = new FakeMatrix();
+      let releaseLoad!: (session: AcpSession) => void;
+      acp.loadSessionImpl = () =>
+        new Promise((resolve) => {
+          releaseLoad = resolve;
+        });
+      const settings = steeringConfig();
+      const bridge = new BridgeCoordinator({
+        config: { ...settings, stateDir, matrix: { ...settings.matrix, responseMode: mode } },
+        acp,
+        matrix,
+        stateStore: store,
+        loadSession: true,
+        steering: true,
+        dispatchOpen: false,
+      });
+      const batch = ["first", "second", "third"].map((body) =>
+        bridge.handleTimelineEvent({
+          ...(mode === "room"
+            ? event(`$loading-${body}`, ROOM_ONE, body)
+            : threadEvent(`$loading-${body}`, "$loading-root", body)),
+          isCatchUp: true,
+        }),
+      );
+      bridge.enableDispatch();
+      await waitFor(() => acp.loadCalls.length === 1);
+      acp.emit({ kind: "agent_message_chunk", sessionId: "recovered-session", text: "private replay history" });
+      assert.equal(acp.promptCalls.length, 0);
+      assert.equal(acp.steeringCalls.length, 0);
+      assert.equal(bridge.getQueueDepth(ROOM_ONE), 2);
+      releaseLoad({ sessionId: "recovered-session" });
+      await waitFor(() => acp.steeringCalls.length === 1);
+      assert.deepEqual(acp.promptCalls, [{ sessionId: "recovered-session", text: "first" }]);
+      assert.equal(acp.steeringCalls[0]!.text, "second");
+      acp.steeringReplies[0]!(injected);
+      await batch[1];
+      assert.equal(acp.steeringCalls[1]!.text, "third");
+      acp.steeringReplies[1]!(injected);
+      await batch[2];
+      prompts.get("first")!(methodError());
+      await batch[0];
+      assert.equal(
+        matrix.sent.some((part) => part.content.body.includes("private replay history")),
+        false,
+      );
+      assert.equal(acp.sessionCount, 0);
+      await bridge.stop();
+    });
+  }
+});
+
 void test("steering waits through global permit acquisition without acquiring another permit", async () => {
   const acp = new FakeSteeringAcp();
   const prompts = heldPrompts(acp);
@@ -4007,6 +4068,90 @@ void test("shutdown tracks accepted injection's slow durable callback independen
   assert.equal(idle, true);
 });
 
+void test("queued steering error notices cannot start Matrix sends after forced shutdown", async () => {
+  const clock = new FakeClock();
+  const acp = new FakeSteeringAcp();
+  const prompts = heldPrompts(acp);
+  const matrix = new FakeMatrix();
+  let releaseSend!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    releaseSend = resolve;
+  });
+  matrix.send = async (part) => {
+    matrix.sent.push(part);
+    if (part.inboundEventId === "$blocked-original") await blocked;
+  };
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock, steering: true });
+  const first = bridge.handleTimelineEvent(event("$blocked-original", ROOM_ONE, "first"));
+  await flush();
+  const steering = bridge.handleTimelineEvent(event("$blocked-steering", ROOM_ONE, "/steer failed"));
+  prompts.get("first")?.(methodError());
+  await waitFor(() => matrix.sent.length === 1);
+  acp.steeringReplies[0]?.({
+    kind: "method_error",
+    operation: "session_steering",
+    fatal: false,
+    methodNotFound: false,
+  });
+  await flush();
+  const stop = bridge.stop();
+  clock.advanceBy(1000);
+  await stop;
+  releaseSend();
+  await Promise.all([first, steering, bridge.waitForIdle()]);
+  assert.deepEqual(
+    matrix.sent.map((part) => part.inboundEventId),
+    ["$blocked-original"],
+  );
+  assert.equal(acp.promptCalls.length, 1);
+  assert.equal(acp.steeringCalls.length, 1);
+});
+
+void test("forced shutdown retains pending durable completion without late redelivery or error output", async () => {
+  for (const outcome of [
+    injected,
+    { kind: "method_error", operation: "session_steering", fatal: false, methodNotFound: false },
+  ] as const) {
+    const clock = new FakeClock();
+    const acp = new FakeSteeringAcp();
+    const prompts = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    let releaseDurable!: () => void;
+    const durable = new Promise<void>((resolve) => {
+      releaseDurable = resolve;
+    });
+    const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock, steering: true });
+    const first = bridge.handleTimelineEvent(event("$forced-durable-first", ROOM_ONE, "first"));
+    await flush();
+    const steering = bridge.handleTimelineEvent(
+      event("$forced-durable-steer", ROOM_ONE, "/steer pending"),
+      () => durable,
+    );
+    acp.steeringReplies[0]?.(outcome);
+    await flush();
+    const stop = bridge.stop();
+    prompts.get("first")?.(methodError());
+    await first;
+    clock.advanceBy(1000);
+    await stop;
+    assert.equal(bridge.stopped, true);
+    let idle = false;
+    void bridge.waitForIdle().then(() => {
+      idle = true;
+    });
+    await flush();
+    assert.equal(idle, false);
+    await bridge.handleTimelineEvent(event("$forced-durable-late", ROOM_ONE, "/steer later"));
+    releaseDurable();
+    await steering;
+    await bridge.waitForIdle();
+    assert.equal(idle, true);
+    assert.equal(matrix.sent.length, 0);
+    assert.equal(acp.promptCalls.length, 1);
+    assert.equal(acp.steeringCalls.length, 1);
+  }
+});
+
 void test("malformed/fatal/ambiguous steering results fail closed without durable completion or redelivery", async () => {
   const outcomes: unknown[] = [
     { kind: "steering", outcome: "startedNewTurn" },
@@ -4058,6 +4203,56 @@ void test("injected durable state failure is fatal and never retries accepted in
   prompts.get("first")?.({ kind: "turn", stopReason: "cancelled" });
   await first;
   await bridge.stop();
+});
+
+void test("an injected sync completion with a real atomic write failure stays incomplete and fails closed", async () => {
+  await withThreadState(async (initial, stateDir) => {
+    let failWrite = false;
+    const store = await openBridgeStateStore({
+      stateDir,
+      identity: initial.getSnapshot().identity,
+      faultInjector: (point) => {
+        if (failWrite && point === "write") throw new Error("private write details");
+      },
+    });
+    const acp = new FakeSteeringAcp();
+    const prompts = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({
+      config: { ...config(), stateDir },
+      acp,
+      matrix,
+      stateStore: store,
+      steering: true,
+    });
+    const first = bridge.handleTimelineEvent(event("$write-failure-first", ROOM_ONE, "first"));
+    await waitFor(() => acp.promptCalls.length === 1);
+    const steering = bridge.handleTimelineEvent(
+      event("$write-failure-steer", ROOM_ONE, "/steer accepted"),
+      async () => {
+        await store.markEventCompleted(ROOM_ONE, "$write-failure-steer");
+      },
+    );
+    failWrite = true;
+    acp.steeringReplies[0]!(injected);
+    await steering;
+    assert.equal(bridge.fatalError?.code, "state");
+    assert.equal(store.isEventCompleted(ROOM_ONE, "$write-failure-steer"), false);
+    assert.equal(
+      (await openBridgeStateStore({ stateDir, identity: store.getSnapshot().identity })).isEventCompleted(
+        ROOM_ONE,
+        "$write-failure-steer",
+      ),
+      false,
+    );
+    await bridge.handleTimelineEvent(event("$write-failure-late", ROOM_ONE, "/steer ignored"));
+    assert.equal(acp.promptCalls.length, 1);
+    assert.equal(acp.steeringCalls.length, 1);
+    assert.equal(matrix.sent.length, 0);
+    prompts.get("first")!(methodError());
+    await first;
+    await bridge.stop();
+  });
 });
 
 void test("thread roots under steer default start independent prompts; follow-ups steer only their root", async () => {
