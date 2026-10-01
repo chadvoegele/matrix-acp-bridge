@@ -13,8 +13,10 @@ import { isRecord, numberProperty, stringProperty } from "./object-validation.js
 import {
   createInboundAuthorizer,
   isValidMatrixEventId,
+  type AcceptedInboundDecision,
   type InboundAuthorizationDecision,
   type InboundAuthorizer,
+  type OversizedInboundDecision,
   type NormalizedInboundEvent,
 } from "./authorization.js";
 import { conversationIdentityForEvent, conversationKey, type ConversationIdentity } from "./conversation-identity.js";
@@ -331,6 +333,12 @@ function joinedGroups(groups: readonly TextGroup[]): string {
     result += group.text;
   }
   return result;
+}
+
+function routingForEvent(event: NormalizedInboundEvent): MatrixOutputRouting {
+  return event.threadRootEventId === undefined
+    ? {}
+    : { threadRootEventId: event.threadRootEventId, threadFallbackEventId: event.eventId };
 }
 
 function routingForTurn(turn: TurnCollector): MatrixOutputRouting {
@@ -950,19 +958,8 @@ export class BridgeCoordinator {
       return;
     }
 
-    const eventId = isRecord(event) && typeof event.eventId === "string" ? event.eventId : undefined;
-    const roomId = isRecord(event) && typeof event.roomId === "string" ? event.roomId : undefined;
-    if (eventId === undefined || roomId === undefined) {
-      return;
-    }
-
-    // Capture authorization's routing synchronously, before any asynchronous
-    // terminal-state boundary can admit another event.
-    const normalized = this.#lastAdmission;
-    const inboundRouting = normalized ?? this.#lastOversizedRouting;
-    this.#lastAdmission = undefined;
-    this.#lastOversizedRouting = undefined;
-    if (inboundRouting === undefined) return;
+    const inboundRouting = admission.kind === "accepted" ? admission.event : admission.routing;
+    const { eventId, roomId } = inboundRouting;
     const identity = conversationIdentityForEvent(inboundRouting, this.#config.matrix.responseMode);
     const routing: MatrixOutputRouting =
       identity.kind === "thread"
@@ -976,13 +973,13 @@ export class BridgeCoordinator {
       await this.#deliverDescriptor(roomId, eventId, { kind: "unknown_thread" }, routing);
       return;
     }
-    if (admission === "oversized") {
+    if (admission.kind === "oversized") {
       if (!(await this.#completeTerminal(terminalCompletion))) return;
       this.#receipt(event);
       await this.#deliverDescriptor(roomId, eventId, { kind: "oversized" }, routing);
       return;
     }
-    if (normalized === undefined) return;
+    const normalized = admission.event;
     if (identity.kind === "thread" && normalized.threadRootEventId === undefined && normalized.body === "/reset") {
       if (!(await this.#completeTerminal(terminalCompletion))) return;
       this.#receipt(event);
@@ -1057,10 +1054,6 @@ export class BridgeCoordinator {
     }
   }
 
-  #lastAdmission: NormalizedInboundEvent | undefined;
-
-  #lastOversizedRouting: Pick<NormalizedInboundEvent, "roomId" | "eventId" | "threadRootEventId"> | undefined;
-
   #knownThread(identity: ConversationIdentity): boolean {
     return (
       this.#rooms.get(identity.roomId)?.conversations.has(conversationKey(identity)) === true ||
@@ -1069,9 +1062,7 @@ export class BridgeCoordinator {
     );
   }
 
-  #admit(event: InboundMatrixEvent): BridgeAdmission {
-    this.#lastAdmission = undefined;
-    this.#lastOversizedRouting = undefined;
+  #admit(event: InboundMatrixEvent): AcceptedInboundDecision | OversizedInboundDecision | "ignored" | "duplicate" {
     if (!this.#intakeOpen || this.#stopping || this.#fatal !== undefined) {
       return "ignored";
     }
@@ -1096,15 +1087,7 @@ export class BridgeCoordinator {
       });
       return "ignored";
     }
-    if (decision.kind === "oversized") {
-      this.#lastOversizedRouting = decision.routing;
-      return "oversized";
-    }
-    if (!decision.accepted) {
-      return "ignored";
-    }
-    this.#lastAdmission = decision.event;
-    return "accepted";
+    return decision.kind === "rejected" ? "ignored" : decision;
   }
 
   #rememberEventId(eventId: MatrixEventId): void {
@@ -1214,9 +1197,7 @@ export class BridgeCoordinator {
         const resetParts = renderMatrixResponse({
           roomId: run.room.roomId,
           inboundEventId: run.entry.event.eventId,
-          ...(run.entry.event.threadRootEventId === undefined
-            ? {}
-            : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId }),
+          ...routingForEvent(run.entry.event),
           outcome: { kind: "reset" },
           maxOutputBytes: this.#config.limits.maxOutputBytes,
           maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
@@ -1236,12 +1217,7 @@ export class BridgeCoordinator {
             run.room.roomId,
             run.entry.event.eventId,
             { kind: "error" },
-            run.entry.event.threadRootEventId === undefined
-              ? {}
-              : {
-                  threadRootEventId: run.entry.event.threadRootEventId,
-                  threadFallbackEventId: run.entry.event.eventId,
-                },
+            routingForEvent(run.entry.event),
           );
           return;
         }
@@ -1267,10 +1243,7 @@ export class BridgeCoordinator {
       const controller = createCancellationController();
       // The coordinator supplies validated conversation routing. Preserve it
       // through eager text, activity originals, revisions and archive edits.
-      const routing: MatrixOutputRouting =
-        run.entry.event.threadRootEventId === undefined
-          ? {}
-          : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId };
+      const routing = routingForEvent(run.entry.event);
       const turn: TurnCollector = {
         ...routing,
         sessionId: session.sessionId,
@@ -1399,9 +1372,7 @@ export class BridgeCoordinator {
       const parts = renderMatrixResponse({
         roomId: run.room.roomId,
         inboundEventId: run.entry.event.eventId,
-        ...(run.entry.event.threadRootEventId === undefined
-          ? {}
-          : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId }),
+        ...routingForEvent(run.entry.event),
         outcome: response,
         maxOutputBytes: this.#config.limits.maxOutputBytes,
         maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
@@ -1595,9 +1566,7 @@ export class BridgeCoordinator {
     const parts = renderMatrixResponse({
       roomId: run.room.roomId,
       inboundEventId: run.entry.event.eventId,
-      ...(run.entry.event.threadRootEventId === undefined
-        ? {}
-        : { threadRootEventId: run.entry.event.threadRootEventId, threadFallbackEventId: run.entry.event.eventId }),
+      ...routingForEvent(run.entry.event),
       outcome: { kind: "error" },
       maxOutputBytes: this.#config.limits.maxOutputBytes,
       maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
@@ -1729,12 +1698,7 @@ export class BridgeCoordinator {
           settle({ outcome, timedOut, graceExpired: false });
         },
         (error: unknown) => {
-          const outcome = normalizeThrownPrompt(error);
-          if (isFatalAcpOutcome(outcome)) {
-            settle({ outcome, timedOut, graceExpired: false });
-          } else {
-            settle({ outcome, timedOut, graceExpired: false });
-          }
+          settle({ outcome: normalizeThrownPrompt(error), timedOut, graceExpired: false });
         },
       );
     void rawPrompt.catch(() => {});
@@ -2079,8 +2043,7 @@ export class BridgeCoordinator {
       return;
     }
     const message: MatrixHtmlMessage = {
-      ...(turn.threadRootEventId === undefined ? {} : { threadRootEventId: turn.threadRootEventId }),
-      ...(turn.threadFallbackEventId === undefined ? {} : { threadFallbackEventId: turn.threadFallbackEventId }),
+      ...routingForTurn(turn),
       roomId: turn.room.roomId,
       transactionId: liveTransactionId(turn, kind, 0, revision),
       body: rendered.body,

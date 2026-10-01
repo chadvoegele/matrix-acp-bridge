@@ -411,6 +411,28 @@ void test("thread bodies strip reply fallbacks only when a validated reply is pr
   assert.equal(ordinaryReply.event.body, "  reply  \r\n");
 });
 
+void test("thread compatibility and explicit replies preserve ordinary Markdown quotes", () => {
+  for (const flag of [undefined, false, true]) {
+    for (const body of ["> quoted text", "> quoted text\n\nDiscuss the quote", "> quoted\n> another line\n\n/reset"]) {
+      const decision = authorizeInboundEvent(
+        threadEvent(
+          { ...(flag === undefined ? {} : { is_falling_back: flag }), "m.in_reply_to": { event_id: "$later" } },
+          body,
+        ),
+        options({ responseMode: "thread" }),
+      );
+      assert.equal(decision.accepted, true);
+      assert.equal(decision.event.body, body);
+    }
+  }
+  const emoteFallback = authorizeInboundEvent(
+    threadEvent({ "m.in_reply_to": { event_id: "$later" } }, "> * <@bob:example.org> waves\n\nHello"),
+    options({ responseMode: "thread" }),
+  );
+  assert.equal(emoteFallback.accepted, true);
+  assert.equal(emoteFallback.event.body, "Hello");
+});
+
 void test("oversized decisions expose only authorized validated routing", () => {
   const authorizer = createInboundAuthorizer(options({ responseMode: "thread", maxInputBytes: 2 }));
   for (const event of [threadEvent({}, "large"), makeEvent({ content: { msgtype: "m.text", body: "large" } })]) {
@@ -425,7 +447,10 @@ void test("oversized decisions expose only authorized validated routing", () => 
     assert.equal("body" in decision.routing, false);
   }
   const normalized = authorizer.authorize(
-    threadEvent({ "m.in_reply_to": { event_id: "$later" }, is_falling_back: true }, "> long fallback\n\né"),
+    threadEvent(
+      { "m.in_reply_to": { event_id: "$later" }, is_falling_back: true },
+      "> <@bob:example.org> long fallback\n\né",
+    ),
   );
   assert.equal(normalized.accepted, true);
   for (const overrides of [

@@ -81,31 +81,6 @@ export interface RenderMatrixResponseRequest extends ResponseRenderContext {
   readonly outcome: RenderableResponse;
 }
 
-const STATUS_KINDS = new Set<MatrixResponseKind>([
-  "timeout",
-  "max_tokens",
-  "max_turn_requests",
-  "refusal",
-  "cancelled",
-  "error",
-]);
-
-const STATUS_TEXT: Readonly<Record<MatrixResponseKind, string | undefined>> = {
-  agent: undefined,
-  empty: undefined,
-  busy: undefined,
-  oversized: undefined,
-  reset: undefined,
-  unknown_thread: undefined,
-  thread_reset_guidance: undefined,
-  timeout: RESPONSE_TEXT.timeout,
-  max_tokens: RESPONSE_TEXT.max_tokens,
-  max_turn_requests: RESPONSE_TEXT.max_turn_requests,
-  refusal: RESPONSE_TEXT.refusal,
-  cancelled: RESPONSE_TEXT.cancelled,
-  error: RESPONSE_TEXT.error,
-};
-
 function assertPositiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new RangeError(`${name} must be a positive safe integer`);
@@ -442,16 +417,7 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
     return { responseKind: "error", agentText: "" };
   }
 
-  if (
-    !STATUS_KINDS.has(outcome.kind) &&
-    outcome.kind !== "agent" &&
-    outcome.kind !== "empty" &&
-    outcome.kind !== "busy" &&
-    outcome.kind !== "oversized" &&
-    outcome.kind !== "reset" &&
-    outcome.kind !== "unknown_thread" &&
-    outcome.kind !== "thread_reset_guidance"
-  ) {
+  if (outcome.kind !== "agent" && !Object.hasOwn(RESPONSE_TEXT, outcome.kind)) {
     throw new TypeError(`unsupported response kind: ${String(outcome.kind)}`);
   }
 
@@ -465,20 +431,14 @@ function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: numb
   const descriptor = descriptorFromOutcome(outcome);
   const { responseKind, agentText } = descriptor;
 
-  if (responseKind === "empty") {
-    return { responseKind, text: RESPONSE_TEXT.empty };
-  }
-  if (responseKind === "busy") {
-    return { responseKind, text: RESPONSE_TEXT.busy };
-  }
-  if (responseKind === "oversized") {
-    return { responseKind, text: RESPONSE_TEXT.oversized };
-  }
-  if (responseKind === "reset") {
-    return { responseKind, text: RESPONSE_TEXT.reset };
-  }
-
-  if (responseKind === "unknown_thread" || responseKind === "thread_reset_guidance") {
+  if (
+    responseKind === "empty" ||
+    responseKind === "busy" ||
+    responseKind === "oversized" ||
+    responseKind === "reset" ||
+    responseKind === "unknown_thread" ||
+    responseKind === "thread_reset_guidance"
+  ) {
     return { responseKind, text: RESPONSE_TEXT[responseKind] };
   }
 
@@ -489,13 +449,9 @@ function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: numb
       : { responseKind, text: boundedAgentText };
   }
 
-  const status = STATUS_TEXT[responseKind];
-  if (status === undefined) {
-    throw new Error(`response kind ${responseKind} has no status text`);
-  }
   return {
     responseKind,
-    text: joinTextAndStatus(boundedAgentText, status),
+    text: joinTextAndStatus(boundedAgentText, RESPONSE_TEXT[responseKind]),
   };
 }
 

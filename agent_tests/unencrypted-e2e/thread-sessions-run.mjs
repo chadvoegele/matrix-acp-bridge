@@ -87,6 +87,17 @@ try {
     process.stdout.write("Resetting only the first thread and checking fresh-session creation...\n");
     const resetPrompt = "/reset";
     await exchange(resetPrompt, "Agent session reset.", { threadRootEventId: rootOne.promptEventId });
+    // Restart before the next prompt to exercise the durable sessionless identity.
+    await stopBridgePair(pair);
+    pair = await startPair();
+    const otherThreadPrompt = `Reply with exactly: THREAD_UNRESET_${marker}`;
+    await exchange(otherThreadPrompt, `THREAD_UNRESET_${marker}`, { threadRootEventId: rootTwo.promptEventId });
+    await waitFor(() => promptSessions.has(otherThreadPrompt), "unreset thread ACP prompt", 30_000, pair);
+    assert.equal(
+      promptSessions.get(otherThreadPrompt),
+      promptSessions.get(rootTwoPrompt),
+      "resetting the first thread changed the second thread's session",
+    );
     const afterResetPrompt = `Reply with exactly: THREAD_AFTER_RESET_${marker}`;
     await exchange(afterResetPrompt, `THREAD_AFTER_RESET_${marker}`, { threadRootEventId: rootOne.promptEventId });
     await waitFor(() => promptSessions.has(afterResetPrompt), "post-reset ACP prompt", 30_000, pair);

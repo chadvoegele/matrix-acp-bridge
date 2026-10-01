@@ -68,17 +68,18 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   resetConversation(identity: ConversationIdentity): boolean {
-    const current = this.getConversationRecord(identity);
+    const key = conversationKey(identity);
+    const current = this.#conversations.get(key);
     if (current === undefined) {
       return false;
     }
     if (identity.kind === "room") {
-      return this.deleteConversation(identity);
+      return this.#conversations.delete(key);
     }
     if (current.sessionId === undefined) {
       return false;
     }
-    this.setConversationRecord({
+    this.#conversations.set(key, {
       kind: "thread",
       roomId: identity.roomId,
       threadRootEventId: identity.threadRootEventId,
