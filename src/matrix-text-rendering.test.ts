@@ -40,7 +40,7 @@ void test("live text rendering reports when no character fits", () => {
 });
 
 void test("live greedy packing preserves complete links, code spans and emphasis", () => {
-  const routing = { threadRootEventId: "$root", threadFallbackEventId: "$reply" };
+  const routing = { threadRootEventId: "$root", threadInReplyToEventId: "$reply" };
   const measure = (rendered: MatrixHtmlBody): number => matrixHtmlContentBytes({ ...rendered, ...routing });
   for (const unit of [
     "[" + "a".repeat(378) + "](https://example.org)",
@@ -90,7 +90,7 @@ void test("greedy rendering preserves arbitrary Markdown source within every wir
 });
 
 void test("threaded live chunks budget the root and fallback at exact Unicode boundaries", () => {
-  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadFallbackEventId: "$follow-up" };
+  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadInReplyToEventId: "$follow-up" };
   const measure = (rendered: MatrixHtmlBody): number => matrixHtmlContentBytes({ ...rendered, ...routing });
   const body = "<&😀".repeat(100);
   const characters = [...body];

@@ -2139,7 +2139,7 @@ for (const encryption of ["disabled", "required"] as const) {
       await adapter.initializeCrypto(CRYPTO_STATE);
     }
     await adapter.start();
-    const routing = { threadRootEventId: "$root", threadFallbackEventId: "$reply" };
+    const routing = { threadRootEventId: "$root", threadInReplyToEventId: "$reply" };
     const measure = (rendered: MatrixHtmlBody): number => matrixHtmlContentBytes({ ...rendered, ...routing });
     const link = "[" + "a".repeat(378) + "](https://example.org)";
     const text = link + " " + link;
@@ -2207,7 +2207,7 @@ for (const encryption of ["disabled", "required"] as const) {
       await adapter.initializeCrypto(CRYPTO_STATE);
     }
     await adapter.start();
-    const routing = { threadRootEventId: "$thread-root", threadFallbackEventId: "$thread-follow-up" };
+    const routing = { threadRootEventId: "$thread-root", threadInReplyToEventId: "$thread-follow-up" };
     const request = {
       roomId: ROOM_ID,
       inboundEventId: "$input",
@@ -2376,7 +2376,7 @@ void test("malformed output routing and unconfigured thread rooms never reach th
     /thread routing is invalid/,
   );
   await assert.rejects(
-    () => adapter.sendMessage({ ...part, threadFallbackEventId: "$reply" }),
+    () => adapter.sendMessage({ ...part, threadInReplyToEventId: "$reply" }),
     /thread routing is invalid/,
   );
   await assert.rejects(
@@ -2389,7 +2389,7 @@ void test("malformed output routing and unconfigured thread rooms never reach th
         roomId: ROOM_ID,
         transactionId: "bad-thread",
         threadRootEventId: "$root",
-        threadFallbackEventId: "invalid",
+        threadInReplyToEventId: "invalid",
         body: "text",
         formattedBody: matrixHtml`<p>text</p>`,
       }),
@@ -2401,7 +2401,7 @@ void test("malformed output routing and unconfigured thread rooms never reach th
 void test("thread edit envelopes fit exactly at the byte boundary with maximum-length IDs", async () => {
   const fake = readyClient();
   const adapter = adapterFor(fake);
-  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadFallbackEventId: `$${"f".repeat(254)}` };
+  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadInReplyToEventId: `$${"f".repeat(254)}` };
   const targetEventId = `$${"e".repeat(254)}`;
   const formattedBody = matrixHtml`<p>😀 &amp; updated</p>`;
   const overhead = matrixHtmlContentBytes({ ...routing, body: "", formattedBody }, targetEventId);

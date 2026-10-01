@@ -453,7 +453,7 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
   const normalized = normalizeResponseText(request.outcome, request.maxOutputBytes);
   const routing: MatrixOutputRouting = {
     ...(request.threadRootEventId === undefined ? {} : { threadRootEventId: request.threadRootEventId }),
-    ...(request.threadFallbackEventId === undefined ? {} : { threadFallbackEventId: request.threadFallbackEventId }),
+    ...(request.threadInReplyToEventId === undefined ? {} : { threadInReplyToEventId: request.threadInReplyToEventId }),
   };
   // Room mode keeps its established body budget and wire shape. Thread parts
   // include Markdown HTML and relations in their full serialized payload budget.

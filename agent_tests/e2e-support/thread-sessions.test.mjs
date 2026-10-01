@@ -11,7 +11,7 @@ test("live thread assertions accept bridge follow-ups with distinct roots and fa
     roomId: "!room:example.org",
     inboundEventId: "$followup",
     threadRootEventId: "$root",
-    threadFallbackEventId: "$followup",
+    threadInReplyToEventId: "$followup",
     outcome: { kind: "reset" },
     maxOutputBytes: 4096,
     maxMatrixMessageBytes: 4096,

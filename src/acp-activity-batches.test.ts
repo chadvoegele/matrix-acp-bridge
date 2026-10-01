@@ -90,7 +90,7 @@ void test("batch rendering budgets escaped HTML and the collapsed wrapper", () =
 });
 
 void test("thread activity budgets and retains routing through expansion, archive and later revisions", () => {
-  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadFallbackEventId: "$follow-up" };
+  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadInReplyToEventId: "$follow-up" };
   const presentation = new AcpActivityBatches({
     maxEvents: 10,
     maxMessageBytes: 2048,
@@ -108,7 +108,7 @@ void test("thread activity budgets and retains routing through expansion, archiv
   const revised = presentation.render(batch);
   for (const rendered of [expanded, archived, revised]) {
     assert.equal(rendered.threadRootEventId, routing.threadRootEventId);
-    assert.equal(rendered.threadFallbackEventId, routing.threadFallbackEventId);
+    assert.equal(rendered.threadInReplyToEventId, routing.threadInReplyToEventId);
     assert.ok(matrixHtmlEditContentBytes(rendered) <= 2048);
   }
   assert.match(archived.formattedBody, /Past agent events/);

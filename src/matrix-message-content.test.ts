@@ -9,7 +9,7 @@ import {
   matrixThreadRelation,
 } from "./matrix-message-content.js";
 
-const routing = { threadRootEventId: "$root", threadFallbackEventId: "$follow-up" };
+const routing = { threadRootEventId: "$root", threadInReplyToEventId: "$follow-up" };
 const message = { body: "<&😀", formattedBody: "<p>&lt;&amp;😀</p>", ...routing };
 
 void test("thread content uses one root and a distinct fallback only for presentation", () => {
@@ -61,9 +61,9 @@ void test("thread routing rejects invalid roots and fallbacks before content con
   for (const id of ["", "no-dollar", "$white space", `$${"é".repeat(128)}`]) {
     assert.throws(() => matrixThreadRelation({ threadRootEventId: id }), /valid Matrix event IDs/);
     assert.throws(
-      () => matrixThreadRelation({ threadRootEventId: "$root", threadFallbackEventId: id }),
+      () => matrixThreadRelation({ threadRootEventId: "$root", threadInReplyToEventId: id }),
       /valid Matrix event IDs/,
     );
   }
-  assert.throws(() => matrixThreadRelation({ threadFallbackEventId: "$reply" }), /requires a thread root/);
+  assert.throws(() => matrixThreadRelation({ threadInReplyToEventId: "$reply" }), /requires a thread root/);
 });

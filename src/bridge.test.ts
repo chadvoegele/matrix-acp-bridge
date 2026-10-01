@@ -2636,7 +2636,7 @@ void test("validated thread routing survives eager text, activity retries and la
     assert.equal(text.map((message) => message.body).join(""), "<&😀".repeat(200));
     for (const message of matrix.html) {
       assert.equal(message.threadRootEventId, root);
-      assert.equal(message.threadFallbackEventId, "$shared-input");
+      assert.equal(message.threadInReplyToEventId, "$shared-input");
       assert.ok(matrixHtmlContentBytes(message, message.targetEventId) <= 1400);
       const content = matrixHtmlContent(message, message.targetEventId);
       if (message.targetEventId === undefined) {
@@ -2728,7 +2728,7 @@ void test("thread mode gives top-level messages independent sessions and follows
     matrix.sent.map(({ threadRootEventId }) => threadRootEventId),
     ["$root-a", "$root-b", "$root-a", "$root-a-other-room"],
   );
-  assert.equal(matrix.sent[2]?.threadFallbackEventId, "$follow-a");
+  assert.equal(matrix.sent[2]?.threadInReplyToEventId, "$follow-a");
   assert.equal(bridge.sessionForRoom(ROOM_ONE), undefined);
   assert.equal(matrix.receipts.length, 4);
   await bridge.stop();
@@ -3226,7 +3226,7 @@ void test("simultaneous thread output isolates text splits, tools, thoughts and 
       false,
     );
     for (const message of messages) {
-      assert.equal(message.threadFallbackEventId, root);
+      assert.equal(message.threadInReplyToEventId, root);
       assert.ok(matrixHtmlContentBytes(message, message.targetEventId) <= 1600);
       if (message.targetEventId !== undefined) {
         assert.equal(outputOwners.get(message.targetEventId), root);
@@ -3420,8 +3420,8 @@ void test("thread timeout cancels only its prompt, retains retry routing and lea
   assert.equal(timeoutAttempts[0]?.transactionId, timeoutAttempts[1]?.transactionId);
   assert.ok(
     timeoutAttempts.every(
-      ({ threadRootEventId, threadFallbackEventId }) =>
-        threadRootEventId === "$timeout-root-a" && threadFallbackEventId === "$timeout-root-a",
+      ({ threadRootEventId, threadInReplyToEventId }) =>
+        threadRootEventId === "$timeout-root-a" && threadInReplyToEventId === "$timeout-root-a",
     ),
   );
   assert.equal(matrix.sent[0]?.content.body, "partial a\n\n[agent timed out]");

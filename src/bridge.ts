@@ -338,13 +338,13 @@ function joinedGroups(groups: readonly TextGroup[]): string {
 function routingForEvent(event: NormalizedInboundEvent): MatrixOutputRouting {
   return event.threadRootEventId === undefined
     ? {}
-    : { threadRootEventId: event.threadRootEventId, threadFallbackEventId: event.eventId };
+    : { threadRootEventId: event.threadRootEventId, threadInReplyToEventId: event.eventId };
 }
 
 function routingForTurn(turn: TurnCollector): MatrixOutputRouting {
   return {
     ...(turn.threadRootEventId === undefined ? {} : { threadRootEventId: turn.threadRootEventId }),
-    ...(turn.threadFallbackEventId === undefined ? {} : { threadFallbackEventId: turn.threadFallbackEventId }),
+    ...(turn.threadInReplyToEventId === undefined ? {} : { threadInReplyToEventId: turn.threadInReplyToEventId }),
   };
 }
 
@@ -963,7 +963,7 @@ export class BridgeCoordinator {
     const identity = conversationIdentityForEvent(inboundRouting, this.#config.matrix.responseMode);
     const routing: MatrixOutputRouting =
       identity.kind === "thread"
-        ? { threadRootEventId: identity.threadRootEventId, threadFallbackEventId: eventId }
+        ? { threadRootEventId: identity.threadRootEventId, threadInReplyToEventId: eventId }
         : {};
     const known = identity.kind === "room" || this.#knownThread(identity);
 

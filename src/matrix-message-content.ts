@@ -3,8 +3,8 @@ import type { ThreadRoutingMetadata } from "./conversation-identity.js";
 import { isValidMatrixEventId } from "./matrix-validation.js";
 
 export interface MatrixOutputRouting extends ThreadRoutingMetadata {
-  /** A known event in the same thread; defaults to the root when unavailable. */
-  readonly threadFallbackEventId?: string;
+  /** The thread reply target for m.in_reply_to.event_id; defaults to the root when unavailable. */
+  readonly threadInReplyToEventId?: string;
 }
 
 export interface MatrixThreadRelation {
@@ -25,23 +25,23 @@ export interface MatrixHtmlBody {
   readonly formattedBody: string;
 }
 
-/** Thread fallbacks are presentation metadata, never a different thread root. */
+/** The reply target is separate from the thread root and marked is_falling_back: true for compatibility. */
 export function matrixThreadRelation(routing: MatrixOutputRouting): MatrixThreadRelation | undefined {
-  const { threadRootEventId, threadFallbackEventId } = routing;
+  const { threadRootEventId, threadInReplyToEventId } = routing;
   if (threadRootEventId === undefined) {
-    if (threadFallbackEventId !== undefined) throw new TypeError("thread fallback requires a thread root");
+    if (threadInReplyToEventId !== undefined) throw new TypeError("thread fallback requires a thread root");
     return;
   }
   if (
     !isValidMatrixEventId(threadRootEventId) ||
-    (threadFallbackEventId !== undefined && !isValidMatrixEventId(threadFallbackEventId))
+    (threadInReplyToEventId !== undefined && !isValidMatrixEventId(threadInReplyToEventId))
   ) {
     throw new TypeError("thread routing requires valid Matrix event IDs");
   }
   return {
     rel_type: "m.thread",
     event_id: threadRootEventId,
-    "m.in_reply_to": { event_id: threadFallbackEventId ?? threadRootEventId },
+    "m.in_reply_to": { event_id: threadInReplyToEventId ?? threadRootEventId },
     is_falling_back: true,
   };
 }

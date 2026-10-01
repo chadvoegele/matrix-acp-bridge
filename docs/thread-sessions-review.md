@@ -36,7 +36,10 @@ The live harness originally checked a nonstandard nested ACP load capability and
 expected response fallback targets to equal the root even for follow-ups. The
 shared `agent_tests/e2e-support/thread-sessions.mjs` monitor now reads the actual
 ACP v1 `agentCapabilities.loadSession` field. Both senders verify the response
-root separately from its fallback target, which is the latest inbound event.
+root separately from its reply target, which is the latest inbound event.
+Internal `threadInReplyToEventId` supplies `m.in_reply_to.event_id`, while
+`threadRootEventId` supplies the thread root. The reply target is marked
+`is_falling_back: true` on the wire for compatibility.
 Support tests exercise these assertions against actual bridge-rendered content
 and representative initialize/create/load/prompt wire frames. The dedicated thread
 activity runners also check every original and replacement thread relation.

@@ -89,7 +89,7 @@ export async function runSenderHarness({ readEnvironment, readToken, createAdapt
       partCount: 1,
       transactionId: `mabe2e_${randomBytes(16).toString("hex")}`,
       content: { msgtype: "m.text", body: prompt },
-      ...(threadRootEventId === undefined ? {} : { threadRootEventId, threadFallbackEventId: threadRootEventId }),
+      ...(threadRootEventId === undefined ? {} : { threadRootEventId, threadInReplyToEventId: threadRootEventId }),
     });
     process.stderr.write("Encrypted prompt sent; waiting for response.\n");
     await exchange;

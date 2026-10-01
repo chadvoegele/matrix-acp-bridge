@@ -277,7 +277,7 @@ void test("thread multipart output and retries retain routing and budget the com
     roomId: ROOM_ID,
     inboundEventId: EVENT_ID,
     threadRootEventId: "$root",
-    threadFallbackEventId: EVENT_ID,
+    threadInReplyToEventId: EVENT_ID,
     outcome: { kind: "agent" as const, text: "**<&😀>**\n\n".repeat(100) },
     maxOutputBytes: 10_000,
     maxMatrixMessageBytes: 512,
@@ -287,7 +287,7 @@ void test("thread multipart output and retries retain routing and budget the com
   assert.equal(parts.map((part) => removePrefix(part.content.body)).join(""), request.outcome.text);
   for (const part of parts) {
     assert.equal(part.threadRootEventId, "$root");
-    assert.equal(part.threadFallbackEventId, EVENT_ID);
+    assert.equal(part.threadInReplyToEventId, EVENT_ID);
     assert.deepEqual(part.content["m.relates_to"], {
       rel_type: "m.thread",
       event_id: "$root",
@@ -317,7 +317,7 @@ void test("thread multipart packing keeps a complete link at the exact payload b
     roomId: ROOM_ID,
     inboundEventId: "$reply",
     threadRootEventId: "$root",
-    threadFallbackEventId: "$reply",
+    threadInReplyToEventId: "$reply",
     outcome: { kind: "agent", text },
     maxOutputBytes: 10_000,
     maxMatrixMessageBytes: 1043,
@@ -331,7 +331,7 @@ void test("thread multipart packing keeps a complete link at the exact payload b
       roomId: ROOM_ID,
       inboundEventId: "$reply",
       threadRootEventId: "$root",
-      threadFallbackEventId: "$reply",
+      threadInReplyToEventId: "$reply",
       outcome: { kind: "agent", text },
       maxOutputBytes: 10_000,
       maxMatrixMessageBytes: 1043,
@@ -359,7 +359,7 @@ void test("multipart labels do not turn intact indented code blocks into paragra
 });
 
 void test("thread response exact payload limits include JSON escaping, HTML and relations", () => {
-  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadFallbackEventId: "$fallback" };
+  const routing = { threadRootEventId: `$${"r".repeat(254)}`, threadInReplyToEventId: "$fallback" };
   const text = '<&😀"\\'.repeat(12);
   const exact = matrixHtmlContentBytes({ ...renderMatrixText(text), ...routing });
   const request = {

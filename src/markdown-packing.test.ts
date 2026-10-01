@@ -39,7 +39,7 @@ void test("oversized words use batched fallback rather than rendering every grow
 void test("packing tests completed links rather than assuming rendered prefix sizes are monotonic", () => {
   const link = "[" + "a".repeat(378) + "](https://example.org)";
   const text = link + " " + "z".repeat(3000);
-  const routing = { threadRootEventId: "$root", threadFallbackEventId: "$reply" };
+  const routing = { threadRootEventId: "$root", threadInReplyToEventId: "$reply" };
   const measure = (body: string): number => matrixHtmlContentBytes({ ...renderMatrixText(body), ...routing });
   const parts = packMarkdownText(text, 1043, measure, (index) => `[${index + 1}/9]\n`);
   assert.equal(parts[0], `[1/9]\n${link}`);
