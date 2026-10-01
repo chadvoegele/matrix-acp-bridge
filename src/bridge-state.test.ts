@@ -575,7 +575,12 @@ void test("strict thread schema rejects unexpected fields, malformed records and
       await writeRawState(stateDir, validState({ threads }));
       const original = await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME));
       const error = await expectStateError(() => openStore(stateDir), "corrupt");
-      assert.match(error.message, /Stop the bridge.*recovery/u);
+      assert.match(
+        error.message,
+        /Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem/u,
+      );
+      assert.match(error.message, /Backups are user-managed; do not delete state to bypass this error/u);
+      assert.doesNotMatch(error.message, /docs\/|specifications\/|restore-backup/u);
       assert.equal(error.message.includes("secret"), false);
       assert.deepEqual(await readFile(join(stateDir, BRIDGE_STATE_FILE_NAME)), original);
       assert.deepEqual(await readdir(stateDir), [BRIDGE_STATE_FILE_NAME]);

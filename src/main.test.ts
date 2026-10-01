@@ -800,7 +800,7 @@ void test("a shutdown grace deadline force-closes adapters and returns exit code
   assert.equal(rig.lock.released, true);
 });
 
-void test("incompatible private state stops startup with restore guidance, preserves state and releases the lock", async () => {
+void test("incompatible private state stops startup with self-contained recovery guidance, preserves state and releases the lock", async () => {
   const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-incompatible-state-"));
   try {
     const statePath = join(stateDir, "bridge-state.json");
@@ -837,7 +837,13 @@ void test("incompatible private state stops startup with restore guidance, prese
     assert.equal(await readFile(statePath, "utf8"), original);
     const diagnostics = diagnosticRecords.join("\n");
     assert.match(diagnostics, /unsupported-version/u);
-    assert.match(diagnostics, /restoring your own pre-upgrade backup to downgrade/u);
+    assert.match(
+      diagnostics,
+      /Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem/u,
+    );
+    assert.match(diagnostics, /Backups are user-managed/u);
+    assert.match(diagnostics, /do not delete state to bypass this error/u);
+    assert.doesNotMatch(diagnostics, /docs\/|specifications\/|restore-backup/u);
     assert.equal(diagnostics.includes("raw-state-secret"), false);
     assert.equal(diagnostics.includes("reset it only"), false);
   } finally {

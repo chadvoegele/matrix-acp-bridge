@@ -105,11 +105,11 @@ export class BridgeStateError extends Error {
   readonly statePath: string;
 
   readonly recoveryGuidance =
-    "Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem. See docs/thread-sessions-state.md for recovery and restoring your own pre-upgrade backup to downgrade; do not delete state to bypass this error.";
+    "Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem. Backups are user-managed; do not delete state to bypass this error.";
 
   constructor(category: BridgeStateFailureCategory, statePath: string) {
     super(
-      `Private bridge state failure (${category}) at ${statePath}. Stop the bridge and inspect the private state; see docs/thread-sessions-state.md for recovery and restoring your own pre-upgrade backup to downgrade. Do not delete state to bypass this error.`,
+      `Private bridge state failure (${category}) at ${statePath}. Stop the bridge and verify the configured Matrix identity, private state permissions and filesystem. Backups are user-managed; do not delete state to bypass this error.`,
     );
     this.name = "BridgeStateError";
     this.category = category;
