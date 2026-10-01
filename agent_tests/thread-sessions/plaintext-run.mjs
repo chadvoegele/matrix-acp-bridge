@@ -3,17 +3,15 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
-import { runSender, startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
+import { childExit, runSender, startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { ThreadSessionMonitor } from "../e2e-support/thread-sessions.mjs";
-import { defaultEnvironmentPath, readEnvironment, testDir, writePrivateFile } from "./plaintext-lib.mjs";
+import { defaultEnvironmentPath, readEnvironment, testDir } from "./plaintext-lib.mjs";
 
 const environmentPath = process.argv[2] ?? process.env.THREAD_PLAINTEXT_ENVIRONMENT_FILE ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const marker = randomBytes(6).toString("hex").toUpperCase();
-const monitor = new ThreadSessionMonitor();
+const monitor = new ThreadSessionMonitor(join(environment.bridge.stateDir, "e2e-session-ids.json"));
 const { sessionIds, promptSessions } = monitor;
-const sessionIdsPath = join(environment.bridge.stateDir, "e2e-session-ids.json");
-let persistSessionIds = Promise.resolve();
 let pair;
 
 function startPair() {
@@ -26,12 +24,7 @@ function startPair() {
 async function exchange(prompt, expected, options = {}) {
   const args = ["--prompt", prompt, "--expect", expected, "--expect-thread"];
   if (options.threadRootEventId !== undefined) args.push("--thread-root", options.threadRootEventId);
-  const result = await runSender({ environmentPath, senderPath: join(testDir, "plaintext-sender.mjs"), args });
-  persistSessionIds = persistSessionIds.then(() =>
-    writePrivateFile(sessionIdsPath, `${JSON.stringify([...sessionIds], null, 2)}\n`),
-  );
-  await persistSessionIds;
-  return result;
+  return runSender({ environmentPath, senderPath: join(testDir, "plaintext-sender.mjs"), args });
 }
 
 try {
@@ -120,15 +113,20 @@ try {
   assert.equal(sessionIds.size, sessionsBeforeUnknown, "unknown thread created an ACP session");
   assert.equal(monitor.loadedSessions.length, loadsBeforeUnknown, "unknown thread loaded an ACP session");
 
-  await writePrivateFile(sessionIdsPath, `${JSON.stringify([...sessionIds], null, 2)}\n`);
   await stopBridgePair(pair);
   pair = undefined;
   process.stdout.write(
     `Plaintext thread-session E2E passed (loadSession ${monitor.loadSupported ? "available" : "unavailable"}; ${sessionIds.size} ACP sessions recorded for cleanup).\n`,
   );
 } finally {
-  if (pair !== undefined) {
-    pair.bridge.kill("SIGTERM");
-    pair.acp.kill("SIGTERM");
+  try {
+    if (pair !== undefined) await stopBridgePair(pair);
+  } finally {
+    if (pair !== undefined) {
+      pair.bridge.kill("SIGTERM");
+      pair.acp.kill("SIGTERM");
+      await Promise.allSettled([childExit(pair.bridge, "bridge"), childExit(pair.acp, "ACP proxy", [0, 143])]);
+    }
+    await monitor.flushSessionIds();
   }
 }

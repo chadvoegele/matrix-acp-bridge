@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { writePrivateFile } from "./common.mjs";
 
 export function assertThreadResponse(content, rootEventId, promptEventId) {
   const relation = content?.["m.relates_to"];
@@ -24,6 +25,18 @@ export class ThreadSessionMonitor {
 
   #pendingNewSessions = new Set();
 
+  #sessionIdsPath;
+
+  #persistSessionIds = Promise.resolve();
+
+  constructor(sessionIdsPath) {
+    this.#sessionIdsPath = sessionIdsPath;
+  }
+
+  async flushSessionIds() {
+    await this.#persistSessionIds;
+  }
+
   inspect(message, direction) {
     if (direction === "outbound") {
       if (message?.method === "initialize") this.#pendingInitialize.add(message.id);
@@ -43,7 +56,18 @@ export class ThreadSessionMonitor {
     }
     if (this.#pendingNewSessions.delete(message?.id)) {
       const sessionId = message.result?.sessionId;
-      if (typeof sessionId === "string") this.sessionIds.add(sessionId);
+      if (typeof sessionId === "string" && sessionId.length > 0) {
+        this.sessionIds.add(sessionId);
+        if (this.#sessionIdsPath !== undefined) {
+          const snapshot = `${JSON.stringify([...this.sessionIds], null, 2)}\n`;
+          this.#persistSessionIds = this.#persistSessionIds.then(() =>
+            writePrivateFile(this.#sessionIdsPath, snapshot),
+          );
+          // The synchronous wire tap cannot await writes. Surface failures when
+          // the runner flushes, without an early unhandled rejection.
+          void this.#persistSessionIds.catch(() => {});
+        }
+      }
     }
   }
 }

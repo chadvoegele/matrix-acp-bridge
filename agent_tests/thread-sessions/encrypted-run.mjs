@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 
-import { runSender, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
+import { childExit, runSender, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
 import { ThreadSessionMonitor } from "../e2e-support/thread-sessions.mjs";
 import { defaultEnvironmentPath, readEnvironment, testDir } from "./encrypted-lib.mjs";
 
 const environmentPath = process.argv[2] ?? process.env.THREAD_ENCRYPTED_ENVIRONMENT_FILE ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
 const marker = randomBytes(6).toString("hex").toUpperCase();
-const monitor = new ThreadSessionMonitor();
+const monitor = new ThreadSessionMonitor(join(environment.bridge.stateDir, "e2e-session-ids.json"));
 let pair;
 
 async function exchange(prompt, expected, threadRootEventId) {
@@ -51,8 +51,14 @@ try {
   pair = undefined;
   process.stdout.write("Encrypted thread-session E2E passed with authenticated decrypted thread relations.\n");
 } finally {
-  if (pair !== undefined) {
-    pair.bridge.kill("SIGTERM");
-    pair.acp.kill("SIGTERM");
+  try {
+    if (pair !== undefined) await stopBridgePair(pair);
+  } finally {
+    if (pair !== undefined) {
+      pair.bridge.kill("SIGTERM");
+      pair.acp.kill("SIGTERM");
+      await Promise.allSettled([childExit(pair.bridge, "bridge"), childExit(pair.acp, "ACP proxy", [0, 143])]);
+    }
+    await monitor.flushSessionIds();
   }
 }
