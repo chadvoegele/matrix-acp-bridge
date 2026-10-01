@@ -1,7 +1,8 @@
 +++
 name = "Strict thread state Codex 6.1 Sol"
 creation_date = 2026-10-01T13:48:28Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Implement WAAP ticket tt-reject-redundant-kind-in-unmerged-thread-state-schema at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-reject-redundant-kind-in-unmerged-thread-state-schema/ticket.md. Read it fully. The user explicitly rejects backward compatibility for earlier unmerged schema-13 tagged thread records.
