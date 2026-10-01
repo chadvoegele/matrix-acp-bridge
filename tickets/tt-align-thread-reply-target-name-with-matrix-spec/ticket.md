@@ -1,7 +1,7 @@
 +++
 name = "Align thread reply target name with Matrix spec"
 creation_date = 2026-10-01T13:55:14Z
-status = "pending"
+status = "in-progress"
 +++
 
 # Align internal thread reply naming with Matrix spec
