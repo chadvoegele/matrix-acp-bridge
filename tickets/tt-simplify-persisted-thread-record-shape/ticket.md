@@ -1,7 +1,7 @@
 +++
 name = "Simplify persisted thread record shape"
 creation_date = 2026-10-01T13:40:36Z
-status = "in-progress"
+status = "completed"
 +++
 
 # Simplify persisted thread records
