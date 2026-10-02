@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
+import { renderMatrixText } from "../../dist/matrix-text-rendering.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { readEnvironment, readToken, writePrivateFile } from "../e2e-support/common.mjs";
 import { assertSteeringBaseline, assertSteeringHealthy } from "../e2e-support/steering-observations.mjs";
@@ -98,24 +99,15 @@ try {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
       assertSteeringBaseline(frames);
       const send = async (body) => {
-        await sender.sendMessage({
+        const eventId = await sender.sendHtmlMessage({
           roomId: environment.roomId,
-          inboundEventId: `$probe_${randomBytes(8).toString("hex")}`,
-          responseKind: "agent",
-          partNumber: 1,
-          partCount: 1,
           transactionId: `probe_${randomBytes(12).toString("hex")}`,
-          content: { msgtype: "m.text", body },
+          ...renderMatrixText(body),
         });
-        await waitFor(
-          () => events.some((event) => event.sender === environment.sender.userId && event.content?.body === body),
-          "reset input observation",
-          30_000,
-          pair,
-        );
-        const event = events.find(
-          (event) => event.sender === environment.sender.userId && event.content?.body === body,
-        );
+        await waitFor(() => events.some((event) => event.eventId === eventId), "reset input observation", 30_000, pair);
+        const event = events.find((event) => event.eventId === eventId);
+        assert.equal(event.sender, environment.sender.userId);
+        assert.equal(event.content.body, body);
         resetInputs.push(event);
         return event;
       };
