@@ -1,0 +1,17 @@
++++
+name = "Steering fix live startup history replay errors"
+creation_date = 2026-10-02T00:17:01Z
+status = "pending"
++++
+
+# Fix live startup/history replay and associated agent errors
+
+User requests fixing all outstanding errors on implementation PR22. Feature branch feat/message-delivery-steering, current source includes silent implicit-steer idle fallback and live harness/error audits. Read agent_tests/steering/live-verification-report.md and msg3-investigation-report.md, authoritative spec, sync coordinator, Matrix startup event classification and state ledger. Preserve README section removal, default-steer silence and all accepted behavior.
+
+Proven problem: after successful room testing, later thread-mode startup admitted historical top-level inputs, emitted idle notices, and two [agent error] messages including msg3-ca0e9d690a3f. Final claimed fresh-state thread startup created 7 sessions and 1 prompt before any new test input. Underlying causal traces were deleted; don't invent a cause. First truly uninitialized sync should establish suppression baseline; initialized catch-up may intentionally recover unseen eligible messages. Diagnose whether private state/environment mode switching, SDK PREPARED/initial/incremental race, bridge classification, or harness misuse caused unexpected replay. Distinguish intentional catch-up from a defect before changing behavior. Investigate actual reproduced prompt/session errors via private wire trace, not just Matrix generic marker.
+
+Run WAAP Codex gpt-6.1-sol reasoning medium. Inspect and reproduce against exact pi-acp PR115 compatible head (previous d7f9cb2428c992c62aa759919c799c5619a9b10b), real documented test homeserver/rooms and temporary devices. Credential/repo skills mandatory. Coordinate ALL live account/room operations with process-held exclusive flock on /tmp/matrix-acp-bridge-steering-live.lock, shared by SAS and final validation tasks. Never overlap live runs/mode switches. Use isolated private state paths, ledger baselines and session-ID cleanup lists. Retain failed causal traces privately OUTSIDE disposable worktrees, e.g. private 0700 /home/chad/.local/state/matrix-steering-verification, with 0600 files, no secret output/commits. Delete only after causal review or keep safe recovery metadata reported. No production services/daemon restart, arbitrary rooms/history/shared-device removal.
+
+Fix demonstrated product/harness causes, add deterministic startup/classification/ledger regression tests and/or harness isolation fixes. Preserve normal catch-up requirements, don't blanket suppress missed real messages or disable startup guards. Fresh initialized vs uninitialized, first sync race, room->thread harness transition, startup activity/error markers and late teardown must be covered. If agent error is caused by upstream Pi/session/tool environment, remedy bounded test setup or supported integration behavior and report upstream limitation honestly; don't hide errors/force green audit.
+
+Commit only own launcher branch; no merge/push/shared feature edits. Maintain WAAP work log with sanitized proven diagnosis/reproducer/fixes/checks/cleanup. Full npm run check and passing live controlled reproduction required where feasible. Hand committed branch to coordinator for integration. Don't mark ticket completed yourself. If hard prerequisite impossible report precise blocker; user asked try to fix, don't stop at a generic hypothesis.
