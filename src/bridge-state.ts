@@ -72,6 +72,9 @@ export const BRIDGE_STATE_FILE_NAME = "bridge-state.json";
 
 export const BRIDGE_STATE_SCHEMA_VERSION = 13;
 
+/** Bounded durable suppression across older initial snapshots and later replay. */
+export const MAX_COMPLETED_EVENT_IDS_PER_ROOM = 10_000;
+
 export type BridgeStateFaultPoint = "write" | "file-fsync" | "rename" | "directory-fsync";
 
 /** Test-only fault boundary; injected failures are sanitized before escaping. */
@@ -262,6 +265,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       }
       const nextCompleted = cloneCompletedEventIds(current?.completedEventIds);
       mergeCompletedEventIds(nextCompleted, baseline);
+      boundCompletedEventIds(nextCompleted);
       const next: InternalState = {
         initialized: true,
         threads: new Map(current?.threads ?? []),
@@ -286,7 +290,7 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
       const completedEventIds = cloneCompletedEventIds(current?.completedEventIds);
       const room = completedEventIds.get(roomId) ?? [];
       room.push(eventId);
-      completedEventIds.set(roomId, room);
+      completedEventIds.set(roomId, room.slice(-MAX_COMPLETED_EVENT_IDS_PER_ROOM));
       const next: InternalState = {
         initialized: current?.initialized ?? false,
         threads: new Map(current?.threads ?? []),
@@ -300,38 +304,25 @@ export class PrivateBridgeStateStore implements BridgeStateStore {
   }
 
   /**
-   * Keep the completed IDs visible in the current initial-sync window and
-   * add IDs that became terminal while that window was being handled. The
-   * replacement is atomic; if compaction fails, the old state can only
-   * over-retain IDs and therefore remains safe for deduplication.
+   * An initial sync can be older than the last incremental response. Absence
+   * from that snapshot is not evidence that a completed ID can be forgotten:
+   * subsequent incremental sync may replay it. Retain the bounded recent
+   * ledger and merge newly terminal IDs without marking unseen input complete.
    */
   async compactCompletedEventIds(
     currentTimelineInput: CompletedEventLedgerInput,
     newlyCompletedEventIds?: CompletedEventLedgerInput,
   ): Promise<void> {
     return this.#enqueue(async () => {
-      const currentTimeline = this.#normalizeLedger(currentTimelineInput);
+      // Keep validating this boundary even though snapshot absence no longer
+      // authorizes deletion of a completed ID.
+      this.#normalizeLedger(currentTimelineInput);
       const newlyCompleted = this.#normalizeLedger(newlyCompletedEventIds ?? []);
       const current = this.#state;
-      const compacted = new Map<MatrixRoomId, MatrixEventId[]>();
-      for (const [roomId, eventIds] of currentTimeline) {
-        const currentIds = new Set(current?.completedEventIds.get(roomId) ?? []);
-        const terminalIds = new Set(newlyCompleted.get(roomId) ?? []);
-        const retained = eventIds.filter((eventId) => currentIds.has(eventId) || terminalIds.has(eventId));
-        const terminalOutsideWindow = [...terminalIds].filter((eventId) => !eventIds.includes(eventId));
-        const result = [...retained, ...terminalOutsideWindow];
-        if (result.length > 0) {
-          compacted.set(roomId, result);
-        }
-      }
-      for (const [roomId, eventIds] of newlyCompleted) {
-        if (!currentTimeline.has(roomId) && eventIds.length > 0) {
-          compacted.set(roomId, [...eventIds]);
-        }
-      }
-      if (completedLedgersEqual(current?.completedEventIds, compacted)) {
-        return;
-      }
+      const compacted = cloneCompletedEventIds(current?.completedEventIds);
+      mergeCompletedEventIds(compacted, newlyCompleted);
+      boundCompletedEventIds(compacted);
+      if (completedLedgersEqual(current?.completedEventIds, compacted)) return;
       const next: InternalState = {
         initialized: current?.initialized ?? false,
         threads: new Map(current?.threads ?? []),
@@ -1039,6 +1030,13 @@ function mergeCompletedEventIds(
     if (existing.length > 0) {
       target.set(roomId, existing);
     }
+  }
+}
+
+function boundCompletedEventIds(target: Map<MatrixRoomId, MatrixEventId[]>): void {
+  for (const [roomId, eventIds] of target) {
+    if (eventIds.length > MAX_COMPLETED_EVENT_IDS_PER_ROOM)
+      target.set(roomId, eventIds.slice(-MAX_COMPLETED_EVENT_IDS_PER_ROOM));
   }
 }
 

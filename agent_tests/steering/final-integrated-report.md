@@ -1,5 +1,10 @@
 # Final integrated live verification
 
+Latest status: the additional restart-after-reset probe exposed a completed-ID
+compaction defect. A bounded product fix and regressions now pass all 470 tests.
+All four primary modes and the controlled probes must be repeated on the fixed
+build before final acceptance; earlier results below remain historical evidence.
+
 Assigned agent/branch: `aa-steering-final-integrated-live-20261002t015526-2bc5c0`.
 Integrated implementation base: `2018351ad2f3d9468cabcb634470a217dbd03e50`.
 
@@ -139,3 +144,31 @@ separate additional revoked token.
 Initialized recovery and live reset probes are still running/queued. Earlier
 encrypted-room complete-window pagination and the final full check remain
 acceptance gates. Primary scenario success alone does not finish this assignment.
+
+## Proven completed-ID compaction replay and remediation
+
+The reset barrier itself passed (4 inputs, 2 prompts, 1 injection, 1 replacement
+session). Its next initialized restart failed the strict quiet baseline with
+1 load, 1 prompt and 1 steering request before new input. The before-state
+contained all four reset-scenario completions. The older initial snapshot selected
+zero catch-up inputs, but compaction intersected the ledger with that snapshot
+and removed the completed active/reset/post-reset IDs. Subsequent incremental
+sync replayed the completed active input and its injection. Private before/after
+state, SDK/Pi/ACP traces and the failed assertion are retained in `reset-barrier`.
+This proves a product compaction defect; it does not establish the original
+destroyed msg3 trace's exact ACP cause.
+
+Completion metadata now retains the latest 10,000 IDs per room across older
+snapshots, merges newly terminal IDs, and remains bounded during terminal writes
+and baseline creation. Only event IDs are persisted. The existing schema 13,
+authorization, unseen catch-up age/count limits, steering behavior and encryption
+policy remain intact. Completion eviction beyond the bound and existing crash
+gaps still preclude an exactly-once guarantee. Two coordinator/actual-SDK
+regressions fail against the old implementation and pass with this fix; another
+regression covers bounded baseline/completion/compaction and unseen eligibility.
+Full check passes 470 tests. All resources from the failed scope were cleaned:
+2 sessions deleted, 2 tokens revoked and HTTP 401 confirmed, scoped inventories
+empty. Retrospective raw checks of both earlier encrypted scopes passed: exact
+23/25 event sets, all encrypted, with startup/teardown windows padded 60 seconds.
+
+Post-fix integrated live revalidation is pending.
