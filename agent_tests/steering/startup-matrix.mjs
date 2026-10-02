@@ -114,7 +114,10 @@ try {
         resetInputs.push(event);
         return event;
       };
-      const complete = async (event) => (await state()).completedEventIds[environment.roomId]?.includes(event.eventId);
+      const complete = async (event) => {
+        const snapshot = await state();
+        return snapshot.completedEventIds[environment.roomId]?.includes(event.eventId);
+      };
       const response = (request) =>
         frames.find(({ direction, frame }) => direction === "in" && frame.id === request.frame.id);
       const suffix = randomBytes(8).toString("hex");
@@ -148,7 +151,10 @@ try {
       assert.equal(requests("session/prompt").length, 1);
       assert.equal(requests("_session/steering").length, 1);
       await waitFor(
-        async () => (await Promise.all(resetInputs.map(complete))).every(Boolean),
+        async () => {
+          const completed = await Promise.all(resetInputs.map((event) => complete(event)));
+          return completed.every(Boolean);
+        },
         "reset probe all durable completions",
         120_000,
         pair,
