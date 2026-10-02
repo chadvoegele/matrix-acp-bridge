@@ -1,7 +1,7 @@
 +++
 name = "startup-history-remediation"
 creation_date = 2026-10-02T00:18:38Z
-status = "running"
+status = "completed"
 session_id = "01a0f9fa-8ceb-7b10-b3fa-5299d8e5e46e"
 system = "codex"
 +++
