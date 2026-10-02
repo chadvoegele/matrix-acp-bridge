@@ -1,7 +1,8 @@
 +++
 name = "startup-history-live-resume"
 creation_date = 2026-10-02T01:01:37Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 You are the NEW WAAP developer resuming ticket tt-steering-fix-live-startup-history-replay-errors. Read full ticket at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-steering-fix-live-startup-history-replay-errors/ticket.md and failed agents/aa-startup-history-live-diagnosis/work_log.md in same state directory, waap, git-repositories and password-secrets skills. Work ONLY your automatically created isolated branch/worktree. Launcher cwd was worktrees/steering-implementation at a5c160d5b31383a6efa4142eac7bf1fb72938585. Prior c9a8d3b tests/report already integrated as a5c160d; prior extra SDK regression was UNCOMMITTED and lost. Reimplement useful lost coverage. Do not cherry-pick already integrated work.
