@@ -1,7 +1,8 @@
 +++
 name = "steering-sas-encrypted-recovery-20261002"
 creation_date = 2026-10-02T01:01:31Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # Developer: complete SAS/encrypted steering remediation
