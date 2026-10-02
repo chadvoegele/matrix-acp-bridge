@@ -77,3 +77,23 @@ claim that PR115 supports multiple simultaneously active Pi subprocesses.
 Acceptance is the wire acknowledgement and durable/routing behavior, not model
 obedience or exactly-once/consumption guarantees. The deleted historical msg3
 traces still do not prove its original exact ACP cause.
+
+## Integrated encrypted room checkpoint
+
+Fresh retry normal SAS passed: matching emoji and decimal, helper confirmation,
+interactive bridge `yes`, and both protocol completions. Encrypted room live
+verification passed on HEAD `870eaa0ad05741568c8d192ea218b53d693336d6`,
+with unchanged integrated product source/build. It sent 8 inputs, observed 15
+replies, 5 prompts, 3 successful injected acknowledgements and 1 session. All
+23 fetched raw sent/reply events were `m.room.encrypted`, with authenticated
+decryption. All 10 ACP requests had responses and all 8 new inputs were durably
+complete. Strict startup and final post-teardown health audits passed with zero
+RPC errors or Matrix failure markers. Actual Pi model remained
+`openai-codex/gpt-5.6-sol`.
+
+Cleanup deleted that session, revoked all 3 temporary devices and confirmed
+HTTP 401 for each saved token. Scoped adapter registry and Pi session files were
+empty; active environment/device state was removed only after remote cleanup.
+The earlier failed provisioning attempt and its one-device cleanup remain
+separate retained evidence. Encrypted thread and extra initialized/reset probes
+remain in progress.
