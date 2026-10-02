@@ -24,7 +24,16 @@ test("raw boundary audit includes startup and shutdown plaintext hidden by SDK f
   );
   assert.throws(() => assertRawSteeringEncryption(raw, ["bridge"], ["reply"]), /plaintext/u);
   assertRawSteeringEncryption([event("reply", "m.room.encrypted")], ["bridge"], ["reply"]);
-  assert.throws(() => assertRawSteeringEncryption([], ["bridge"], ["reply"]), /absent/u);
+  assert.throws(() => assertRawSteeringEncryption([], ["bridge"], ["reply"]), /unexpected/u);
+  assert.throws(
+    () =>
+      assertRawSteeringEncryption(
+        [event("reply", "m.room.encrypted"), event("hidden", "m.room.encrypted")],
+        ["bridge"],
+        ["reply"],
+      ),
+    /unexpected/u,
+  );
 });
 
 test("raw boundary audit fails closed on missing boundary and repeated pagination", async () => {

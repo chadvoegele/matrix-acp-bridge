@@ -75,6 +75,16 @@ export function assertRawSteeringEncryption(events, userIds, checkedEventIds = [
     0,
     "plaintext test-account output across startup, scenarios, or shutdown",
   );
+  if (checkedEventIds.length > 0) {
+    const accountEvents = events.filter(
+      (event) => users.has(event.sender) && ["m.room.message", "m.room.encrypted"].includes(event.type),
+    );
+    assert.deepEqual(
+      accountEvents.map((event) => event.event_id).sort(),
+      [...checkedEventIds].sort(),
+      "unexpected test-account event outside decrypted scenario observations",
+    );
+  }
   const types = new Map(events.map((event) => [event.event_id, event.type]));
   for (const id of checkedEventIds)
     assert.equal(types.get(id), "m.room.encrypted", "checked event absent from raw encrypted audit");
