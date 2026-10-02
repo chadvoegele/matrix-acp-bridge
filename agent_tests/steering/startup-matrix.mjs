@@ -81,6 +81,9 @@ try {
     await writePrivateFile(inputPath, JSON.stringify(sent));
   } else {
     pair = await startBridgePair(environment, {
+      onPair: (started) => {
+        pair = started;
+      },
       onOutbound: (frame) => frames.push({ direction: "out", frame, phase, time: Date.now() }),
       onInbound: (frame) => frames.push({ direction: "in", frame, phase, time: Date.now() }),
     });

@@ -51,7 +51,7 @@ export function parseDiagnostics(text) {
     });
 }
 
-export async function startBridgePair(environment, { onOutbound, onInbound } = {}) {
+export async function startBridgePair(environment, { onOutbound, onInbound, onPair } = {}) {
   const [acpProgram, ...acpArguments] = environment.acpCommand;
   const acp = spawn(acpProgram, acpArguments, {
     cwd: repoRoot,
@@ -80,15 +80,19 @@ export async function startBridgePair(environment, { onOutbound, onInbound } = {
     bridgeDiagnostics: () => bridgeDiagnostics,
     acpDiagnostics: () => acpDiagnostics,
   };
+  onPair?.(pair);
   await waitFor(() => bridgeDiagnostics.includes("startup-ready"), "bridge startup-ready", 120_000, pair);
   return pair;
 }
 
 export async function stopBridgePair(pair) {
   if (pair.bridge.exitCode === null && pair.bridge.signalCode === null) pair.bridge.kill("SIGTERM");
-  await childExit(pair.bridge, "bridge");
-  if (pair.acp.exitCode === null && pair.acp.signalCode === null) pair.acp.kill("SIGTERM");
-  await childExit(pair.acp, "ACP proxy", [0, 143]);
+  try {
+    await childExit(pair.bridge, "bridge");
+  } finally {
+    if (pair.acp.exitCode === null && pair.acp.signalCode === null) pair.acp.kill("SIGTERM");
+    await childExit(pair.acp, "ACP proxy", [0, 143]);
+  }
 }
 
 export async function runSender({ environmentPath, senderPath, args, forwardStderr = true }) {

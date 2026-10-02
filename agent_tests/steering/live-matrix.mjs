@@ -162,7 +162,13 @@ try {
     for (const room of batch.rooms) if (room.roomId === environment.roomId) events.push(...room.timeline);
   });
   await sender.start();
-  pair = await startBridgePair(environment, { onOutbound: outbound, onInbound: inbound });
+  pair = await startBridgePair(environment, {
+    onOutbound: outbound,
+    onInbound: inbound,
+    onPair: (started) => {
+      pair = started;
+    },
+  });
   const initialized = frames.find(({ direction, frame }) => direction === "in" && frame.result?.agentCapabilities);
   assert.equal(initialized?.frame.result?._meta?.steering?.supported, true);
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
@@ -348,7 +354,13 @@ try {
     `${JSON.stringify({ phase, frames, sent, events, stateBefore, stateAfter: await snapshot() }, null, 2)}\n`,
   );
   phase = "shutdown";
-  if (pair) await stopBridgePair(pair);
+  try {
+    if (pair) await stopBridgePair(pair);
+  } catch {
+    successSummary = undefined;
+    process.exitCode = 1;
+    console.log(JSON.stringify({ result: "failed", phase: "shutdown" }));
+  }
   console.log(JSON.stringify({ cleanup: "bridge and ACP stopped" }));
   await sender.stop().catch(() => {});
   await sender.closeCrypto().catch(() => {});
