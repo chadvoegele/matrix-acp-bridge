@@ -80,3 +80,27 @@ RPC errors and Matrix failure markers, including startup and shutdown. Private
 evidence includes phase labels and child diagnostics. Preserve failed-run evidence
 securely outside disposable launcher worktrees before cleanup removes them. See
 [msg3 investigation](msg3-investigation-report.md) for the historical replay error.
+
+`startup-matrix.mjs` provides a bounded plaintext startup probe using the same
+production CLI and real ACP transport. Hold the process-held exclusive
+`/tmp/matrix-acp-bridge-steering-live.lock` through provisioning, probes, resource
+inspection and cleanup. Keep evidence outside disposable worktrees (directories
+0700, files 0600). Each command takes an environment, operation and evidence path:
+
+```sh
+node agent_tests/steering/startup-matrix.mjs environment.json fresh fresh-wire.json
+node agent_tests/steering/startup-matrix.mjs environment.json send send-wire.json input.json
+node agent_tests/steering/startup-matrix.mjs environment.json catchup catchup-wire.json input.json
+node agent_tests/steering/startup-matrix.mjs environment.json quiet quiet-wire.json
+```
+
+`fresh` requires an absent state file and verifies zero startup ACP work. `send`
+sends one controlled input while the bridge is stopped. `catchup` requires
+initialized state and verifies exactly that input becomes a completed prompt;
+`quiet` verifies a subsequent initialized restart does no work. For a room to
+thread transition, keep the controlled state's identity and ledger and change
+only the response mode in a separate config before `catchup`. A separate fresh
+thread probe must use a distinct state directory. Preserve all created session
+IDs from wire evidence and every state's session mappings for ordered cleanup.
+These probes retain startup/shutdown frames and child diagnostics and audit
+Matrix failures and RPC errors after awaited teardown.
