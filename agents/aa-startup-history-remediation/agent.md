@@ -1,7 +1,8 @@
 +++
 name = "startup-history-remediation"
 creation_date = 2026-10-02T00:18:38Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # Named developer: steering startup/history replay remediation
