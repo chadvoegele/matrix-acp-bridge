@@ -1,7 +1,8 @@
 +++
 name = "steering-final-integrated-live-20261002T015526-2bc5c0"
 creation_date = 2026-10-02T01:55:26Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Execute WAAP ticket tt-steering-final-full-live-remediation-verification as a NEW developer/testing agent. Read FULL ticket at /home/chad/.local/state/waap/data/home/chad/code/github.com/chadvoegele/matrix-acp-bridge/tickets/tt-steering-final-full-live-remediation-verification/ticket.md and waap/password-secrets skills. Your launcher starts at integrated feature HEAD 2018351ad2f3d9468cabcb634470a217dbd03e50. Work ONLY your isolated launcher branch/worktree. COMMIT incrementally, especially reports/harness fixes BEFORE long live runs: launcher removes worktree on exit/rate-limit. Do not switch model: developer run MUST remain Codex gpt-6.1-sol medium. You must actually finish tests and report evidence, not promise or stop early. Do not merge/push/comment/complete ticket or change shared feature/main. Parent integrates and posts final result.
