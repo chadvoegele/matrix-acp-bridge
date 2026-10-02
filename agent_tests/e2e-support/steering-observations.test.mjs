@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertSteeringBaseline, assertSteeringHealthy } from "./steering-observations.mjs";
+import {
+  assertSteeringBaseline,
+  assertSteeringHealthy,
+  assertSteeringDeviceBaseline,
+} from "./steering-observations.mjs";
 
 test("startup guard rejects session creation even before a prompt starts", () => {
   assert.throws(() => assertSteeringBaseline([{ direction: "out", frame: { method: "session/new" } }]));
@@ -35,4 +39,20 @@ test("startup guard rejects session activity even without a captured request", (
       { direction: "in", frame: { method: "session/update", params: { update: { sessionUpdate: "tool_call" } } } },
     ]),
   );
+});
+
+test("live mode isolation rejects a new state or response mode on an already used device", () => {
+  const baseline = {
+    version: 1,
+    homeserver: "https://matrix.example.org",
+    userId: "@bridge:example.org",
+    deviceId: "test-device",
+    stateDir: "/private/room-state",
+    responseMode: "room",
+  };
+  assertSteeringDeviceBaseline(null, baseline);
+  assertSteeringDeviceBaseline({ ...baseline }, baseline);
+  assert.throws(() => assertSteeringDeviceBaseline(baseline, { ...baseline, stateDir: "/private/fresh-state" }));
+  assert.throws(() => assertSteeringDeviceBaseline(baseline, { ...baseline, responseMode: "thread" }));
+  assert.throws(() => assertSteeringDeviceBaseline(baseline, { ...baseline, deviceId: "different-device" }));
 });

@@ -33,3 +33,13 @@ export function assertSteeringHealthy(frames, events, bridgeUserId) {
     "unexpected Matrix failure across startup, scenarios, or shutdown",
   );
 }
+
+export function assertSteeringDeviceBaseline(previous, current) {
+  if (previous === null) return;
+  for (const key of ["version", "homeserver", "userId", "deviceId", "stateDir", "responseMode"]) {
+    assert.ok(
+      previous[key] === current[key],
+      "temporary device already has a different steering baseline; provision new devices for a new mode or state",
+    );
+  }
+}

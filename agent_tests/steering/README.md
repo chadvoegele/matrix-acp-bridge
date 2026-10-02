@@ -17,8 +17,12 @@ Provision through the existing documented harnesses. Set a distinct ignored
 sets the temporary bridge config to default steering and the selected response
 mode. Existing startup-ready and sender initial-sync gates run before any input. A
 two-second baseline observation requires zero session creation/loading, prompts, or steering requests. Use
-fresh isolated state for a different response mode; do not switch a retained
-thread suite into room mode without first preserving its session IDs for cleanup.
+new temporary devices and fresh isolated state for each response mode. Replacing
+state on an already used device can replay inputs through incremental sync after
+an older initial snapshot. The runner records a private device baseline next to
+the bridge token and rejects a different mode or state before live operations.
+Preserve all session IDs, clean up the old device set, then provision the next
+mode. Intentional initialized recovery uses the separate startup probe below.
 
 ```sh
 node agent_tests/unencrypted-e2e/provision.mjs
