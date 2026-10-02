@@ -35,6 +35,16 @@ counts are now one for room mode and two for thread mode, with a regression
 that rejects an extra default-selected notice. No selector/coordinator/sync
 implementation changes were needed; README removal is preserved.
 
+The fresh run exposed a second harness lifecycle defect during repeat SAS.
+Private lifecycle diagnostics show the helper receiving a cancelled request
+before the bridge created its new outgoing request. The helper's handler ignored
+that terminal request, but its caller resolved the overall attempt on any normal
+return and shut down the helper. The bridge then timed out before displaying
+SAS. The helper now ends successfully only when its handler explicitly reports
+completed SAS verification; ignored terminal requests and aliases leave it
+listening. Deterministic regressions cover ignored events followed by valid
+completion and fail-closed rejection. This does not relax target or trust checks.
+
 ## Live verification
 
 Full `npm run check` passed: formatting, lint, typecheck, and 457 tests. The
