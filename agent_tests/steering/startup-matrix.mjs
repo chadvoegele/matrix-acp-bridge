@@ -14,13 +14,14 @@ import { assertSteeringBaseline, assertSteeringHealthy } from "../e2e-support/st
 // startup, so initialized recovery cannot be confused with fresh suppression.
 const [environmentPath, operation, evidencePath, inputPath] = process.argv.slice(2);
 assert.ok(environmentPath && evidencePath);
-assert.ok(["fresh", "quiet", "send", "catchup"].includes(operation));
+assert.ok(["fresh", "quiet", "send", "catchup", "reset"].includes(operation));
 const environment = await readEnvironment(environmentPath);
 const frames = [];
 const events = [];
 let phase = "startup";
 let pair;
 let sent;
+const resetInputs = [];
 let summary;
 let failure;
 const statePath = resolve(environment.bridge.stateDir, "bridge-state.json");
@@ -88,6 +89,90 @@ try {
       onOutbound: (frame) => frames.push({ direction: "out", frame, phase, time: Date.now() }),
       onInbound: (frame) => frames.push({ direction: "in", frame, phase, time: Date.now() }),
     });
+    if (operation === "reset") {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
+      assertSteeringBaseline(frames);
+      const send = async (body) => {
+        await sender.sendMessage({
+          roomId: environment.roomId,
+          inboundEventId: `$probe_${randomBytes(8).toString("hex")}`,
+          responseKind: "agent",
+          partNumber: 1,
+          partCount: 1,
+          transactionId: `probe_${randomBytes(12).toString("hex")}`,
+          content: { msgtype: "m.text", body },
+        });
+        await waitFor(
+          () => events.some((event) => event.sender === environment.sender.userId && event.content?.body === body),
+          "reset input observation",
+          30_000,
+          pair,
+        );
+        const event = events.find(
+          (event) => event.sender === environment.sender.userId && event.content?.body === body,
+        );
+        resetInputs.push(event);
+        return event;
+      };
+      const complete = async (event) => (await state()).completedEventIds[environment.roomId]?.includes(event.eventId);
+      const response = (request) =>
+        frames.find(({ direction, frame }) => direction === "in" && frame.id === request.frame.id);
+      const suffix = randomBytes(8).toString("hex");
+      phase = "pending prompt before reset";
+      const active = await send(
+        `/prompt reset-active-${suffix}: Use bash to run exactly sleep 12, then reply briefly. Do not inspect files or run other tools.`,
+      );
+      await waitFor(
+        () => frames.some(({ frame }) => frame.params?.update?.sessionUpdate === "tool_call"),
+        "reset probe real tool start",
+        120_000,
+        pair,
+      );
+      assert.equal(requests("session/prompt").length, 1);
+      assert.equal(response(requests("session/prompt")[0]), undefined);
+      phase = "steering acknowledgement before reset";
+      const injected = await send(`/steer reset-injected-${suffix}: Reply briefly after the tool finishes.`);
+      await waitFor(
+        () => requests("_session/steering").some((request) => response(request)?.frame.result?.outcome === "injected"),
+        "reset probe injection acknowledgement",
+        30_000,
+        pair,
+      );
+      await waitFor(() => complete(injected), "reset probe injected durability", 30_000, pair);
+      assert.equal(await complete(active), false);
+      assert.equal(response(requests("session/prompt")[0]), undefined);
+      phase = "queued reset barrier";
+      await send("/reset");
+      const payload = `reset-after-${suffix}: Reply briefly without tools.`;
+      await send(payload);
+      assert.equal(requests("session/prompt").length, 1);
+      assert.equal(requests("_session/steering").length, 1);
+      await waitFor(
+        async () => (await Promise.all(resetInputs.map(complete))).every(Boolean),
+        "reset probe all durable completions",
+        120_000,
+        pair,
+      );
+      const prompts = requests("session/prompt");
+      assert.equal(prompts.length, 2);
+      assert.ok(response(prompts[0])?.frame.result);
+      assert.ok(response(prompts[1])?.frame.result);
+      assert.notEqual(prompts[0].frame.params.sessionId, prompts[1].frame.params.sessionId);
+      assert.equal(prompts[1].frame.params.prompt.map((part) => part.text ?? "").join(""), payload);
+      assert.equal(requests("_session/steering").length, 1);
+      assert.equal(requests("_session/steering")[0].frame.params.sessionId, prompts[0].frame.params.sessionId);
+      assert.equal(requests("_session/steering")[0].frame.params._meta.steering.idleBehavior, "promptRequired");
+      assert.equal(requests("session/new").length, 1);
+      assert.equal(
+        events.filter(
+          (event) =>
+            event.sender === environment.bridge.userId &&
+            event.content?.body === "No running turn; message queued as a prompt.",
+        ).length,
+        0,
+        "default-selected input behind reset stays silent",
+      );
+    }
     if (operation === "catchup") {
       const input = JSON.parse(await readFile(inputPath, "utf8"));
       await waitFor(
@@ -107,7 +192,7 @@ try {
       );
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
-    if (operation !== "catchup") assertSteeringBaseline(frames);
+    if (operation !== "catchup" && operation !== "reset") assertSteeringBaseline(frames);
     const snapshot = await state();
     assert.equal(snapshot.initialized, true);
     assertSteeringHealthy(frames, events, environment.bridge.userId);
@@ -117,6 +202,7 @@ try {
     operation,
     prompts: requests("session/prompt").length,
     sessions: requests("session/new").length,
+    ...(operation === "reset" ? { sent: resetInputs.length, steering: requests("_session/steering").length } : {}),
   };
 } catch (error) {
   failure = {
@@ -131,7 +217,17 @@ try {
 } finally {
   await writePrivateFile(
     evidencePath,
-    JSON.stringify({ phase, frames, events, sent, summary, failure, stateBefore, stateAfter: await snapshot() }),
+    JSON.stringify({
+      phase,
+      frames,
+      events,
+      sent,
+      resetInputs,
+      summary,
+      failure,
+      stateBefore,
+      stateAfter: await snapshot(),
+    }),
   );
   phase = "shutdown";
   try {
@@ -148,6 +244,7 @@ try {
       frames,
       events,
       sent,
+      resetInputs,
       summary,
       failure,
       stateBefore,
