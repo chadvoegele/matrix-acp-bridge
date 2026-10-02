@@ -55,6 +55,11 @@ sender.onSyncBatch((batch) => {
   if (batch.phase !== "initial") events.push(...batch.rooms.flatMap((room) => room.timeline));
 });
 try {
+  if (operation === "reset") {
+    const config = await readFile(environment.bridge.configFile, "utf8");
+    assert.match(config, /^response_mode = "room"$/mu);
+    assert.match(config, /^default_message_delivery = "steer"$/mu);
+  }
   if (operation === "fresh") {
     await assert.rejects(readFile(statePath), { code: "ENOENT" });
   } else if (operation !== "send") {

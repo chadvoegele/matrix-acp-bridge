@@ -20,3 +20,16 @@ recorded separately from session configuration returned over ACP.
 
 No merge, push, PR comment, shared branch modification or ticket completion.
 The original destroyed msg3 traces cannot establish its exact ACP cause.
+
+## Initial integrated results
+
+Full `npm run check` passed all 464 tests and formatting/lint/typecheck.
+Plaintext room and thread passed the final wire/ledger/routing and shutdown
+health audits. Room: 8 inputs, 15 replies, 5 prompts, 3 injections, 1 session.
+Thread: 9 inputs, 16 replies, 6 prompts, 3 injections, 2 sessions. Each used
+a new device set. All 3 owned sessions were deleted and all 4 temporary tokens
+returned HTTP 401 after cleanup; scoped adapter registries and session files
+were empty. Encrypted results and additional recovery/reset probes are pending.
+
+Actual Pi model reported by ACP: `openai-codex/gpt-5.6-sol`. This is separate
+from the required developer model and was not substituted for this test.
