@@ -2,6 +2,7 @@
 name = "startup-history-live-resume"
 creation_date = 2026-10-02T01:01:37Z
 status = "running"
+session_id = "01a0fa21-c456-7f80-9cfb-0eebb9644a12"
 system = "codex"
 +++
 
