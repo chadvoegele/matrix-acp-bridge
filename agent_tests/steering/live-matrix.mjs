@@ -7,7 +7,11 @@ import { resolve } from "node:path";
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { readEnvironment, readToken, writePrivateFile } from "../e2e-support/common.mjs";
-import { assertSteeringBaseline, assertSteeringHealthy } from "../e2e-support/steering-observations.mjs";
+import {
+  assertSteeringBaseline,
+  assertSteeringHealthy,
+  assertSteeringIdleNotices,
+} from "../e2e-support/steering-observations.mjs";
 import { cryptoPaths } from "../encrypted-e2e/lib.mjs";
 
 // Opt-in: use only environments provisioned for the documented test rooms.
@@ -245,10 +249,7 @@ try {
       event.originServerTs >= sent[0].originServerTs,
   );
   assert.ok(replies.length > 0);
-  assert.equal(
-    replies.filter((event) => event.content.body === "No running turn; message queued as a prompt.").length,
-    responseMode === "thread" ? 3 : 2,
-  );
+  assertSteeringIdleNotices(replies, responseMode);
   for (const output of agentOutputs) {
     assert.ok(output.text.length > 0, "real agent produced no reply");
     const rootEvent =
