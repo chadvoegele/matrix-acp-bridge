@@ -386,6 +386,7 @@ interface RealSdkHttpHarnessOptions {
   readonly syncFailureErrcode?: string;
   readonly encryptedInitial?: boolean;
   readonly initialEventId?: string;
+  readonly incrementalEventId?: string;
 }
 
 interface RealSdkHttpHarness {
@@ -471,10 +472,13 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
                 },
                 timeline: {
                   events:
-                    syncResponses === 1
+                    syncResponses === 1 || (syncResponses === 2 && options.incrementalEventId !== undefined)
                       ? [
                           {
-                            event_id: options.initialEventId ?? "$offline:example.org",
+                            event_id:
+                              syncResponses === 1
+                                ? (options.initialEventId ?? "$offline:example.org")
+                                : options.incrementalEventId,
                             origin_server_ts: 1000,
                             room_id: ROOM_ID,
                             sender: ALICE,
@@ -748,6 +752,88 @@ void test("real SDK startup and room to thread restart apply the persisted histo
     assert.equal(received[0]?.isLive, true);
     assert.equal(received[0]?.isCatchUp, true);
     assert.equal(received[0]?.timeline?.phase, "incremental");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+void test("real SDK incremental input during an awaited startup baseline is admitted after history suppression", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-sdk-startup-race-"));
+  const identity = { homeserver: CONFIG.homeserver, userId: CONFIG.userId, deviceId: CONFIG.deviceId };
+  const store = await openBridgeStateStore({ stateDir, identity });
+  const received: InboundMatrixEvent[] = [];
+  const phases: string[] = [];
+  const config = { ...CONFIG_WITH_INITIAL_LIMIT, stateDir };
+  const coordinator = new MatrixSyncCoordinator({
+    config,
+    stateStore: store,
+    clock: systemClock,
+    onFatal: () => assert.fail("unexpected startup failure"),
+    bridge: {
+      openIntake() {},
+      enableDispatch() {},
+      async handleTimelineEvent(event, terminal) {
+        received.push(event);
+        await terminal?.();
+      },
+    },
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered!: () => void;
+  const initialEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const harness = createRealSdkHttpHarness({ incrementalEventId: "$during-baseline:example.org" });
+  try {
+    await withFetch(harness.fetch, async () => {
+      const adapter = createMatrixClientAdapter(config, "runtime-test-token");
+      adapter.onSyncBatch(async (batch) => {
+        phases.push(batch.phase);
+        if (batch.phase === "initial") {
+          entered();
+          await gate;
+        }
+        await coordinator.handleBatch(batch);
+      });
+      await adapter.whoAmI();
+      const starting = adapter.start();
+      void starting.catch(() => {});
+      try {
+        await initialEntered;
+        // A third request proves the second SDK response and its callbacks
+        // crossed PREPARED while initial baseline persistence was still gated.
+        const deadline = Date.now() + 5000;
+        while (harness.syncRequests.length < 3 && Date.now() < deadline) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        }
+        assert.equal(harness.syncRequests.length >= 3, true);
+        assert.equal(store.getSnapshot().initialized, false);
+        assert.equal(received.length, 0);
+        release();
+        await starting;
+        while (!store.isEventCompleted(ROOM_ID, "$during-baseline:example.org") && Date.now() < deadline) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        }
+        assert.deepEqual(
+          received.map(({ eventId }) => eventId),
+          ["$during-baseline:example.org"],
+        );
+        assert.equal(received[0]?.isLive, true);
+        assert.equal(received[0]?.isCatchUp, false);
+        assert.equal(store.isEventCompleted(ROOM_ID, "$offline:example.org"), true);
+        assert.equal(store.isEventCompleted(ROOM_ID, "$during-baseline:example.org"), true);
+        assert.equal(phases[0], "initial");
+        assert.equal(phases[1], "incremental");
+      } finally {
+        release();
+        await adapter.stop();
+        await starting.catch(() => {});
+        await coordinator.flush();
+      }
+    });
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
