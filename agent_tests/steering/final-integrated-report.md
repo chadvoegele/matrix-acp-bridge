@@ -44,3 +44,36 @@ and retained the identity/token metadata privately before removing active state.
 This is a failed setup attempt, not encrypted acceptance or a proven bridge bug.
 Fresh provisioning retries use a longer 1800-second allowance and private
 HTTP status/backoff diagnostics. No trust or encryption setting changed.
+
+## Independent specification and security review
+
+Reviewed the integrated implementation against `specifications/mid-turn-steering.md`,
+separately from the earlier implementation agents. No product change was needed.
+
+- Command selection follows normalization, authorization, encryption/relation
+  validation and original-body byte limits. Explicit/default provenance is typed
+  and retained through startup/setup/reset and fallback conversion.
+- The coordinator shares waiting capacity, serializes steering, preserves prompt
+  FIFO and reset barriers, and excludes steering from prompt permits/collectors
+  and timeout resets. Outstanding decisions and durable callbacks participate
+  in idle/shutdown handling.
+- The adapter requires boolean advertised capability and sends exact idle opt-in
+  parameters. Malformed/detached results and ambiguous transport/timeouts fail
+  closed without input redelivery. Healthy method errors remain visible;
+  method-not-found disables the connection's steering capability.
+- Durable injection completion is independent of the original prompt. Initialized
+  catch-up retains existing age/count/ledger rules; no blanket suppression was
+  introduced. Fake-agent and actual-SDK regressions cover recovery/setup races.
+- The crypto remediation tolerates only ENOENT for the exact root snapshot
+  staging file. Existing staging/committed entries retain ownership, permission,
+  symlink and type validation. SAS helper completion requires true verification;
+  stale requests do not establish trust. Production encryption remains required.
+
+Negative unsupported-agent, malformed-result, authorization/size/unknown-thread,
+ambiguous-timeout, forced-shutdown and concurrent-thread cases are deterministic
+regression coverage, rather than newly induced failures on the live server.
+The four live modes exercise sequential independent thread identities, not a
+claim that PR115 supports multiple simultaneously active Pi subprocesses.
+Acceptance is the wire acknowledgement and durable/routing behavior, not model
+obedience or exactly-once/consumption guarantees. The deleted historical msg3
+traces still do not prove its original exact ACP cause.
