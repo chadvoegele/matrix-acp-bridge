@@ -3,15 +3,17 @@
 Latest status: the additional restart-after-reset probe exposed a completed-ID
 compaction defect. A bounded product fix and regressions now pass all 470 tests.
 The post-fix controls passed, including the previously failing quiet restart
-after reset. All four primary modes are being repeated on the fixed build before
-final acceptance; earlier results below remain historical evidence.
+after reset. Model limits interrupted the four primary-mode repeats on the fixed
+build before final acceptance; earlier results below remain historical evidence.
+The committed work is integrated into PR #22. No tests were rerun during that
+integration at the user's request.
 
 Assigned agent/branch: `aa-steering-final-integrated-live-20261002t015526-2bc5c0`.
 Integrated implementation base: `2018351ad2f3d9468cabcb634470a217dbd03e50`.
 
-Verification is in progress. Earlier isolated passes are historical evidence,
-not acceptance of this integrated build. This checkpoint preserves the planned
-evidence location before long live runs.
+Verification is incomplete after interruption. Earlier isolated passes are
+historical evidence, not full post-fix acceptance. The retained evidence and
+checkpoints below record the runs actually completed.
 
 Private evidence: `/home/chad/.cache/matrix-steering-verification/final-integrated-20261002T0200`.
 Directories are 0700 and files 0600. The controller holds the exclusive
@@ -196,4 +198,6 @@ Bridge `dist/bridge-state.js` SHA256:
 The unchanged main entry hash alone cannot identify the ledger fix; the complete
 build manifest is retained privately. No other source or upstream main was used.
 
-Four post-fix primary mode runs are in progress under the same exclusive lock.
+Four post-fix primary mode repeats were interrupted by model limits. No full
+post-fix four-mode pass is claimed. The final WAAP ticket remains incomplete;
+no tests were restarted when integrating these commits.
