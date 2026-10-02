@@ -1,7 +1,7 @@
 +++
 name = "Steering fix live startup history replay errors"
 creation_date = 2026-10-02T00:17:01Z
-status = "pending"
+status = "completed"
 +++
 
 # Fix live startup/history replay and associated agent errors
