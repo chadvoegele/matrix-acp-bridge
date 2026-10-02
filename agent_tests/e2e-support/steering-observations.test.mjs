@@ -28,3 +28,11 @@ test("health guard catches historical msg3 thread failure outside reply snapshot
   assert.throws(() => assertSteeringHealthy([], events, "bridge"));
   assertSteeringHealthy([], [{ ...events[0], sender: "other" }], "bridge");
 });
+
+test("startup guard rejects session activity even without a captured request", () => {
+  assert.throws(() =>
+    assertSteeringBaseline([
+      { direction: "in", frame: { method: "session/update", params: { update: { sessionUpdate: "tool_call" } } } },
+    ]),
+  );
+});

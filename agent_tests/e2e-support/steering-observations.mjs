@@ -10,6 +10,11 @@ export function assertSteeringBaseline(frames) {
     0,
     "startup created or recovered ACP work; use a clean baseline before live scenarios",
   );
+  assert.equal(
+    frames.filter(({ direction, frame }) => direction === "in" && frame.method === "session/update").length,
+    0,
+    "startup emitted unexpected ACP session activity",
+  );
 }
 
 export function assertSteeringHealthy(frames, events, bridgeUserId) {

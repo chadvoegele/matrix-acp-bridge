@@ -38,6 +38,18 @@ const sender = createMatrixClientAdapter(
   },
   await readToken(environment.sender.tokenFile),
 );
+const statePath = resolve(environment.bridge.stateDir, "bridge-state.json");
+
+async function snapshot() {
+  try {
+    return JSON.parse(await readFile(statePath, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+const stateBefore = await snapshot();
 const frames = [];
 const events = [];
 const sent = [];
@@ -331,7 +343,10 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  await writePrivateFile(evidencePath, `${JSON.stringify({ phase, frames, sent, events }, null, 2)}\n`);
+  await writePrivateFile(
+    evidencePath,
+    `${JSON.stringify({ phase, frames, sent, events, stateBefore, stateAfter: await snapshot() }, null, 2)}\n`,
+  );
   phase = "shutdown";
   if (pair) await stopBridgePair(pair);
   console.log(JSON.stringify({ cleanup: "bridge and ACP stopped" }));
@@ -340,7 +355,7 @@ try {
   console.log(JSON.stringify({ cleanup: "sender stopped" }));
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, stateBefore, stateAfter: await snapshot(), bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
   );
 }
 
