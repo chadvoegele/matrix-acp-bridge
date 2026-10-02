@@ -177,3 +177,37 @@ No bridge steering defect was found in the passing room and thread scenarios. Th
 runner and documentation make this evidence reproducible; they do not mark the
 WAAP ticket complete. Coordinator review, integration, and remaining blocked
 live coverage are still required.
+
+## Startup/history follow-up, 2026-10-02
+
+The resumed [startup remediation](startup-remediation-report.md) supersedes the
+fresh-state-only baseline prerequisite above. Reused devices can deliver an older
+initial snapshot followed by pre-existing inputs in incremental sync. A truly
+isolated mode now requires new temporary devices and fresh state; the runner
+records and checks that device baseline before live operations. Intentional
+initialized catch-up remains covered separately and is not suppressed.
+
+The full isolated thread suite passed against bridge
+`d86ae487a5706c897572ad86ca6e669d1e8430fb`: nine inputs, six prompts, three
+injections, two sessions, 16 replies, zero RPC errors and zero Matrix failure
+markers. The final isolated room suite passed against bridge
+`91ebdb32cb863dc18f6f558ae326984946dcec90`: eight inputs, five prompts, three
+injections, one session, 14 replies, zero RPC errors and zero Matrix failure
+markers. Both used exact upstream PR115
+`d7f9cb2428c992c62aa759919c799c5619a9b10b`. Notice counts now correctly include
+only explicit idle steering: one in room mode and two in thread mode. Default
+steering remains silent when idle. These supersede the earlier extra-notice
+expectations, not the historical observations recorded above.
+
+Fresh room/thread suppression, initialized room-to-thread catch-up exactly once,
+and a quiet completed-input restart also passed controlled live probes. A
+positive replay reproducer using absent state on reused devices is retained as a
+failed run. New private evidence lives outside disposable worktrees. All resumed
+controllers completed owned-resource cleanup, and a locked scope-specific session
+inspection found no remaining listed sessions. A further adapter-registry check
+found four owned orphan entries from unanswered startup requests and deleted them
+through ACP; their recovery metadata remains private. Both scoped inventories
+are now empty. Full check passed 459 tests. See the
+remediation report for exact revisions, timing limitations, original msg3
+uncertainty, retained evidence and coordinator handoff. This worker adds no
+independent encrypted live result.
