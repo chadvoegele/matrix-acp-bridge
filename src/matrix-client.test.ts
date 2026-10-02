@@ -2590,3 +2590,63 @@ void test("thread edit envelopes fit exactly at the byte boundary with maximum-l
   assert.equal(Buffer.byteLength(JSON.stringify(fake.sent[0]?.content)), limit);
   assert.equal(matrixHtmlContentBytes({ ...message, body: `${message.body}x` }, targetEventId), limit + 2);
 });
+
+void test("real SDK older initial snapshot preserves completion for subsequent incremental replay", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-sdk-completed-replay-"));
+  const identity = { homeserver: CONFIG.homeserver, userId: CONFIG.userId, deviceId: CONFIG.deviceId };
+  const store = await openBridgeStateStore({ stateDir, identity });
+  await store.establishInitialBaseline([
+    { roomId: ROOM_ID, eventIds: ["$older:example.org", "$completed:example.org"] },
+  ]);
+  const received: InboundMatrixEvent[] = [];
+  const config = { ...CONFIG_WITH_INITIAL_LIMIT, stateDir };
+  const coordinator = new MatrixSyncCoordinator({
+    config,
+    stateStore: store,
+    clock: systemClock,
+    onFatal: () => assert.fail("unexpected replay failure"),
+    bridge: {
+      openIntake() {},
+      enableDispatch() {},
+      async handleTimelineEvent(event, terminal) {
+        received.push(event);
+        await terminal?.();
+      },
+    },
+  });
+  let release!: () => void;
+  const initialHandled = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const harness = createRealSdkHttpHarness({
+    initialEventId: "$older:example.org",
+    incrementalEventId: "$completed:example.org",
+    beforeIncremental: () => initialHandled,
+  });
+  try {
+    await withFetch(harness.fetch, async () => {
+      const adapter = createMatrixClientAdapter(config, "runtime-test-token");
+      adapter.onSyncBatch(async (batch) => {
+        await coordinator.handleBatch(batch);
+        if (batch.phase === "initial") release();
+      });
+      try {
+        await adapter.whoAmI();
+        await adapter.start();
+        const deadline = Date.now() + 5000;
+        while (harness.syncRequests.length < 3 && Date.now() < deadline)
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        assert.ok(harness.syncRequests.length >= 3);
+        await coordinator.flush();
+        assert.deepEqual(received, []);
+        assert.equal(store.isEventCompleted(ROOM_ID, "$completed:example.org"), true);
+      } finally {
+        release();
+        await adapter.stop();
+        await coordinator.flush();
+      }
+    });
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
