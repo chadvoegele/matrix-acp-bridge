@@ -24,6 +24,11 @@ export type MatrixResponseKind =
   | "reset"
   | "unknown_thread"
   | "thread_reset_guidance"
+  | "prompt_usage"
+  | "steer_usage"
+  | "steering_idle"
+  | "steering_unavailable"
+  | "steering_failed"
   | "timeout"
   | "max_tokens"
   | "max_turn_requests"
@@ -54,6 +59,11 @@ export const RESPONSE_TEXT = {
   reset: "Agent session reset.",
   unknown_thread: "Unknown thread agent session. Please start a new thread.",
   thread_reset_guidance: "Use /reset inside a thread to reset its agent session.",
+  prompt_usage: "Usage: /prompt <message>",
+  steer_usage: "Usage: /steer <message>",
+  steering_idle: "No running turn; message queued as a prompt.",
+  steering_unavailable: "Steering unavailable; message queued as a prompt.",
+  steering_failed: "Steering failed; message was not resubmitted.",
   timeout: "[agent timed out]",
   max_tokens: "[agent reached its token limit]",
   max_turn_requests: "[agent reached its turn-request limit]",
@@ -425,7 +435,12 @@ function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: numb
     responseKind === "oversized" ||
     responseKind === "reset" ||
     responseKind === "unknown_thread" ||
-    responseKind === "thread_reset_guidance"
+    responseKind === "thread_reset_guidance" ||
+    responseKind === "prompt_usage" ||
+    responseKind === "steer_usage" ||
+    responseKind === "steering_idle" ||
+    responseKind === "steering_unavailable" ||
+    responseKind === "steering_failed"
   ) {
     return { responseKind, text: RESPONSE_TEXT[responseKind] };
   }

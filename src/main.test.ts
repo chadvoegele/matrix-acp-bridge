@@ -50,6 +50,7 @@ const CONFIG: BridgeConfig = {
     allowedSenders: ["@alice:example.org"],
     encryption: "disabled",
     responseMode: "room",
+    defaultMessageDelivery: "prompt",
   },
   acp: { cwd: "/private/workspace" },
   limits: {
@@ -544,6 +545,32 @@ void test("daemon composition subscribes to sync batches", async () => {
 
   lifecycle.receiveSignal("SIGTERM");
   assert.equal(await run, 0);
+});
+
+void test("daemon forwards advertised steering capability to bridge construction", async () => {
+  for (const support of [true, false, undefined]) {
+    const acp = new FakeAcp([]);
+    const initialize = acp.initialize.bind(acp);
+    acp.initialize = async (options) => ({
+      ...(await initialize(options)),
+      ...(support === undefined ? {} : { agentCapabilities: { steering: support } }),
+    });
+    let advertised: boolean | undefined;
+    const rig = makeRig({
+      acp,
+      dependencies: {
+        createBridge: (context) => {
+          advertised = context.steering;
+          return rig.bridge;
+        },
+      },
+    });
+    const run = rig.lifecycle.run();
+    await waitForReady(rig);
+    assert.equal(advertised, support === true);
+    rig.lifecycle.receiveSignal("SIGTERM");
+    assert.equal(await run, 0);
+  }
 });
 
 void test("required startup restores crypto before ACP and does not open gates until Matrix is prepared", async () => {

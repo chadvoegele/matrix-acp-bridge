@@ -8,6 +8,7 @@ access_token_file = "/var/lib/matrix-acp-bridge/matrix-access-token"
 allowed_rooms = ["!private-room:matrix.example.org"]
 allowed_senders = ["@operator:matrix.example.org"]
 response_mode = "room"    # or "thread"; defaults to room
+default_message_delivery = "prompt" # or "steer"; defaults to prompt
 encryption = "disabled"     # or "required"
 
 [acp]

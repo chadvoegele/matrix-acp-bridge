@@ -24,6 +24,7 @@ const config: BridgeConfig = {
     allowedSenders: [SENDER],
     encryption: "disabled",
     responseMode: "room",
+    defaultMessageDelivery: "prompt",
   },
   acp: { cwd: "/tmp" },
   limits: {
@@ -187,7 +188,7 @@ void test("restart age policy terminally omits stale events and keeps fresh even
       ["$fresh:example.org"],
     );
     assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
-      [ROOM]: ["$stale:example.org", "$fresh:example.org"],
+      [ROOM]: ["$already-done:example.org", "$stale:example.org", "$fresh:example.org"],
     });
     const omission = records.find(({ event: eventName }) => eventName === "initial-sync-events-omitted");
     assert.deepEqual(omission?.fields, {
@@ -243,6 +244,7 @@ void test("restart omits events without a finite origin timestamp", async () => 
     );
     assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
       [ROOM]: [
+        "$old:example.org",
         "$missing-timestamp:example.org",
         "$non-finite-timestamp:example.org",
         "$fresh-with-timestamp:example.org",
@@ -326,6 +328,81 @@ void test("restart initial sync admits unseen events, suppresses completed IDs, 
     assert.deepEqual((await openBridgeStateStore({ stateDir, identity })).getSnapshot().completedEventIds, {
       [ROOM]: ["$done:example.org", "$expired:example.org", "$new:example.org"],
     });
+  });
+});
+
+void test("room to thread restart preserves completed IDs and intentionally recovers unseen history", async () => {
+  await withStore(async (stateDir) => {
+    const identity = {
+      homeserver: config.matrix.homeserver,
+      userId: config.matrix.userId,
+      deviceId: config.matrix.deviceId,
+    };
+    const roomReceived: InboundMatrixEvent[] = [];
+    const room = makeCoordinator(await openBridgeStateStore({ stateDir, identity }), roomReceived).coordinator;
+    await room.handleBatch(batch("initial", [event("$baseline", "history", false)]));
+    await room.handleBatch(batch("incremental", [event("$completed", "live room input")]));
+    await room.flush();
+
+    const threadReceived: InboundMatrixEvent[] = [];
+    const threadStore = await openBridgeStateStore({ stateDir, identity });
+    const thread = makeCoordinator(threadStore, threadReceived, {
+      config: { ...config, matrix: { ...config.matrix, responseMode: "thread", defaultMessageDelivery: "steer" } },
+    }).coordinator;
+    await thread.handleBatch(
+      batch("initial", [
+        event("$baseline", "history", false),
+        event("$completed", "live room input", false),
+        event("$unseen", "missed input", false),
+      ]),
+    );
+    await thread.flush();
+    assert.deepEqual(
+      roomReceived.map(({ eventId }) => eventId),
+      ["$completed"],
+    );
+    assert.deepEqual(
+      threadReceived.map(({ eventId }) => eventId),
+      ["$unseen"],
+    );
+    assert.equal(threadReceived[0]?.isCatchUp, true);
+    assert.equal(threadReceived[0]?.isLive, true);
+    assert.equal(threadStore.isEventCompleted(ROOM, "$completed"), true);
+    assert.equal(threadStore.isEventCompleted(ROOM, "$unseen"), true);
+  });
+});
+
+void test("isolated fresh thread state suppresses history even when first-response events are marked live", async () => {
+  await withStore(async (stateDir) => {
+    const identity = {
+      homeserver: config.matrix.homeserver,
+      userId: config.matrix.userId,
+      deviceId: config.matrix.deviceId,
+    };
+    const stateStore = await openBridgeStateStore({ stateDir, identity });
+    const received: InboundMatrixEvent[] = [];
+    const { coordinator } = makeCoordinator(stateStore, received, {
+      config: { ...config, matrix: { ...config.matrix, responseMode: "thread", defaultMessageDelivery: "steer" } },
+    });
+    assert.equal(stateStore.getSnapshot().initialized, false);
+    await coordinator.handleBatch(
+      batch("initial", [event("$history", "old input", false), event("$prepared-race", "first response", true)]),
+    );
+    await coordinator.flush();
+    assert.equal(received.length, 0);
+    const persisted = await openBridgeStateStore({ stateDir, identity });
+    assert.equal(persisted.getSnapshot().initialized, true);
+    assert.equal(persisted.isEventCompleted(ROOM, "$history"), true);
+    assert.equal(persisted.isEventCompleted(ROOM, "$prepared-race"), true);
+    await coordinator.handleBatch(
+      batch("incremental", [event("$prepared-race"), event("$new-thread-input", "new input")]),
+    );
+    await coordinator.flush();
+    assert.deepEqual(
+      received.map(({ eventId }) => eventId),
+      ["$new-thread-input"],
+    );
+    assert.notEqual(received[0]?.isCatchUp, true);
   });
 });
 
@@ -416,7 +493,7 @@ void test("terminal encrypted IDs survive fresh and initialized recovery without
     });
     const state = await openBridgeStateStore({ stateDir, identity });
     assert.deepEqual(state.getSnapshot().completedEventIds, {
-      [ROOM]: [secondTerminalId],
+      [ROOM]: [terminalId, secondTerminalId],
     });
     const raw = await readFile(state.statePath, "utf8");
     assert.equal(raw.includes("ciphertext"), false);
@@ -506,6 +583,41 @@ void test("thread sync routing preserves authorization, completed IDs and per-ro
     assert.deepEqual(
       received.map(({ eventId }) => eventId),
       ["$kept-two", "$kept-three", "$live-four"],
+    );
+  });
+});
+
+void test("an older restart snapshot cannot erase completed prompt and injection IDs before incremental replay", async () => {
+  await withStore(async (stateDir) => {
+    const identity = {
+      homeserver: config.matrix.homeserver,
+      userId: config.matrix.userId,
+      deviceId: config.matrix.deviceId,
+    };
+    let store = await openBridgeStateStore({ stateDir, identity });
+    await store.establishInitialBaseline([{ roomId: ROOM, eventIds: ["$old-snapshot"] }]);
+    await store.markEventCompleted(ROOM, "$completed-prompt");
+    await store.markEventCompleted(ROOM, "$completed-injection");
+    store = await openBridgeStateStore({ stateDir, identity });
+    const received: InboundMatrixEvent[] = [];
+    const { coordinator } = makeCoordinator(store, received, {
+      config: { ...config, matrix: { ...config.matrix, defaultMessageDelivery: "steer" } },
+    });
+    await coordinator.handleBatch(batch("initial", [event("$old-snapshot", "old history", false)]));
+    await coordinator.flush();
+    assert.equal(store.isEventCompleted(ROOM, "$completed-prompt"), true);
+    assert.equal(store.isEventCompleted(ROOM, "$completed-injection"), true);
+    await coordinator.handleBatch(
+      batch("incremental", [event("$completed-prompt"), event("$completed-injection"), event("$actually-unseen")]),
+    );
+    await coordinator.flush();
+    assert.deepEqual(
+      received.map((input) => input.eventId),
+      ["$actually-unseen"],
+    );
+    assert.equal(
+      (await openBridgeStateStore({ stateDir, identity })).isEventCompleted(ROOM, "$completed-injection"),
+      true,
     );
   });
 });

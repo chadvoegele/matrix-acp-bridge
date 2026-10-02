@@ -19,6 +19,8 @@ flowchart LR
 4. catch-up across bridge restarts
 5. SAS verification
 6. encrypted messages
+7. independent conversations in Matrix threads
+8. mid-turn steering for agents that advertise support
 
 ## Installation and verification
 
@@ -72,6 +74,7 @@ access_token_file = "/var/lib/matrix-acp-bridge/matrix-access-token"
 allowed_rooms = ["!private-room:matrix.example.org"]
 allowed_senders = ["@operator:matrix.example.org"]
 response_mode = "room"    # or "thread"; defaults to room
+default_message_delivery = "prompt" # or "steer"; defaults to prompt
 encryption = "disabled"   # or "required"
 
 [acp]
@@ -87,6 +90,7 @@ max_concurrent_prompts = 4
 max_turn_seconds = 1800
 shutdown_grace_seconds = 30
 startup_timeout_seconds = 60
+initial_sync_timeline_limit = 100
 max_catchup_age_seconds = 900
 max_catchup_events_per_room = 4
 ```

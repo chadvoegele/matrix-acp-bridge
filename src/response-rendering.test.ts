@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { matrixHtmlContentBytes } from "./matrix-message-content.js";
+import { matrixHtmlContent, matrixHtmlContentBytes } from "./matrix-message-content.js";
 import { renderMatrixText } from "./matrix-text-rendering.js";
 
 import {
@@ -23,6 +23,37 @@ const LIMITS = {
   maxMatrixMessageBytes: 128,
 };
 
+void test("steering notices budget full threaded content and retain event identity across split retries", () => {
+  const routing = {
+    threadRootEventId: `$${"r".repeat(100)}:example.org`,
+    threadInReplyToEventId: `$${"e".repeat(100)}:example.org`,
+  };
+  const maxMatrixMessageBytes = matrixHtmlContentBytes({ ...renderMatrixText(""), ...routing }) + 75;
+  for (const kind of ["steering_idle", "steering_unavailable", "steering_failed"] as const) {
+    const request = {
+      roomId: ROOM_ID,
+      inboundEventId: EVENT_ID,
+      ...routing,
+      outcome: { kind },
+      maxOutputBytes: 256,
+      maxMatrixMessageBytes,
+    };
+    const parts = renderMatrixResponse(request);
+    assert.ok(parts.length > 1);
+    assert.deepEqual(renderMatrixResponse(request), parts);
+    const bodies = [];
+    for (const part of parts) {
+      const content = matrixHtmlContent({ body: part.content.body, formattedBody: part.formattedBody!, ...routing });
+      assert.ok(Buffer.byteLength(JSON.stringify(content), "utf8") <= maxMatrixMessageBytes);
+      assert.equal(part.threadRootEventId, routing.threadRootEventId);
+      assert.equal(part.threadInReplyToEventId, routing.threadInReplyToEventId);
+      assert.equal(part.inboundEventId, EVENT_ID);
+      bodies.push(part.content.body.replace(/^\[\d+\/\d+\]\n/u, ""));
+    }
+    assert.equal(bodies.join(""), RESPONSE_TEXT[kind]);
+  }
+});
+
 function render(outcome: RenderableResponse, limits: typeof LIMITS = LIMITS): RenderedMatrixPart[] {
   return renderMatrixResponse({
     roomId: ROOM_ID,
@@ -40,6 +71,11 @@ void test("renders every response kind with exact fallback and status text", () 
     [{ kind: "reset" }, "reset", RESPONSE_TEXT.reset],
     [{ kind: "unknown_thread" }, "unknown_thread", RESPONSE_TEXT.unknown_thread],
     [{ kind: "thread_reset_guidance" }, "thread_reset_guidance", RESPONSE_TEXT.thread_reset_guidance],
+    [{ kind: "prompt_usage" }, "prompt_usage", "Usage: /prompt <message>"],
+    [{ kind: "steer_usage" }, "steer_usage", "Usage: /steer <message>"],
+    [{ kind: "steering_idle" }, "steering_idle", "No running turn; message queued as a prompt."],
+    [{ kind: "steering_unavailable" }, "steering_unavailable", "Steering unavailable; message queued as a prompt."],
+    [{ kind: "steering_failed" }, "steering_failed", "Steering failed; message was not resubmitted."],
     [{ kind: "timeout" }, "timeout", RESPONSE_TEXT.timeout],
     [{ kind: "max_tokens" }, "max_tokens", RESPONSE_TEXT.max_tokens],
     [{ kind: "max_turn_requests" }, "max_turn_requests", RESPONSE_TEXT.max_turn_requests],

@@ -15,6 +15,8 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import { createCancellationController } from "./cancellation.js";
+import { systemClock } from "./clock.js";
+import type { Clock } from "./clock.js";
 import { isAcpUpdateNotification, normalizeAcpUpdateNotification } from "./acp-activity-update.js";
 import type { AcpSessionId, AcpUpdate, AcpUpdateListener } from "./acp-activity-update.js";
 import { createStderrDiagnosticSink } from "./diagnostics.js";
@@ -42,7 +44,7 @@ export type {
 export type AcpStopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled" | "unknown";
 
 export type AcpMethodErrorKind =
-  "session_new" | "session_load" | "session_prompt" | "session_cancel" | "permission" | "other";
+  "session_new" | "session_load" | "session_prompt" | "session_steering" | "session_cancel" | "permission" | "other";
 
 /** A method error is safe to surface to the coordinator, not to the user. */
 export interface AcpMethodError {
@@ -53,13 +55,15 @@ export interface AcpMethodError {
 
 export interface AcpTransportError {
   readonly kind: "transport_error";
-  readonly operation: "initialize" | "session_new" | "session_load" | "session_prompt" | "session_cancel" | "close";
+  readonly operation:
+    "initialize" | "session_new" | "session_load" | "session_prompt" | "session_steering" | "session_cancel" | "close";
   readonly fatal: true;
 }
 
 export interface AcpProtocolError {
   readonly kind: "protocol_error";
-  readonly operation: "initialize" | "session_new" | "session_load" | "session_prompt" | "session_cancel" | "close";
+  readonly operation:
+    "initialize" | "session_new" | "session_load" | "session_prompt" | "session_steering" | "session_cancel" | "close";
   readonly fatal: true;
 }
 
@@ -69,7 +73,22 @@ export interface AcpTurnOutcome {
   readonly text?: string;
 }
 
-export type AcpOutcome = AcpTurnOutcome | AcpMethodError | AcpTransportError | AcpProtocolError;
+export type AcpFailure = AcpMethodError | AcpTransportError | AcpProtocolError;
+
+export type AcpOutcome = AcpTurnOutcome | AcpFailure;
+
+/** Injection acknowledges acceptance by the agent, not model consumption. */
+export type AcpSteeringResult =
+  | { readonly kind: "steering"; readonly outcome: "injected" }
+  | { readonly kind: "steering"; readonly outcome: "promptRequired"; readonly reason: "noRunningTurn" };
+
+export interface AcpSteeringMethodError extends AcpMethodError {
+  readonly operation: "session_steering";
+  /** The coordinator must disable steering for this connection when true. */
+  readonly methodNotFound: boolean;
+}
+
+export type AcpSteeringOutcome = AcpSteeringResult | AcpSteeringMethodError | AcpTransportError | AcpProtocolError;
 
 export interface AcpInitializeOptions {
   readonly protocolVersion: 1;
@@ -88,6 +107,8 @@ export interface AcpInitializeResult {
 export interface AcpAgentCapabilities {
   /** Whether `session/load` is supported by the initialized agent. */
   readonly loadSession?: boolean;
+  /** Enabled only by initialize metadata `_meta.steering.supported === true`. */
+  readonly steering?: boolean;
 }
 
 export interface AcpSessionOptions {
@@ -141,6 +162,13 @@ export interface AcpClient {
   /** Session loading is a phase, not an update kind or user-visible output. */
   onSessionPhase?(listener: AcpSessionPhaseListener): Unsubscribe;
   prompt(sessionId: AcpSessionId, text: string, cancellation: CancellationSignal): Promise<AcpOutcome>;
+  /**
+   * Optional for older clients/test doubles. Production uses the shared connection
+   * without touching prompt collectors or cancellation. The coordinator supplies
+   * timeoutMs from startup_timeout_seconds and gates/serializes steering dispatch.
+   * Timeout closes the connection: injection is ambiguous and must not be retried.
+   */
+  steer?(sessionId: AcpSessionId, text: string, timeoutMs: number): Promise<AcpSteeringOutcome>;
   cancel(sessionId: AcpSessionId): Promise<void>;
   onUpdate(listener: AcpUpdateListener): Unsubscribe;
   onFatalError(listener: FatalErrorListener): Unsubscribe;
@@ -163,6 +191,7 @@ export interface AcpClientOptions extends AcpTransportOptions {
   readonly cwd: string;
   readonly permissionHandler?: AcpPermissionHandler;
   readonly diagnostics?: DiagnosticSink;
+  readonly clock?: Clock;
 }
 
 type FailureKind = "transport" | "protocol";
@@ -437,7 +466,7 @@ function requestError(value: unknown): value is RequestError {
   return isRecord(value) && typeof value.code === "number" && typeof value.message === "string";
 }
 
-function isNormalizedOutcome(value: unknown): value is AcpOutcome {
+function isNormalizedOutcome(value: unknown): value is AcpFailure {
   if (!isRecord(value) || typeof value.kind !== "string") {
     return false;
   }
@@ -475,6 +504,15 @@ function startupInfo(value: unknown): string | undefined {
   }
   const text = value._meta.piAcp.startupInfo;
   return typeof text === "string" && text.length > 0 ? text : undefined;
+}
+
+function steeringSupported(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isRecord(value._meta) &&
+    isRecord(value._meta.steering) &&
+    value._meta.steering.supported === true
+  );
 }
 
 function isAllowPermissionKind(value: string): value is AcpPermissionOption["kind"] {
@@ -517,6 +555,7 @@ function resolvedOptions(
     ...(output === undefined ? {} : { output }),
     ...(candidate.permissionHandler === undefined ? {} : { permissionHandler: candidate.permissionHandler }),
     ...(candidate.diagnostics === undefined ? {} : { diagnostics: candidate.diagnostics }),
+    ...(candidate.clock === undefined ? {} : { clock: candidate.clock }),
   };
 }
 
@@ -531,6 +570,8 @@ export class InheritedStdioAcpClient implements AcpClient {
   readonly #cwd: string;
 
   readonly #diagnostics: DiagnosticSink;
+
+  readonly #clock: Clock;
 
   readonly #permissionHandler: AcpPermissionHandler;
 
@@ -569,6 +610,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     const resolved = resolvedOptions(options, {});
     this.#cwd = resolved.cwd;
     this.#diagnostics = resolved.diagnostics ?? createStderrDiagnosticSink();
+    this.#clock = resolved.clock ?? systemClock;
     this.#permissionHandler = resolved.permissionHandler ?? DEFAULT_PERMISSION_HANDLER;
 
     const input = toWebReadable(resolved.input ?? processStdin);
@@ -636,10 +678,12 @@ export class InheritedStdioAcpClient implements AcpClient {
         // eslint-disable-next-line @typescript-eslint/only-throw-error
         throw error;
       }
-      const advertisedCapabilities =
-        isRecord(response.agentCapabilities) && typeof response.agentCapabilities.loadSession === "boolean"
+      const advertisedCapabilities: AcpAgentCapabilities = {
+        ...(isRecord(response.agentCapabilities) && typeof response.agentCapabilities.loadSession === "boolean"
           ? { loadSession: response.agentCapabilities.loadSession }
-          : {};
+          : {}),
+        ...(steeringSupported(response) ? { steering: true } : {}),
+      };
       this.#agentCapabilities = advertisedCapabilities;
       this.#initialized = true;
       return { protocolVersion: 1, agentCapabilities: advertisedCapabilities };
@@ -775,6 +819,69 @@ export class InheritedStdioAcpClient implements AcpClient {
         this.#activeTurns.delete(sessionId);
       }
     }
+  }
+
+  async steer(sessionId: AcpSessionId, text: string, timeoutMs: number): Promise<AcpSteeringOutcome> {
+    const unavailable = this.#steeringConnectionFailure();
+    if (unavailable !== undefined) return unavailable;
+    if (!this.#initialized) {
+      this.#reportFatal("protocol", "session_steering");
+      return protocolError("session_steering");
+    }
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_147_483_647) {
+      throw new RangeError("ACP steering timeout must be within the positive Node timer range");
+    }
+
+    // Closing the SDK connection rejects every outstanding request. Never retry
+    // or infer idle state when the steering acknowledgement is lost.
+    const timeout = this.#clock.setTimeout(() => {
+      this.#reportFatal("transport", "session_steering");
+    }, timeoutMs);
+    try {
+      const response = await this.#connection.agent.request("_session/steering", {
+        sessionId,
+        prompt: [{ type: "text", text }],
+        _meta: { steering: { idleBehavior: "promptRequired" } },
+      });
+      const failure = this.#steeringConnectionFailure();
+      if (failure !== undefined) return failure;
+      if (isRecord(response)) {
+        if (response.outcome === "injected") {
+          return { kind: "steering", outcome: "injected" };
+        }
+        if (response.outcome === "promptRequired" && response.reason === "noRunningTurn") {
+          return { kind: "steering", outcome: "promptRequired", reason: "noRunningTurn" };
+        }
+      }
+      this.#reportFatal("protocol", "session_steering");
+      return protocolError("session_steering");
+    } catch (error) {
+      // Only a healthy connection can yield a nonfatal method error. In
+      // particular, a simultaneous fatal wire failure must take precedence.
+      const failure = this.#steeringConnectionFailure();
+      if (failure !== undefined) return failure;
+      if (requestError(error)) {
+        return {
+          kind: "method_error",
+          operation: "session_steering",
+          fatal: false,
+          methodNotFound: error.code === -32_601,
+        };
+      }
+      this.#reportFatal("transport", "session_steering");
+      return transportError("session_steering");
+    } finally {
+      this.#clock.clearTimeout(timeout);
+    }
+  }
+
+  #steeringConnectionFailure(): AcpTransportError | AcpProtocolError | undefined {
+    if (this.#fatalError !== undefined || this.#closing) {
+      return this.#fatalError?.code === "acp_protocol"
+        ? protocolError("session_steering")
+        : transportError("session_steering");
+    }
+    return undefined;
   }
 
   async cancel(sessionId: string): Promise<void> {
@@ -975,7 +1082,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     }
   }
 
-  #classifyFailure(operation: RequestOperation, error: unknown, fatalMethodError: boolean): AcpOutcome {
+  #classifyFailure(operation: RequestOperation, error: unknown, fatalMethodError: boolean): AcpFailure {
     if (isNormalizedOutcome(error)) {
       return error;
     }

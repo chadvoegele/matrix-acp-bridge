@@ -9,6 +9,7 @@ import type { CancellationController, Unsubscribe } from "./cancellation.js";
 import type { Clock, TimerHandle } from "./clock.js";
 import type { DiagnosticFields, DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
 import type { BridgeConfig } from "./config.js";
+import { selectMessageDelivery, type MessageDeliveryProvenance } from "./message-delivery.js";
 import { isRecord, numberProperty, stringProperty } from "./object-validation.js";
 import {
   createInboundAuthorizer,
@@ -77,6 +78,8 @@ export interface BridgeCoordinatorOptions {
   readonly sessionStore?: SessionStore;
   readonly stateStore?: BridgeStateStore;
   readonly loadSession?: boolean;
+  /** Capability from the initialize response when startup initializes ACP. */
+  readonly steering?: boolean;
   readonly clock?: Clock;
   readonly diagnostics?: DiagnosticSink;
   /** Injected for deterministic full-jitter retry tests. */
@@ -100,6 +103,10 @@ export interface BridgeSnapshot {
 
 interface MutableQueueEntry {
   readonly event: NormalizedInboundEvent;
+  readonly sequence: number;
+  readonly payload: string;
+  readonly deliveryProvenance: MessageDeliveryProvenance | undefined;
+  delivery: "prompt" | "steer" | "reset";
   readonly terminalCompletion: BridgeTerminalCompletion | undefined;
   readonly resolve: () => void;
   readonly completion: Promise<void>;
@@ -116,8 +123,19 @@ interface ConversationState {
   readonly identity: ConversationIdentity;
   readonly room: RoomState;
   readonly waiting: MutableQueueEntry[];
+  readonly steering: MutableQueueEntry[];
+  steeringCall: SteeringWork | undefined;
   active: MutableQueueEntry | undefined;
   sessionId: AcpSessionId | undefined;
+}
+
+/** Decision lifetime is separate from its durable callback/output lifetime. */
+interface SteeringWork {
+  readonly entry: MutableQueueEntry;
+  readonly conversation: ConversationState;
+  readonly sessionId: AcpSessionId;
+  readonly interrupt: () => void;
+  readonly interrupted: Promise<undefined>;
 }
 
 interface ActiveRun {
@@ -552,12 +570,26 @@ class PromptSemaphore {
 function makeQueueEntry(
   event: NormalizedInboundEvent,
   terminalCompletion: BridgeTerminalCompletion | undefined,
+  sequence: number,
+  delivery: MutableQueueEntry["delivery"],
+  payload: string,
+  deliveryProvenance: MessageDeliveryProvenance | undefined,
 ): MutableQueueEntry {
   let resolve!: () => void;
   const completion = new Promise<void>((done) => {
     resolve = done;
   });
-  return { event, terminalCompletion, resolve, completion, completed: false };
+  return {
+    event,
+    terminalCompletion,
+    sequence,
+    delivery,
+    payload,
+    deliveryProvenance,
+    resolve,
+    completion,
+    completed: false,
+  };
 }
 
 /**
@@ -601,6 +633,8 @@ export class BridgeCoordinator {
 
   readonly #activeRuns = new Set<ActiveRun>();
 
+  readonly #steeringWork = new Set<SteeringWork>();
+
   readonly #retryWaits = new Set<RetryWait>();
 
   readonly #fatalListeners = new Set<FatalErrorListener>();
@@ -626,6 +660,10 @@ export class BridgeCoordinator {
   #outboundOperations = 0;
 
   #unresolvedPrompts = 0;
+
+  #steeringSupported: boolean;
+
+  #admissionSequence = 0;
 
   #stopPromise: Promise<void> | undefined;
 
@@ -676,6 +714,7 @@ export class BridgeCoordinator {
     this.#sessionStore = options.sessionStore ?? new InMemorySessionStore();
     this.#stateStore = options.stateStore;
     this.#loadSession = options.loadSession === true;
+    this.#steeringSupported = options.steering === true && this.#acp.steer !== undefined;
     this.#authorizer =
       options.authorizer ??
       createInboundAuthorizer({
@@ -724,7 +763,7 @@ export class BridgeCoordinator {
     let activeRooms = 0;
     for (const room of this.#rooms.values()) {
       for (const conversation of room.conversations.values()) {
-        queuedTurns += conversation.waiting.length;
+        queuedTurns += this.#waitingCount(conversation);
       }
       if ([...room.conversations.values()].some((conversation) => conversation.active !== undefined)) {
         activeRooms += 1;
@@ -752,7 +791,7 @@ export class BridgeCoordinator {
 
   getQueueDepth(roomId: MatrixRoomId): number {
     return [...(this.#rooms.get(roomId)?.conversations.values() ?? [])].reduce(
-      (count, conversation) => count + conversation.waiting.length,
+      (count, conversation) => count + this.#waitingCount(conversation),
       0,
     );
   }
@@ -861,6 +900,7 @@ export class BridgeCoordinator {
         if (result.protocolVersion !== 1) {
           throw new Error("unsupported ACP protocol version");
         }
+        this.#steeringSupported = result.agentCapabilities?.steering === true && this.#acp.steer !== undefined;
       } catch (error) {
         this.#triggerFatal({
           code: isFatalAcpOutcome(error) ? "acp_protocol" : "startup",
@@ -980,7 +1020,14 @@ export class BridgeCoordinator {
       return;
     }
     const normalized = admission.event;
-    if (identity.kind === "thread" && normalized.threadRootEventId === undefined && normalized.body === "/reset") {
+    const selection = selectMessageDelivery(normalized.body, this.#config.matrix.defaultMessageDelivery);
+    if (selection.kind === "usage") {
+      if (!(await this.#completeTerminal(terminalCompletion))) return;
+      this.#receipt(event);
+      await this.#deliverDescriptor(roomId, eventId, { kind: `${selection.delivery}_usage` }, routing);
+      return;
+    }
+    if (identity.kind === "thread" && normalized.threadRootEventId === undefined && selection.kind === "reset") {
       if (!(await this.#completeTerminal(terminalCompletion))) return;
       this.#receipt(event);
       await this.#deliverDescriptor(roomId, eventId, { kind: "thread_reset_guidance" });
@@ -993,11 +1040,14 @@ export class BridgeCoordinator {
       identity,
       room,
       waiting: [],
+      steering: [],
+      steeringCall: undefined,
       active: undefined,
       sessionId: undefined,
     };
     const queueLimit = this.#config.limits.maxQueuedTurnsPerConversation;
-    if (conversation.active !== undefined && conversation.waiting.length >= queueLimit) {
+    const reserveActive = conversation.active === undefined && this.#waitingCount(conversation) === 0;
+    if (!reserveActive && this.#waitingCount(conversation) >= queueLimit) {
       if (event.isCatchUp === true) {
         this.#diagnostic("warn", "catch-up-event-omitted", {
           roomId,
@@ -1021,13 +1071,19 @@ export class BridgeCoordinator {
         ...(identity.kind === "thread" ? { threadRootEventId: identity.threadRootEventId } : {}),
       },
       terminalCompletion,
+      this.#admissionSequence++,
+      selection.kind,
+      selection.kind === "reset" ? "" : selection.payload,
+      selection.kind === "reset" ? undefined : selection.provenance,
     );
-    if (conversation.active === undefined) {
+    if (reserveActive) {
       conversation.active = entry;
-      this.#pumpConversation(conversation);
+    } else if (entry.delivery === "steer") {
+      conversation.steering.push(entry);
     } else {
       conversation.waiting.push(entry);
     }
+    this.#pumpConversation(conversation);
     this.#receipt(event);
     await entry.completion;
   }
@@ -1119,14 +1175,27 @@ export class BridgeCoordinator {
     }
     let entry = conversation.active;
     if (entry === undefined) {
-      entry = conversation.waiting.shift();
+      // A prompt may finish before steering replies. Keep that decision bound
+      // to its original session before allowing a replacement prompt/reset.
+      if (conversation.steeringCall !== undefined) return;
+      const prompt = conversation.waiting[0];
+      const steering = conversation.steering[0];
+      entry =
+        steering !== undefined && (prompt === undefined || steering.sequence < prompt.sequence)
+          ? conversation.steering.shift()
+          : conversation.waiting.shift();
       if (entry === undefined) {
         return;
       }
       conversation.active = entry;
     }
-    if (entry === undefined || this.#activeRunsForEntry(entry)) {
+    if (this.#activeRunsForEntry(entry)) {
+      this.#pumpSteering(conversation);
       return;
+    }
+    if (entry.delivery === "steer") {
+      entry.delivery = "prompt";
+      this.#fallbackNotice(conversation, entry, this.#steeringSupported ? "steering_idle" : "steering_unavailable");
     }
     const run: ActiveRun = {
       entry,
@@ -1142,6 +1211,7 @@ export class BridgeCoordinator {
       typingStarted: false,
     };
     this.#activeRuns.add(run);
+    this.#pumpSteering(conversation);
     void this.#executeRun(run).catch(() => {
       // The run is always converted into a response or a fatal state.  This
       // guard protects the event loop if an injected adapter violates its
@@ -1152,6 +1222,162 @@ export class BridgeCoordinator {
       });
       this.#finishRun(run);
     });
+  }
+
+  #waitingCount(conversation: ConversationState): number {
+    return (
+      conversation.waiting.length + conversation.steering.length + (conversation.steeringCall === undefined ? 0 : 1)
+    );
+  }
+
+  #fallbackNotice(
+    conversation: ConversationState,
+    entry: MutableQueueEntry,
+    kind: "steering_idle" | "steering_unavailable",
+  ): void {
+    if (kind === "steering_idle" && entry.deliveryProvenance === "default") return;
+    // Enqueue the notice before pumping its prompt, but never hold the room's
+    // outbound mutex while waiting on an ACP decision or durable callback.
+    void this.#deliverDescriptor(
+      conversation.room.roomId,
+      entry.event.eventId,
+      { kind },
+      routingForEvent(entry.event),
+    ).catch(() => {
+      this.#triggerFatal({ code: "matrix_invariant", message: "Matrix response rendering failed" });
+    });
+  }
+
+  #convertSteering(
+    conversation: ConversationState,
+    entry: MutableQueueEntry,
+    kind: "steering_idle" | "steering_unavailable",
+  ): void {
+    entry.delivery = "prompt";
+    const index = conversation.waiting.findIndex((waiting) => waiting.sequence > entry.sequence);
+    conversation.waiting.splice(index === -1 ? conversation.waiting.length : index, 0, entry);
+    this.#fallbackNotice(conversation, entry, kind);
+  }
+
+  #pumpSteering(conversation: ConversationState): void {
+    if (!this.#dispatchOpen || this.#stopping || this.#fatal !== undefined) return;
+
+    const reset =
+      conversation.active?.delivery === "reset"
+        ? conversation.active
+        : conversation.waiting.find((entry) => entry.delivery === "reset");
+    // Unsupported input and input behind a reset transfer their existing slot
+    // to ordinary FIFO. Ordinary waiting prompts do not form this barrier.
+    for (const entry of conversation.steering.filter(
+      (candidate) => !this.#steeringSupported || (reset !== undefined && candidate.sequence > reset.sequence),
+    )) {
+      conversation.steering.splice(conversation.steering.indexOf(entry), 1);
+      this.#convertSteering(conversation, entry, this.#steeringSupported ? "steering_idle" : "steering_unavailable");
+    }
+    if (conversation.steeringCall !== undefined || !this.#steeringSupported) return;
+    const run = [...this.#activeRuns].find((candidate) => candidate.conversation === conversation);
+    if (run === undefined || !run.promptStarted || run.promptResolved || run.cancelSent || run.sessionId === undefined)
+      return;
+    const entry = conversation.steering.shift();
+    if (entry === undefined) return;
+    let interrupt!: () => void;
+    const interrupted = new Promise<undefined>((resolve) => {
+      interrupt = () => {
+        // eslint-disable-next-line unicorn/no-useless-undefined -- distinguish interruption from a steering result
+        resolve(undefined);
+      };
+    });
+    const work: SteeringWork = { entry, conversation, sessionId: run.sessionId, interrupt, interrupted };
+    conversation.steeringCall = work;
+    this.#steeringWork.add(work);
+    void this.#executeSteering(work);
+  }
+
+  async #executeSteering(work: SteeringWork): Promise<void> {
+    const { entry, conversation } = work;
+    let converted = false;
+    try {
+      let outcome: unknown;
+      try {
+        outcome = await Promise.race([
+          this.#acp.steer!(
+            work.sessionId,
+            entry.payload,
+            secondsToMilliseconds(this.#config.limits.startupTimeoutSeconds),
+          ),
+          work.interrupted,
+        ]);
+      } catch (error) {
+        outcome = error;
+      }
+      if (conversation.steeringCall !== work) return;
+      if (isFatalAcpOutcome(outcome)) {
+        this.#triggerFatal({
+          code: sessionFailureCode(outcome),
+          message: "ACP steering failed",
+        });
+        return;
+      }
+      const methodError =
+        isRecord(outcome) &&
+        outcome.kind === "method_error" &&
+        outcome.operation === "session_steering" &&
+        outcome.fatal === false &&
+        typeof outcome.methodNotFound === "boolean";
+      const injected = isRecord(outcome) && outcome.kind === "steering" && outcome.outcome === "injected";
+      const promptRequired =
+        isRecord(outcome) &&
+        outcome.kind === "steering" &&
+        outcome.outcome === "promptRequired" &&
+        outcome.reason === "noRunningTurn";
+      if (!methodError && !injected && !promptRequired) {
+        this.#triggerFatal({ code: "acp_protocol", message: "Invalid ACP steering response" });
+        return;
+      }
+
+      if (methodError && isRecord(outcome) && outcome.methodNotFound === true) {
+        this.#steeringSupported = false;
+      }
+      // Release decision/capacity synchronously. Durable completion can be slow
+      // and must not block either the original turn or the next steering RPC.
+      conversation.steeringCall = undefined;
+      if (promptRequired) {
+        converted = true;
+        if (this.#stopping || this.#fatal !== undefined) {
+          entry.completed = true;
+          entry.resolve();
+        } else {
+          this.#convertSteering(conversation, entry, "steering_idle");
+        }
+      }
+      this.#pumpConversation(conversation);
+      if (methodError && !this.#steeringSupported) {
+        // Method-not-found disables this connection, including other rooms.
+        for (const room of this.#rooms.values()) {
+          for (const other of room.conversations.values()) this.#pumpConversation(other);
+        }
+      }
+      if (!promptRequired && (await this.#completeTerminal(entry.terminalCompletion)) && methodError) {
+        await this.#deliverDescriptor(
+          conversation.room.roomId,
+          entry.event.eventId,
+          { kind: "steering_failed" },
+          routingForEvent(entry.event),
+        );
+      }
+    } catch {
+      this.#triggerFatal({ code: "acp_transport", message: "ACP steering failed" });
+    } finally {
+      if (conversation.steeringCall === work) conversation.steeringCall = undefined;
+      this.#steeringWork.delete(work);
+      if (!converted && !entry.completed) {
+        entry.completed = true;
+        entry.resolve();
+      }
+      this.#pumpConversation(conversation);
+      this.#resolveIdleWaiters();
+      this.#maybeFinalizeStop();
+    }
   }
 
   #activeRunsForEntry(entry: MutableQueueEntry): boolean {
@@ -1169,7 +1395,7 @@ export class BridgeCoordinator {
         return;
       }
 
-      if (run.entry.event.body === "/reset") {
+      if (run.entry.delivery === "reset") {
         try {
           // Commit the durable deletion before changing the live view.  A
           // failed replacement is fatal, and must not make the coordinator
@@ -1268,17 +1494,11 @@ export class BridgeCoordinator {
       run.sessionId = session.sessionId;
       run.controller = controller;
       run.turn = turn;
-      run.promptStarted = true;
       this.#turnsBySession.set(session.sessionId, turn);
-      this.#unresolvedPrompts += 1;
 
       this.#startTyping(run);
       const prompt = await this.#awaitPrompt(run, controller, releasePermit);
-      if (!run.promptResolved) {
-        run.promptResolved = true;
-        this.#unresolvedPrompts = Math.max(0, this.#unresolvedPrompts - 1);
-      }
-      if (prompt.graceExpired || this.#fatal !== undefined) {
+      if (prompt.graceExpired || this.#stopping || this.#fatal !== undefined) {
         return;
       }
       const rawOutcome = prompt.outcome;
@@ -1575,7 +1795,7 @@ export class BridgeCoordinator {
   }
 
   #startTyping(run: ActiveRun): void {
-    if (run.entry.event.body === "/reset" || this.#matrix.sendTyping === undefined) {
+    if (run.entry.delivery === "reset" || this.#matrix.sendTyping === undefined) {
       return;
     }
     run.typingStarted = true;
@@ -1681,11 +1901,24 @@ export class BridgeCoordinator {
         this.#clock.clearTimeout(graceTimer);
       }
       releasePermit();
+      if (run.promptStarted && !run.promptResolved) {
+        this.#unresolvedPrompts = Math.max(0, this.#unresolvedPrompts - 1);
+      }
+      run.promptResolved = true;
       resolveResult(result);
     };
 
     const rawPrompt = Promise.resolve()
-      .then(() => this.#acp.prompt(run.sessionId!, run.entry.event.body, controller.signal))
+      .then(() => {
+        if (this.#stopping || this.#fatal !== undefined) {
+          return { kind: "turn", stopReason: "cancelled" } as const;
+        }
+        run.promptStarted = true;
+        this.#unresolvedPrompts += 1;
+        const prompt = this.#acp.prompt(run.sessionId!, run.entry.payload, controller.signal);
+        this.#pumpSteering(run.conversation);
+        return prompt;
+      })
       .then(
         (outcome) => {
           settle({ outcome, timedOut, graceExpired: false });
@@ -2112,6 +2345,11 @@ export class BridgeCoordinator {
         let attempt = 0;
         for (const part of parts) {
           while (true) {
+            // The room mutex or an earlier multipart send may have waited
+            // across shutdown. Recheck before starting each SDK request.
+            if (this.#stopped || ((this.#stopping || this.#fatal !== undefined) && options.allowDuringStop !== true)) {
+              return false;
+            }
             let sent = false;
             try {
               await this.#matrix.sendMessage(part);
@@ -2216,7 +2454,7 @@ export class BridgeCoordinator {
             entry.resolve();
           }
         }
-        for (const entry of conversation.waiting.splice(0)) {
+        for (const entry of [...conversation.waiting.splice(0), ...conversation.steering.splice(0)]) {
           if (!entry.completed) {
             entry.completed = true;
             entry.resolve();
@@ -2228,12 +2466,12 @@ export class BridgeCoordinator {
   }
 
   #isIdle(): boolean {
-    if (this.#activeRuns.size > 0 || this.#outboundOperations > 0) {
+    if (this.#activeRuns.size > 0 || this.#steeringWork.size > 0 || this.#outboundOperations > 0) {
       return false;
     }
     for (const room of this.#rooms.values()) {
       for (const conversation of room.conversations.values()) {
-        if (conversation.active !== undefined || conversation.waiting.length > 0) {
+        if (conversation.active !== undefined || this.#waitingCount(conversation) > 0) {
           return false;
         }
       }
@@ -2282,7 +2520,7 @@ export class BridgeCoordinator {
     if (!this.#stopping || this.#stopFinalizeStarted) {
       return;
     }
-    if (this.#activeRuns.size > 0 || this.#outboundOperations > 0) {
+    if (this.#activeRuns.size > 0 || this.#steeringWork.size > 0 || this.#outboundOperations > 0) {
       return;
     }
     this.#finalizeStop(false);
@@ -2293,6 +2531,14 @@ export class BridgeCoordinator {
       return;
     }
     this.#stopFinalizeStarted = true;
+    if (_forced) {
+      for (const work of this.#steeringWork) {
+        if (work.conversation.steeringCall === work) {
+          work.conversation.steeringCall = undefined;
+          work.interrupt();
+        }
+      }
+    }
     if (this.#stopDeadlineTimer !== undefined) {
       this.#clock.clearTimeout(this.#stopDeadlineTimer);
       this.#stopDeadlineTimer = undefined;
