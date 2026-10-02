@@ -11,6 +11,7 @@ const REASONS = new Set([
   "attempt-failed",
   "verification-failed",
   "unknown",
+  "database-invalid",
 ]);
 
 export class SasBridgeDiagnostics {

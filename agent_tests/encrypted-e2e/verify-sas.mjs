@@ -37,6 +37,7 @@ const safeReasons = new Set([
   "attempt-failed",
   "verification-failed",
   "unknown",
+  "database-invalid",
   "startup",
 ]);
 

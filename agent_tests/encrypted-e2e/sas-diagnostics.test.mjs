@@ -36,3 +36,21 @@ test("classifies startup errors and rejects untrusted diagnostic values", () => 
     "exit=unknown, signal=none, diagnostic=crypto-verification-failed, stdout=seen, stderr=absent",
   );
 });
+
+test("preserves the fixed database-invalid category without private fields", () => {
+  const diagnostics = new SasBridgeDiagnostics();
+  diagnostics.accept(
+    Buffer.from(
+      JSON.stringify({
+        event: "crypto-verification-failed",
+        fields: {
+          reason: "database-invalid",
+          path: "private-state-path",
+          secret: "private-token",
+        },
+      }) + "\n",
+    ),
+  );
+  assert.equal(diagnostics.reason, "database-invalid");
+  assert.doesNotMatch(diagnostics.summary(1, null), /private/u);
+});
