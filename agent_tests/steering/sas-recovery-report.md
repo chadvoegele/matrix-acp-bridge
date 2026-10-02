@@ -45,16 +45,71 @@ completed SAS verification; ignored terminal requests and aliases leave it
 listening. Deterministic regressions cover ignored events followed by valid
 completion and fail-closed rejection. This does not relax target or trust checks.
 
-## Live verification
+## Final isolated-branch verification
 
-Full `npm run check` passed: formatting, lint, typecheck, and 457 tests. The
-new stale-listing regression fails against the old three-retry behavior and
-passes with the fix. Previous-run owned identity checks matched all three
-temporary devices; cleanup deleted two ACP sessions and revoked the devices,
-then removed their active local state. A private copy preserves failure evidence.
+Verified bridge/harness revision:
+`c3166e11ece92e936da9671b527ff4ff572fadd4`.
+Exact pi-acp PR115 revision:
+`d7f9cb2428c992c62aa759919c799c5619a9b10b`.
+The bridge uses pinned `matrix-js-sdk` 42.2.0. Prepared upstream source/build
+was retained outside the deleted launcher; no upstream main substitution was
+used. Build entry-point SHA-256 digests:
 
-Fresh provisioning and normal matching emoji/decimal SAS with interactive yes
-passed under the exclusive process-held live lock. Repeat SAS and encrypted
-steering are pending at this checkpoint. Prior attempt 1 success is historical evidence, not proof
-of this branch or the final integrated feature head. No encrypted pass is claimed
-for the earlier failed run.
+- Bridge `dist/main.js`:
+  `cfba191a984dc9bf2cdededac5adf12dbdbc119e51d17e396fcadf4e0a967112`.
+- pi-acp `dist/index.js`:
+  `edf392fd0b93bd9c17f3ca73d26dd72c43ceb99d4163dfefaa7f22ef2aa75d45`.
+
+Full final `npm run check` passed: formatting, lint, typecheck and all 459 tests.
+The snapshot stale-listing regression failed with the old three-retry behavior
+and passed with the fix. The helper regressions reject success from ignored
+terminal requests or aliases, while preserving rejection as failure.
+
+Fresh temporary-device provisioning and normal SAS passed. After diagnosing and
+fixing stale-request helper shutdown, a new real normal SAS exchange also passed
+on the already-verified pair: both emoji and decimal matched, helper confirmed,
+CLI received interactive `yes`, and both protocol completions succeeded.
+No trust override, signature bypass, plaintext downgrade or model change was used.
+
+Actual encrypted thread steering passed on the revision above. It sent nine
+inputs and observed sixteen bridge replies, six prompts, three successful
+injections and two separate ACP sessions. All **25** checked sent/reply wire
+events were `m.room.encrypted`; authenticated decryption and thread-root routing
+assertions passed. Explicit prompt FIFO, pending-turn injection durability,
+serial steering, idle fallback, independent thread sessions, baseline silence
+and default-selected idle silence passed. Exactly two explicit-steering idle
+notices were observed. The final health audit saw zero ACP errors or Matrix
+failure markers. Success was emitted only after awaited bridge/ACP and sender
+teardown. Historical initial-sync decryption failures for earlier devices are
+preserved privately and do not constitute plaintext fallback or a successful
+assertion on undecrypted content.
+
+## Owned cleanup and evidence
+
+All recovery, provisioning, SAS, encrypted testing and cleanup ran under the
+exclusive process-held `/tmp/matrix-acp-bridge-steering-live.lock`. It has been
+released. No production service or session daemon was restarted.
+
+Previous-run identity checks matched exactly the three owned temporary devices.
+Recovery deleted two owned ACP sessions, revoked all three devices, and removed
+active local state. Its original evidence and a private device-state copy were
+preserved for review. Final cleanup likewise deleted two owned ACP sessions and
+revoked three temporary device tokens. Post-logout identity requests confirmed
+HTTP 401 for all three tokens. Active role state, environment and empty device
+root were removed; no owned live subprocess remained. Cleanup exited zero.
+Only owned temporary resources were touched; room events remain as documented.
+
+Final private evidence:
+`/home/chad/.cache/matrix-steering-verification/sas-recovery-20261002`.
+Directories are mode 0700 and files 0600. Key files are `sas-fresh.log`,
+`sas-final.log`, `sas-lifecycle-private.log`, `sas-repeat-private.log`,
+`encrypted-thread-final.log`, `wire.json`, `owned-recovery.log`,
+`cleanup-final.log`, `check-final.log` and `regression-before-fix.log`.
+Preserved environment, session lists and device-state copies are private,
+including revoked tokens; they are intentionally retained through review.
+
+There is no blocker for this assignment. This report verifies the isolated
+recovery branch, not a later integrated feature head. The coordinator must
+integrate these commits and perform final integrated-head verification. This
+agent did not merge shared branches or main, push, comment on a PR, or complete
+the ticket.
