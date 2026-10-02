@@ -33,3 +33,14 @@ were empty. Encrypted results and additional recovery/reset probes are pending.
 
 Actual Pi model reported by ACP: `openai-codex/gpt-5.6-sol`. This is separate
 from the required developer model and was not substituted for this test.
+
+## Retained provisioning timeout
+
+The initial encrypted-room provisioning process hit the private controller's
+600-second bound before writing its environment and before SAS or steering.
+One issued temporary token was retained. Under a new process-held lock, recovery
+queried that token's identity, revoked only that owned device, confirmed HTTP 401,
+and retained the identity/token metadata privately before removing active state.
+This is a failed setup attempt, not encrypted acceptance or a proven bridge bug.
+Fresh provisioning retries use a longer 1800-second allowance and private
+HTTP status/backoff diagnostics. No trust or encryption setting changed.
