@@ -24,6 +24,17 @@ let sent;
 let summary;
 const statePath = resolve(environment.bridge.stateDir, "bridge-state.json");
 const state = async () => JSON.parse(await readFile(statePath, "utf8"));
+
+async function snapshot() {
+  try {
+    return await state();
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+const stateBefore = await snapshot();
 const requests = (method) => frames.filter(({ direction, frame }) => direction === "out" && frame.method === method);
 const sender = createMatrixClientAdapter(
   {
@@ -107,7 +118,10 @@ try {
   summary = { result: "failed", operation, errorClass: error.name };
   process.exitCode = 1;
 } finally {
-  await writePrivateFile(evidencePath, JSON.stringify({ phase, frames, events, sent, summary }));
+  await writePrivateFile(
+    evidencePath,
+    JSON.stringify({ phase, frames, events, sent, summary, stateBefore, stateAfter: await snapshot() }),
+  );
   phase = "shutdown";
   try {
     if (pair) await stopBridgePair(pair);
@@ -124,6 +138,8 @@ try {
       events,
       sent,
       summary,
+      stateBefore,
+      stateAfter: await snapshot(),
       bridgeDiagnostics: pair?.bridgeDiagnostics(),
       acpDiagnostics: pair?.acpDiagnostics(),
     }),

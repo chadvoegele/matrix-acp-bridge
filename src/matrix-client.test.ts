@@ -695,7 +695,7 @@ void test("real SDK startup and room to thread restart apply the persisted histo
   const phases: string[] = [];
   try {
     // Exercise the actual PREPARED/SYNCING callbacks, adapter, coordinator and
-    // disk ledger together. The same first HTTP history is returned each time.
+    // disk ledger together. A missed input becomes history on the next run.
     for (const [mode, initialized, historyId, directory] of [
       ["room", false, "$baseline:example.org", stateDir],
       ["thread", true, "$offline:example.org", stateDir],
@@ -707,7 +707,7 @@ void test("real SDK startup and room to thread restart apply the persisted histo
       assert.equal(stateStore.getSnapshot().initialized, initialized);
       const config: BridgeConfig = {
         ...CONFIG_WITH_INITIAL_LIMIT,
-        stateDir,
+        stateDir: directory,
         matrix: { ...CONFIG, responseMode: mode, defaultMessageDelivery: "steer" },
       };
       const coordinator = new MatrixSyncCoordinator({
