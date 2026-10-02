@@ -387,6 +387,7 @@ interface RealSdkHttpHarnessOptions {
   readonly encryptedInitial?: boolean;
   readonly initialEventId?: string;
   readonly incrementalEventId?: string;
+  readonly beforeIncremental?: () => Promise<void>;
 }
 
 interface RealSdkHttpHarness {
@@ -452,6 +453,7 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
           error: "temporary Matrix sync failure",
         };
       } else {
+        if (syncResponses === 1) await options.beforeIncremental?.();
         syncResponses += 1;
         body = {
           next_batch: `next-${syncResponses}`,
@@ -786,7 +788,10 @@ void test("real SDK incremental input during an awaited startup baseline is admi
   const initialEntered = new Promise<void>((resolve) => {
     entered = resolve;
   });
-  const harness = createRealSdkHttpHarness({ incrementalEventId: "$during-baseline:example.org" });
+  const harness = createRealSdkHttpHarness({
+    incrementalEventId: "$during-baseline:example.org",
+    beforeIncremental: () => initialEntered,
+  });
   try {
     await withFetch(harness.fetch, async () => {
       const adapter = createMatrixClientAdapter(config, "runtime-test-token");
