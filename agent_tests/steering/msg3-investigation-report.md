@@ -116,3 +116,24 @@ local commit `930c77b`. Parent should integrate only the subsequent investigatio
 commit if it has already integrated the tester's original commit. README section
 removal is preserved, and concurrent idle-notice selector/provenance files are
 untouched. This child does not merge, push, comment on PRs, or complete the ticket.
+
+## Resumed diagnosis, 2026-10-02
+
+The private-directory prerequisite is resolved with authorized external evidence
+storage. See [startup remediation](startup-remediation-report.md) for new failed
+and passing live traces, exact bridge/upstream revisions and completed cleanup.
+Fresh state on reused test devices reproduced unintended historical startup work;
+new devices and isolated state passed full plaintext room/thread suites. The
+scenario runner now rejects different mode/state baselines on a reused device,
+retains private ledger/diagnostic/assertion evidence and audits through awaited
+teardown. Initialized unseen catch-up remains intentional and tested.
+
+The new failed startup retained an upstream unhandled `write EPIPE`; PR115's
+single-live-Pi-subprocess policy is relevant to multi-session startup bursts. The
+exact closed-child sequence is not established for that first retry, and this is
+not proof of the original deleted msg3 cause. That original uncertainty remains.
+No hidden audit errors, blanket suppression, production restart or upstream
+compatibility guarantee was introduced. The passing isolated live suites had zero
+RPC errors and zero Matrix failure markers. This update supersedes the operational
+directory blocker and fresh-state-only retry guidance, while preserving the
+historical failed-attempt record.

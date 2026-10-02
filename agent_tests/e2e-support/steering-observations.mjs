@@ -10,6 +10,11 @@ export function assertSteeringBaseline(frames) {
     0,
     "startup created or recovered ACP work; use a clean baseline before live scenarios",
   );
+  assert.equal(
+    frames.filter(({ direction, frame }) => direction === "in" && frame.method === "session/update").length,
+    0,
+    "startup emitted unexpected ACP session activity",
+  );
 }
 
 export function assertSteeringHealthy(frames, events, bridgeUserId) {
@@ -38,4 +43,14 @@ export function assertSteeringIdleNotices(replies, responseMode) {
     responseMode === "thread" ? 2 : 1,
     "idle notices must correspond only to explicit steering",
   );
+}
+
+export function assertSteeringDeviceBaseline(previous, current) {
+  if (previous === null) return;
+  for (const key of ["version", "homeserver", "userId", "deviceId", "stateDir", "responseMode"]) {
+    assert.ok(
+      previous[key] === current[key],
+      "temporary device already has a different steering baseline; provision new devices for a new mode or state",
+    );
+  }
 }

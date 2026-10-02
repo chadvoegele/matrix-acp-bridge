@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
@@ -11,6 +11,7 @@ import {
   assertSteeringBaseline,
   assertSteeringHealthy,
   assertSteeringIdleNotices,
+  assertSteeringDeviceBaseline,
 } from "../e2e-support/steering-observations.mjs";
 import { cryptoPaths } from "../encrypted-e2e/lib.mjs";
 
@@ -21,6 +22,25 @@ assert.ok(["plaintext", "encrypted"].includes(transport));
 assert.ok(["room", "thread"].includes(responseMode));
 const environment = await readEnvironment(environmentPath);
 const evidencePath = resolve(process.env.STEERING_EVIDENCE_FILE ?? "node_modules/.live-steering/evidence.json");
+// State replacement alone does not reset the homeserver's device sync baseline.
+// Refuse accidental mode/state transitions before any live account operation.
+const deviceBaselinePath = resolve(dirname(environment.bridge.tokenFile), "steering-device-baseline.json");
+const deviceBaseline = {
+  version: 1,
+  homeserver: environment.homeserver,
+  userId: environment.bridge.userId,
+  deviceId: environment.bridge.deviceId,
+  stateDir: resolve(environment.bridge.stateDir),
+  responseMode,
+};
+let previousDeviceBaseline = null;
+try {
+  previousDeviceBaseline = JSON.parse(await readFile(deviceBaselinePath, "utf8"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+assertSteeringDeviceBaseline(previousDeviceBaseline, deviceBaseline);
+await writePrivateFile(deviceBaselinePath, JSON.stringify(deviceBaseline));
 const config = await readFile(environment.bridge.configFile, "utf8");
 await writePrivateFile(
   environment.bridge.configFile,
@@ -42,6 +62,18 @@ const sender = createMatrixClientAdapter(
   },
   await readToken(environment.sender.tokenFile),
 );
+const statePath = resolve(environment.bridge.stateDir, "bridge-state.json");
+
+async function snapshot() {
+  try {
+    return JSON.parse(await readFile(statePath, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+const stateBefore = await snapshot();
 const frames = [];
 const events = [];
 const sent = [];
@@ -49,6 +81,7 @@ const wireEvents = [];
 let failure;
 let pair;
 let successSummary;
+let failure;
 let phase = "startup";
 const pending = new Map();
 const completed = [];
@@ -156,7 +189,13 @@ try {
     for (const room of batch.rooms) if (room.roomId === environment.roomId) events.push(...room.timeline);
   });
   await sender.start();
-  pair = await startBridgePair(environment, { onOutbound: outbound, onInbound: inbound });
+  pair = await startBridgePair(environment, {
+    onOutbound: outbound,
+    onInbound: inbound,
+    onPair: (started) => {
+      pair = started;
+    },
+  });
   const initialized = frames.find(({ direction, frame }) => direction === "in" && frame.result?.agentCapabilities);
   assert.equal(initialized?.frame.result?._meta?.steering?.supported, true);
   await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
@@ -329,8 +368,10 @@ try {
     name: error.name,
     message: error.message,
     code: error.code,
+    stack: error.stack,
     actual: error.actual,
     expected: error.expected,
+    operator: error.operator,
   };
   console.log(
     JSON.stringify({
@@ -347,17 +388,23 @@ try {
 } finally {
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure, stateBefore, stateAfter: await snapshot() }, null, 2)}\n`,
   );
   phase = "shutdown";
-  if (pair) await stopBridgePair(pair);
+  try {
+    if (pair) await stopBridgePair(pair);
+  } catch {
+    successSummary = undefined;
+    process.exitCode = 1;
+    console.log(JSON.stringify({ result: "failed", phase: "shutdown" }));
+  }
   console.log(JSON.stringify({ cleanup: "bridge and ACP stopped" }));
   await sender.stop().catch(() => {});
   await sender.closeCrypto().catch(() => {});
   console.log(JSON.stringify({ cleanup: "sender stopped" }));
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure, bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure, stateBefore, stateAfter: await snapshot(), bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
   );
 }
 

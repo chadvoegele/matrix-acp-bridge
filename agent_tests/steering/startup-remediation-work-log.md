@@ -55,3 +55,37 @@ Then perform causal live reproduction under the exclusive process-held flock,
 with mode-0600 traces and owned-session/device cleanup. The historical replay
 and agent errors remain unresolved; passing offline checks are not a live pass.
 Coordinator reviews and integrates this branch; ticket status remains unchanged.
+
+## Resumed worker handoff, 2026-10-02
+
+Agent/branch `aa-startup-history-live-resume`, base `a5c160d`. Reimplemented
+actual SDK/coordinator/persisted-ledger coverage and added a forced PREPARED /
+incremental response race while initial baseline persistence is awaited. Added a
+controlled startup probe, private before/after snapshots and assertion details,
+startup activity auditing, device/mode/state isolation preflight and unconditional
+awaited ACP teardown after failed bridge exit. Fixed idle-notice assertions to
+preserve silent default steering.
+
+Actually reproduced absent-state startup replay on reused devices; HTTP traces
+show older initial snapshots followed by pre-existing incremental inputs. Full
+thread on new devices passed (six prompts, three injections, two sessions, 16
+replies); final full room on new devices passed (five prompts, three injections,
+one session, 14 replies). Both had zero RPC errors and zero Matrix failure
+markers through teardown. Fresh suppression, initialized mode-transition catch-up
+exactly once and quiet initialized restart passed controlled probes. Original msg3
+cause remains uncertain; a new startup failure retained upstream EPIPE, whose
+specific child-close sequence is not established. Product suppression/catch-up
+policy was not weakened.
+
+All live operations held the shared flock. Eighteen reported sessions deleted,
+eight temporary devices revoked; scoped locked session listing found zero
+remaining Pi sessions. A follow-up locked registry inspection found four owned
+entries from unanswered startup requests; their metadata was retained and they
+were removed through ACP session/delete. Total 22 owned session IDs cleaned,
+zero remaining owned registry entries and listed sessions. Failed/successful
+evidence and recovery metadata are
+external, 0700 directories / 0600 files. All live children awaited. Full check
+passed 459/459 tests plus formatting/lint/typecheck. See the updated remediation
+report for exact SHAs, build digest and evidence locations. No shared AGENTS edit,
+merge, push, public comment, daemon restart or ticket completion. Coordinator
+integration and final combined live verification remain separate.
