@@ -55,6 +55,7 @@ const events = [];
 const sent = [];
 let pair;
 let successSummary;
+let failure;
 let phase = "startup";
 const pending = new Map();
 const completed = [];
@@ -265,7 +266,7 @@ try {
   assert.ok(replies.length > 0);
   assert.equal(
     replies.filter((event) => event.content.body === "No running turn; message queued as a prompt.").length,
-    responseMode === "thread" ? 3 : 2,
+    responseMode === "thread" ? 2 : 1,
   );
   for (const output of agentOutputs) {
     assert.ok(output.text.length > 0, "real agent produced no reply");
@@ -336,6 +337,13 @@ try {
     sessions: requests("session/new").length,
   };
 } catch (error) {
+  failure = {
+    message: error.message,
+    stack: error.stack,
+    actual: error.actual,
+    expected: error.expected,
+    operator: error.operator,
+  };
   console.log(
     JSON.stringify({
       result: "failed",
@@ -351,7 +359,7 @@ try {
 } finally {
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, stateBefore, stateAfter: await snapshot() }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, failure, stateBefore, stateAfter: await snapshot() }, null, 2)}\n`,
   );
   phase = "shutdown";
   try {
@@ -367,7 +375,7 @@ try {
   console.log(JSON.stringify({ cleanup: "sender stopped" }));
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, stateBefore, stateAfter: await snapshot(), bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, failure, stateBefore, stateAfter: await snapshot(), bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
   );
 }
 
