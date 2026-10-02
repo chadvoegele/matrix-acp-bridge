@@ -114,3 +114,28 @@ Encrypted thread will use the strengthened harness. The earlier encrypted-room
 result additionally requires read-only raw pagination of its retained complete
 startup/teardown window before final acceptance. That audit will use a fresh
 active owned token, never the revoked room-suite tokens.
+
+## Four steering scenarios completed
+
+| Mode             | Inputs | Replies | Prompts | Injected RPCs | Sessions | Raw encryption audit                                                |
+| ---------------- | -----: | ------: | ------: | ------------: | -------: | ------------------------------------------------------------------- |
+| Plaintext room   |      8 |      15 |       5 |             3 |        1 | plaintext mode                                                      |
+| Plaintext thread |      9 |      16 |       6 |             3 |        2 | plaintext mode                                                      |
+| Encrypted room   |      8 |      15 |       5 |             3 |        1 | 23 selected events encrypted; complete-window recheck pending       |
+| Encrypted thread |      9 |      16 |       6 |             3 |        2 | all 25 complete-boundary events encrypted; exact observed event set |
+
+Encrypted thread tested HEAD: `f804b5076f85094adef30ccdfc639491738d78e0`.
+Both encrypted modes completed normal matching SAS and interactive `yes`.
+Each mode had zero unexpected baseline session/prompt/steering activity, zero
+ACP errors or Matrix failure markers through awaited teardown, durable injected
+completion while the original prompt was pending, serial msg2/msg3 injection,
+FIFO overrides, and the required explicit/default idle behavior. Native Pi
+response counts were 13/19/13/19 respectively, with zero failures and the same
+actual model `openai-codex/gpt-5.6-sol`. All six primary-suite ACP sessions and
+ten device tokens were cleaned; each token returned HTTP 401 and each scoped
+registry/session-file inventory was empty. The partial-provision device is a
+separate additional revoked token.
+
+Initialized recovery and live reset probes are still running/queued. Earlier
+encrypted-room complete-window pagination and the final full check remain
+acceptance gates. Primary scenario success alone does not finish this assignment.
