@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { openBridgeStateStore } from "./bridge-state.js";
+import { systemClock } from "./clock.js";
+import { MatrixSyncCoordinator } from "./sync-coordinator.js";
 
 import { createClient as createMatrixSdkClient, MemoryStore as MatrixSdkMemoryStore } from "matrix-js-sdk";
 import {
@@ -378,6 +385,7 @@ interface RealSdkHttpHarnessOptions {
   readonly syncFailureStatus?: number;
   readonly syncFailureErrcode?: string;
   readonly encryptedInitial?: boolean;
+  readonly initialEventId?: string;
 }
 
 interface RealSdkHttpHarness {
@@ -466,7 +474,8 @@ function createRealSdkHttpHarness(options: RealSdkHttpHarnessOptions = {}): Real
                     syncResponses === 1
                       ? [
                           {
-                            event_id: "$offline:example.org",
+                            event_id: options.initialEventId ?? "$offline:example.org",
+                            origin_server_ts: 1000,
                             room_id: ROOM_ID,
                             sender: ALICE,
                             type: options.encryptedInitial ? "m.room.encrypted" : "m.room.message",
@@ -677,6 +686,71 @@ void test("real SDK startup uses the SDK next_batch boundary for later requests"
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await adapter.stop();
   });
+});
+
+void test("real SDK startup and room to thread restart apply the persisted history policy", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "matrix-sdk-startup-"));
+  const identity = { homeserver: CONFIG.homeserver, userId: CONFIG.userId, deviceId: CONFIG.deviceId };
+  const received: InboundMatrixEvent[] = [];
+  const phases: string[] = [];
+  try {
+    // Exercise the actual PREPARED/SYNCING callbacks, adapter, coordinator and
+    // disk ledger together. The same first HTTP history is returned each time.
+    for (const [mode, initialized, historyId, directory] of [
+      ["room", false, "$baseline:example.org", stateDir],
+      ["thread", true, "$offline:example.org", stateDir],
+      ["thread", true, "$offline:example.org", stateDir],
+      ["thread", false, "$offline:example.org", join(stateDir, "fresh-thread")],
+    ] as const) {
+      const before = received.length;
+      const stateStore = await openBridgeStateStore({ stateDir: directory, identity });
+      assert.equal(stateStore.getSnapshot().initialized, initialized);
+      const config: BridgeConfig = {
+        ...CONFIG_WITH_INITIAL_LIMIT,
+        stateDir,
+        matrix: { ...CONFIG, responseMode: mode, defaultMessageDelivery: "steer" },
+      };
+      const coordinator = new MatrixSyncCoordinator({
+        config,
+        stateStore,
+        clock: { ...systemClock, now: () => 1000 },
+        onFatal: () => assert.fail("unexpected startup state failure"),
+        bridge: {
+          openIntake() {},
+          enableDispatch() {},
+          async handleTimelineEvent(event, terminal) {
+            received.push(event);
+            await terminal?.();
+          },
+        },
+      });
+      const harness = createRealSdkHttpHarness({ initialEventId: historyId });
+      await withFetch(harness.fetch, async () => {
+        const adapter = createMatrixClientAdapter(config, "runtime-test-token");
+        adapter.onSyncBatch(async (batch) => {
+          phases.push(batch.phase);
+          await coordinator.handleBatch(batch);
+        });
+        try {
+          await adapter.whoAmI();
+          await adapter.start();
+          await coordinator.flush();
+          assert.equal(phases[0], "initial");
+        } finally {
+          await adapter.stop();
+          await coordinator.flush();
+        }
+      });
+      assert.equal(received.length, initialized ? 1 : before);
+      assert.equal(stateStore.isEventCompleted(ROOM_ID, historyId), true);
+      phases.length = 0;
+    }
+    assert.equal(received[0]?.isLive, true);
+    assert.equal(received[0]?.isCatchUp, true);
+    assert.equal(received[0]?.timeline?.phase, "incremental");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });
 
 void test("real SDK encrypted initial events remain outside disabled-mode intake", async () => {
