@@ -22,6 +22,7 @@ let phase = "startup";
 let pair;
 let sent;
 let summary;
+let failure;
 const statePath = resolve(environment.bridge.stateDir, "bridge-state.json");
 const state = async () => JSON.parse(await readFile(statePath, "utf8"));
 
@@ -118,12 +119,19 @@ try {
     sessions: requests("session/new").length,
   };
 } catch (error) {
+  failure = {
+    message: error.message,
+    stack: error.stack,
+    actual: error.actual,
+    expected: error.expected,
+    operator: error.operator,
+  };
   summary = { result: "failed", operation, errorClass: error.name };
   process.exitCode = 1;
 } finally {
   await writePrivateFile(
     evidencePath,
-    JSON.stringify({ phase, frames, events, sent, summary, stateBefore, stateAfter: await snapshot() }),
+    JSON.stringify({ phase, frames, events, sent, summary, failure, stateBefore, stateAfter: await snapshot() }),
   );
   phase = "shutdown";
   try {
@@ -141,6 +149,7 @@ try {
       events,
       sent,
       summary,
+      failure,
       stateBefore,
       stateAfter: await snapshot(),
       bridgeDiagnostics: pair?.bridgeDiagnostics(),
