@@ -2,12 +2,16 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { readEnvironment, readToken, writePrivateFile } from "../e2e-support/common.mjs";
-import { assertSteeringBaseline, assertSteeringHealthy } from "../e2e-support/steering-observations.mjs";
+import {
+  assertSteeringBaseline,
+  assertSteeringHealthy,
+  assertSteeringDeviceBaseline,
+} from "../e2e-support/steering-observations.mjs";
 import { cryptoPaths } from "../encrypted-e2e/lib.mjs";
 
 // Opt-in: use only environments provisioned for the documented test rooms.
@@ -17,6 +21,25 @@ assert.ok(["plaintext", "encrypted"].includes(transport));
 assert.ok(["room", "thread"].includes(responseMode));
 const environment = await readEnvironment(environmentPath);
 const evidencePath = resolve(process.env.STEERING_EVIDENCE_FILE ?? "node_modules/.live-steering/evidence.json");
+// State replacement alone does not reset the homeserver's device sync baseline.
+// Refuse accidental mode/state transitions before any live account operation.
+const deviceBaselinePath = resolve(dirname(environment.bridge.tokenFile), "steering-device-baseline.json");
+const deviceBaseline = {
+  version: 1,
+  homeserver: environment.homeserver,
+  userId: environment.bridge.userId,
+  deviceId: environment.bridge.deviceId,
+  stateDir: resolve(environment.bridge.stateDir),
+  responseMode,
+};
+let previousDeviceBaseline = null;
+try {
+  previousDeviceBaseline = JSON.parse(await readFile(deviceBaselinePath, "utf8"));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+assertSteeringDeviceBaseline(previousDeviceBaseline, deviceBaseline);
+await writePrivateFile(deviceBaselinePath, JSON.stringify(deviceBaseline));
 const config = await readFile(environment.bridge.configFile, "utf8");
 await writePrivateFile(
   environment.bridge.configFile,
