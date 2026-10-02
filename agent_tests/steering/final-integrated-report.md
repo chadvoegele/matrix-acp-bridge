@@ -97,3 +97,20 @@ empty; active environment/device state was removed only after remote cleanup.
 The earlier failed provisioning attempt and its one-device cleanup remain
 separate retained evidence. Encrypted thread and extra initialized/reset probes
 remain in progress.
+
+## Raw encryption audit strengthening
+
+Security review found that SDK required-encryption normalization filters out
+plaintext timeline events. The older per-observed-event ciphertext check could
+therefore miss an additional plaintext startup/shutdown event. No such product
+failure has been observed; this was an audit gap. The harness now captures a raw
+room boundary before startup and, after all teardown, paginates all newer raw
+room events. It rejects plaintext test-account messages and unobserved encrypted
+test-account messages. Existing decryption, wire, baseline and global RPC/Matrix
+health checks remain enabled. Three deterministic regressions establish hidden
+startup/shutdown rejection, fail-closed pagination and retained-window coverage.
+
+Encrypted thread will use the strengthened harness. The earlier encrypted-room
+result additionally requires read-only raw pagination of its retained complete
+startup/teardown window before final acceptance. That audit will use a fresh
+active owned token, never the revoked room-suite tokens.

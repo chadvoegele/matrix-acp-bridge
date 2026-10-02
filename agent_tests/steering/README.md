@@ -118,3 +118,20 @@ It verifies that later input becomes one tracked prompt on a replacement session
 never steers the old session, and emits no implicit idle notice. Keep earlier
 session IDs for cleanup, because resetting the bridge mapping does not delete
 the old ACP session. Baseline and final health audits remain enabled.
+
+Encrypted verification also captures a raw room-event boundary before startup
+and paginates the homeserver after awaited bridge/ACP/sender teardown. This
+checks events that the SDK's required-encryption observer would filter out.
+Any new plaintext message from either test account fails; unexpected encrypted
+test-account events outside the decrypted scenario observations also fail.
+Missing boundaries, repeated cursors and pagination bounds fail closed. Raw
+pages and the boundary are retained only in private evidence.
+
+`raw-history-audit.mjs` provides read-only retrospective checking of retained
+encrypted evidence. Its arguments are an active owned environment, the retained
+environment (used only for room/user identity), retained wire file, private output
+file, and inclusive server-timestamp start/end bounds in milliseconds. Use bounds
+covering startup through awaited teardown with a documented margin; every
+previously checked event must appear as encrypted. Hold the shared live lock,
+use only documented rooms and never reuse the retained environment's revoked
+tokens. A retrospective window cannot reconstruct destroyed causal traces.
