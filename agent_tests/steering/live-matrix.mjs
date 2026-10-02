@@ -81,7 +81,6 @@ const wireEvents = [];
 let failure;
 let pair;
 let successSummary;
-let failure;
 let phase = "startup";
 const pending = new Map();
 const completed = [];
