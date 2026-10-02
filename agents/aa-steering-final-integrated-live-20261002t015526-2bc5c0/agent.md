@@ -1,7 +1,7 @@
 +++
 name = "steering-final-integrated-live-20261002T015526-2bc5c0"
 creation_date = 2026-10-02T01:55:26Z
-status = "running"
+status = "failed"
 session_id = "01a0fa53-3a5a-7923-98ed-1f03bf120dbb"
 system = "codex"
 +++
