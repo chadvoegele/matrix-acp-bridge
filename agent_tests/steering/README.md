@@ -96,6 +96,7 @@ node agent_tests/steering/startup-matrix.mjs environment.json fresh fresh-wire.j
 node agent_tests/steering/startup-matrix.mjs environment.json send send-wire.json input.json
 node agent_tests/steering/startup-matrix.mjs environment.json catchup catchup-wire.json input.json
 node agent_tests/steering/startup-matrix.mjs environment.json quiet quiet-wire.json
+node agent_tests/steering/startup-matrix.mjs environment.json reset reset-wire.json
 ```
 
 `fresh` requires an absent state file and verifies zero startup ACP work. `send`
@@ -108,3 +109,29 @@ thread probe must use a distinct state directory. Preserve all created session
 IDs from wire evidence and every state's session mappings for ordered cleanup.
 These probes retain startup/shutdown frames and child diagnostics and audit
 Matrix failures and RPC errors after awaited teardown.
+
+The optional `reset` probe requires initialized plaintext room state and a config
+with `default_message_delivery = "steer"`. It starts a real tool turn, confirms
+an injected steering acknowledgement and independent durable completion, then
+queues `/reset` and default-selected input while the original prompt is pending.
+It verifies that later input becomes one tracked prompt on a replacement session,
+never steers the old session, and emits no implicit idle notice. Keep earlier
+session IDs for cleanup, because resetting the bridge mapping does not delete
+the old ACP session. Baseline and final health audits remain enabled.
+
+Encrypted verification also captures a raw room-event boundary before startup
+and paginates the homeserver after awaited bridge/ACP/sender teardown. This
+checks events that the SDK's required-encryption observer would filter out.
+Any new plaintext message from either test account fails; unexpected encrypted
+test-account events outside the decrypted scenario observations also fail.
+Missing boundaries, repeated cursors and pagination bounds fail closed. Raw
+pages and the boundary are retained only in private evidence.
+
+`raw-history-audit.mjs` provides read-only retrospective checking of retained
+encrypted evidence. Its arguments are an active owned environment, the retained
+environment (used only for room/user identity), retained wire file, private output
+file, and inclusive server-timestamp start/end bounds in milliseconds. Use bounds
+covering startup through awaited teardown with a documented margin; every
+previously checked event must appear as encrypted. Hold the shared live lock,
+use only documented rooms and never reuse the retained environment's revoked
+tokens. A retrospective window cannot reconstruct destroyed causal traces.

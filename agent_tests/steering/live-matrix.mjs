@@ -14,6 +14,12 @@ import {
   assertSteeringDeviceBaseline,
 } from "../e2e-support/steering-observations.mjs";
 import { cryptoPaths } from "../encrypted-e2e/lib.mjs";
+import {
+  assertRawSteeringEncryption,
+  captureRawRoomBoundary,
+  collectRawRoomEvents,
+  rawRoomPageLoader,
+} from "../e2e-support/steering-raw-wire.mjs";
 
 // Opt-in: use only environments provisioned for the documented test rooms.
 const [environmentPath, transport = "plaintext", responseMode = "room"] = process.argv.slice(2);
@@ -78,6 +84,15 @@ const frames = [];
 const events = [];
 const sent = [];
 const wireEvents = [];
+const rawRoomEvents = [];
+const rawPages = [];
+let rawBoundary;
+const fetchRawPage = rawRoomPageLoader(environment);
+const loadRawPage = async (...arguments_) => {
+  const page = await fetchRawPage(...arguments_);
+  rawPages.push(page);
+  return page;
+};
 let failure;
 let pair;
 let successSummary;
@@ -181,6 +196,7 @@ async function toolAfter(index) {
 }
 
 try {
+  if (transport === "encrypted") rawBoundary = await captureRawRoomBoundary(loadRawPage);
   await sender.validateIdentity();
   if (transport === "encrypted") await sender.initializeCrypto(cryptoPaths(environment.sender.stateDir));
   sender.onSyncBatch((batch) => {
@@ -387,7 +403,7 @@ try {
 } finally {
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure, stateBefore, stateAfter: await snapshot() }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, wireEvents, rawBoundary, rawRoomEvents, rawPages, failure, stateBefore, stateAfter: await snapshot() }, null, 2)}\n`,
   );
   phase = "shutdown";
   try {
@@ -401,9 +417,31 @@ try {
   await sender.stop().catch(() => {});
   await sender.closeCrypto().catch(() => {});
   console.log(JSON.stringify({ cleanup: "sender stopped" }));
+  if (transport === "encrypted") {
+    try {
+      rawRoomEvents.push(...(await collectRawRoomEvents(rawBoundary, loadRawPage)));
+      assertRawSteeringEncryption(
+        rawRoomEvents,
+        [environment.bridge.userId, environment.sender.userId],
+        wireEvents.map((event) => event.eventId),
+      );
+      if (successSummary) successSummary.rawEventsAudited = rawRoomEvents.length;
+    } catch (error) {
+      failure ??= {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        actual: error.actual,
+        expected: error.expected,
+      };
+      successSummary = undefined;
+      process.exitCode = 1;
+      console.log(JSON.stringify({ result: "failed", phase: "raw encrypted startup/shutdown audit" }));
+    }
+  }
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure, stateBefore, stateAfter: await snapshot(), bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, wireEvents, rawBoundary, rawRoomEvents, rawPages, failure, stateBefore, stateAfter: await snapshot(), bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
   );
 }
 

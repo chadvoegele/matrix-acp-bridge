@@ -19,6 +19,7 @@ import test from "node:test";
 import {
   BRIDGE_STATE_FILE_NAME,
   BRIDGE_STATE_SCHEMA_VERSION,
+  MAX_COMPLETED_EVENT_IDS_PER_ROOM,
   BridgeStateError,
   openBridgeStateStore,
   type BridgeStateFaultPoint,
@@ -194,7 +195,7 @@ void test("completion is durable, room-scoped, idempotent, and preserves session
   });
 });
 
-void test("compaction retains the current window and newly terminal IDs only", async () => {
+void test("compaction retains recent completion outside an older snapshot and merges newly terminal IDs", async () => {
   await withStateDir(async (stateDir) => {
     const store = await openStore(stateDir);
     await store.establishInitialBaseline([
@@ -215,8 +216,8 @@ void test("compaction retains the current window and newly terminal IDs only", a
     );
 
     assert.deepEqual(store.getSnapshot().completedEventIds, {
-      [ROOM_ONE]: [EVENT_TWO, "$new-terminal:example"],
-      [ROOM_TWO]: ["$omitted:example"],
+      [ROOM_ONE]: [EVENT_ONE, EVENT_TWO, "$outside:example", "$new-terminal:example"],
+      [ROOM_TWO]: ["$old:example", "$omitted:example"],
     });
   });
 });
@@ -234,7 +235,11 @@ void test("a compaction failure leaves the previous ledger intact and therefore 
     await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: [EVENT_ONE, EVENT_TWO] }]);
     fail = true;
     await expectStateError(
-      () => store.compactCompletedEventIds([{ roomId: ROOM_ONE, eventIds: [EVENT_TWO] }]),
+      () =>
+        store.compactCompletedEventIds(
+          [{ roomId: ROOM_ONE, eventIds: [EVENT_TWO] }],
+          [{ roomId: ROOM_ONE, eventIds: ["$new-terminal:example"] }],
+        ),
       "write",
     );
     assert.deepEqual(store.getSnapshot().completedEventIds, {
@@ -488,7 +493,7 @@ void test("thread records isolate modes, roots and rooms, persist sessionless ad
     assert.deepEqual(store.getConversationRecord(THREAD_OTHER_ROOM), { ...THREAD_OTHER_ROOM, sessionId: "other-room" });
     assert.equal(store.getSessionMapping(ROOM_ONE), "room-session");
     assert.equal(store.getConversationRecord({ ...THREAD_ONE, threadRootEventId: "$unknown" }), undefined);
-    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_TWO] });
+    assert.deepEqual(store.getSnapshot().completedEventIds, { [ROOM_ONE]: [EVENT_ONE, EVENT_TWO] });
     assert.equal(store.getConversationRecords().length, 5);
     assert.equal(await store.setConversationRecord({ ...THREAD_ONE, sessionId: "fresh-session" }), true);
     assert.equal(await store.setConversationRecord({ ...THREAD_ONE, sessionId: "fresh-session" }), false);
@@ -839,5 +844,26 @@ void test("thread retention has no count or age limit and reopening never rewrit
       assert.deepEqual(reopened.getConversationRecord(threadIdentity), record);
     }
     assert.equal(reopened.getSnapshot().threadRecords.length, records.length);
+  });
+});
+
+void test("baseline, terminal completion and compaction bound recent IDs without retaining unseen payloads", async () => {
+  await withStateDir(async (stateDir) => {
+    const store = await openStore(stateDir);
+    const ids = Array.from({ length: MAX_COMPLETED_EVENT_IDS_PER_ROOM + 1 }, (_, index) => `$bounded-${index}`);
+    await store.establishInitialBaseline([{ roomId: ROOM_ONE, eventIds: ids }]);
+    assert.equal(store.getSnapshot().completedEventIds[ROOM_ONE]?.length, MAX_COMPLETED_EVENT_IDS_PER_ROOM);
+    assert.equal(store.isEventCompleted(ROOM_ONE, ids[0]!), false);
+    await store.markEventCompleted(ROOM_ONE, "$latest-terminal");
+    assert.equal(store.isEventCompleted(ROOM_ONE, ids[1]!), false);
+    await store.compactCompletedEventIds(
+      [{ roomId: ROOM_ONE, eventIds: ["$unseen"] }],
+      [{ roomId: ROOM_ONE, eventIds: ["$latest-omitted"] }],
+    );
+    const reopened = await openStore(stateDir);
+    assert.equal(reopened.getSnapshot().completedEventIds[ROOM_ONE]?.length, MAX_COMPLETED_EVENT_IDS_PER_ROOM);
+    assert.equal(reopened.isEventCompleted(ROOM_ONE, "$latest-terminal"), true);
+    assert.equal(reopened.isEventCompleted(ROOM_ONE, "$latest-omitted"), true);
+    assert.equal(reopened.isEventCompleted(ROOM_ONE, "$unseen"), false);
   });
 });

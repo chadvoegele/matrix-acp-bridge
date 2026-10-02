@@ -137,3 +137,20 @@ plaintext, encrypted, and required `npm run test:recovery` harnesses assert
 that completed IDs are not submitted to ACP again and that state contains no
 legacy cursor fields. Older state is intentionally reset by the operator; no
 migration code was added.
+
+## Completed-ID retention follow-up, 2026-10-02
+
+A controlled initialized restart after a steering/reset scenario exposed another
+replay path: an older initial-sync window omitted recently completed IDs;
+intersection-based ledger compaction discarded them before incremental sync
+returned those same events. They were then admitted again. Before/after durable
+state and actual SDK/ACP traces establish this compaction cause.
+
+Schema 13 now retains the most recent 10,000 completed IDs per room across
+initial snapshots and merges newly terminal IDs. Baseline creation and terminal
+writes enforce the same bound. Snapshot absence does not authorize early
+deletion; unseen events retain ordinary authorization and catch-up age/count
+rules. Metadata remains IDs only. Eviction beyond the bound and the documented
+side-effect-before-durable-write crash gap remain recovery limitations. See the
+[final verification report](../agent_tests/steering/final-integrated-report.md)
+for regression and live evidence.
