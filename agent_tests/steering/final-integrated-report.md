@@ -2,8 +2,9 @@
 
 Latest status: the additional restart-after-reset probe exposed a completed-ID
 compaction defect. A bounded product fix and regressions now pass all 470 tests.
-All four primary modes and the controlled probes must be repeated on the fixed
-build before final acceptance; earlier results below remain historical evidence.
+The post-fix controls passed, including the previously failing quiet restart
+after reset. All four primary modes are being repeated on the fixed build before
+final acceptance; earlier results below remain historical evidence.
 
 Assigned agent/branch: `aa-steering-final-integrated-live-20261002t015526-2bc5c0`.
 Integrated implementation base: `2018351ad2f3d9468cabcb634470a217dbd03e50`.
@@ -172,3 +173,27 @@ empty. Retrospective raw checks of both earlier encrypted scopes passed: exact
 23/25 event sets, all encrypted, with startup/teardown windows padded 60 seconds.
 
 Post-fix integrated live revalidation is pending.
+
+## Post-fix live control checkpoint
+
+Exact tested candidate: `0c212a26e9cb03fb4a99679aba4c5bcf03de4a8c`.
+The real default-steer fresh/send/catchup/quiet/reset/quiet-after-reset sequence
+passed. The formerly failing restart produced zero session/load/new/prompt/steering
+requests and retained all four reset-event completions (105 room ledger entries
+before and after restart). Reset itself sent four inputs, two prompts, one
+injected acknowledgement and one replacement session. Its old owned session was
+loaded rather than recreated; both old and replacement sessions were tracked
+and deleted. Both temporary tokens returned HTTP 401. Strict health audits
+remained enabled through awaited teardown; scoped inventories were empty.
+
+All 111 product build files were copied byte-identically into a durable runtime
+outside the launcher, with dependencies installed from the exact package lock.
+This preserves cleanup capability if the launcher disappears. Product source
+tree: `911eb9224365e3446b0e02aae017efa031efc4f9`. Full build-tree SHA256:
+`855872462747c00c4401bacf6857c4abdf52ba24fced0271cb6d1056ed3a1938`.
+Bridge `dist/bridge-state.js` SHA256:
+`cc514b97410443a353866d0fee55f03467ade6ad4f4d83e8b66d9ff8738cab90`.
+The unchanged main entry hash alone cannot identify the ledger fix; the complete
+build manifest is retained privately. No other source or upstream main was used.
+
+Four post-fix primary mode runs are in progress under the same exclusive lock.
