@@ -103,7 +103,6 @@ const DIRECTORY_FLAG = "O_DIRECTORY" in constants ? constants.O_DIRECTORY : 0;
 const MANIFEST_FILE_FLAGS = constants.O_RDONLY | NOFOLLOW;
 const TEMP_FILE_FLAGS = constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NOFOLLOW;
 const NODE_INDEXEDDB_SNAPSHOT_TEMP_FILE = ".indexeddb.snapshot.tmp";
-const DATABASE_VALIDATION_MAX_ATTEMPTS = 3;
 
 /**
  * Open the bridge-owned crypto metadata and validate the SDK database root.
@@ -628,7 +627,6 @@ async function validateDatabaseTree(
   path: string,
   root: string,
   faultInjector?: CryptoStateFaultInjector,
-  attempt = 1,
 ): Promise<void> {
   let entries;
   try {
@@ -645,19 +643,13 @@ async function validateDatabaseTree(
     try {
       stat = await fs.lstat(child);
     } catch (error) {
-      if (
-        isNodeError(error, "ENOENT") &&
-        child === join(root, NODE_INDEXEDDB_SNAPSHOT_TEMP_FILE) &&
-        attempt < DATABASE_VALIDATION_MAX_ATTEMPTS
-      ) {
-        // Node IndexedDB publishes snapshots by renaming this exact temporary
-        // path. A directory listing can retain the old entry after that rename
-        // and make its subsequent lstat() legitimately return ENOENT. Retry a
-        // complete tree snapshot after queued filesystem work settles; every
-        // other missing or unreadable entry remains invalid.
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        await validateDatabaseTree(root, root, faultInjector, attempt + 1);
-        return;
+      if (isNodeError(error, "ENOENT") && child === join(root, NODE_INDEXEDDB_SNAPSHOT_TEMP_FILE)) {
+        // The snapshot writer atomically renames this staging file. Its absence
+        // after readdir is expected even during sustained writes; rescanning can
+        // race again indefinitely. Validate every remaining entry, including the
+        // committed snapshot, without requiring this transient file to survive.
+        // Existing staging files still receive all path and permission checks.
+        continue;
       }
       throw new CryptoStateError("database-invalid", root);
     }
@@ -666,7 +658,7 @@ async function validateDatabaseTree(
     }
     if (stat.isDirectory()) {
       validatePrivateDirectoryStat(stat, child);
-      await validateDatabaseTree(child, root, faultInjector, attempt);
+      await validateDatabaseTree(child, root, faultInjector);
       continue;
     }
     if (!stat.isFile()) {

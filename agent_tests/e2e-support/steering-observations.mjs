@@ -28,3 +28,14 @@ export function assertSteeringHealthy(frames, events, bridgeUserId) {
     "unexpected Matrix failure across startup, scenarios, or shutdown",
   );
 }
+
+export function assertSteeringIdleNotices(replies, responseMode) {
+  // Explicit /steer while idle emits one notice. Thread mode additionally
+  // starts an independent explicit /steer conversation. Default-selected
+  // msg1 silently becomes a prompt and must never add a notice.
+  assert.equal(
+    replies.filter((event) => event.content.body === "No running turn; message queued as a prompt.").length,
+    responseMode === "thread" ? 2 : 1,
+    "idle notices must correspond only to explicit steering",
+  );
+}

@@ -7,7 +7,11 @@ import { resolve } from "node:path";
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { readEnvironment, readToken, writePrivateFile } from "../e2e-support/common.mjs";
-import { assertSteeringBaseline, assertSteeringHealthy } from "../e2e-support/steering-observations.mjs";
+import {
+  assertSteeringBaseline,
+  assertSteeringHealthy,
+  assertSteeringIdleNotices,
+} from "../e2e-support/steering-observations.mjs";
 import { cryptoPaths } from "../encrypted-e2e/lib.mjs";
 
 // Opt-in: use only environments provisioned for the documented test rooms.
@@ -41,6 +45,8 @@ const sender = createMatrixClientAdapter(
 const frames = [];
 const events = [];
 const sent = [];
+const wireEvents = [];
+let failure;
 let pair;
 let successSummary;
 let phase = "startup";
@@ -245,10 +251,7 @@ try {
       event.originServerTs >= sent[0].originServerTs,
   );
   assert.ok(replies.length > 0);
-  assert.equal(
-    replies.filter((event) => event.content.body === "No running turn; message queued as a prompt.").length,
-    responseMode === "thread" ? 3 : 2,
-  );
+  assertSteeringIdleNotices(replies, responseMode);
   for (const output of agentOutputs) {
     assert.ok(output.text.length > 0, "real agent produced no reply");
     const rootEvent =
@@ -304,6 +307,7 @@ try {
       );
       assert.equal(response.ok, true);
       const rawEvent = await response.json();
+      wireEvents.push({ eventId: event.eventId, type: rawEvent.type });
       assert.equal(rawEvent.type, "m.room.encrypted");
     }
   }
@@ -316,8 +320,18 @@ try {
     prompts: requests("session/prompt").length,
     steering: requests("_session/steering").length,
     sessions: requests("session/new").length,
+    encryptedEventsVerified: wireEvents.length,
   };
 } catch (error) {
+  // Preserve assertion causes only in the private evidence file; stdout stays
+  // structural because assertion values can include Matrix identifiers.
+  failure = {
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    actual: error.actual,
+    expected: error.expected,
+  };
   console.log(
     JSON.stringify({
       result: "failed",
@@ -331,7 +345,10 @@ try {
   );
   process.exitCode = 1;
 } finally {
-  await writePrivateFile(evidencePath, `${JSON.stringify({ phase, frames, sent, events }, null, 2)}\n`);
+  await writePrivateFile(
+    evidencePath,
+    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure }, null, 2)}\n`,
+  );
   phase = "shutdown";
   if (pair) await stopBridgePair(pair);
   console.log(JSON.stringify({ cleanup: "bridge and ACP stopped" }));
@@ -340,7 +357,7 @@ try {
   console.log(JSON.stringify({ cleanup: "sender stopped" }));
   await writePrivateFile(
     evidencePath,
-    `${JSON.stringify({ phase, frames, sent, events, bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
+    `${JSON.stringify({ phase, frames, sent, events, wireEvents, failure, bridgeDiagnostics: pair?.bridgeDiagnostics(), acpDiagnostics: pair?.acpDiagnostics() }, null, 2)}\n`,
   );
 }
 

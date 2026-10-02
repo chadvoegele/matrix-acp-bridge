@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createAdapter, readEnvironment } from "./lib.mjs";
+import { dispatchSasAttempt } from "./sas-helper-lifecycle.mjs";
 
 const environment = await readEnvironment(process.argv[2]);
 const adapter = await createAdapter(environment, "helper");
@@ -104,6 +105,7 @@ async function handle(request) {
     await decisionPromise;
     phase = "verified";
     emit({ event: "verified" });
+    return true;
   } finally {
     unsubscribeShow();
     unsubscribeCancel();
@@ -113,7 +115,7 @@ async function handle(request) {
 const done = new Promise((resolve, reject) => {
   crypto.onVerificationRequest(
     (request) =>
-      void handle(request).then(resolve, () => {
+      void dispatchSasAttempt(request, handle, resolve, () => {
         activeRequest = undefined;
         emit({
           event: "verification-attempt-failed",
