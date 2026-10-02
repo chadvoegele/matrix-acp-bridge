@@ -37,7 +37,14 @@ implementation changes were needed; README removal is preserved.
 
 ## Live verification
 
-Fresh live verification and owned-resource cleanup are pending at this initial
-committed checkpoint. Prior attempt 1 success is historical evidence, not proof
+Full `npm run check` passed: formatting, lint, typecheck, and 457 tests. The
+new stale-listing regression fails against the old three-retry behavior and
+passes with the fix. Previous-run owned identity checks matched all three
+temporary devices; cleanup deleted two ACP sessions and revoked the devices,
+then removed their active local state. A private copy preserves failure evidence.
+
+Fresh provisioning and normal matching emoji/decimal SAS with interactive yes
+passed under the exclusive process-held live lock. Repeat SAS and encrypted
+steering are pending at this checkpoint. Prior attempt 1 success is historical evidence, not proof
 of this branch or the final integrated feature head. No encrypted pass is claimed
 for the earlier failed run.
