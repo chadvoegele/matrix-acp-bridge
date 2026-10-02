@@ -164,6 +164,21 @@ try {
         120_000,
         pair,
       );
+      await waitFor(
+        () =>
+          events.some(
+            (event) => event.sender === environment.bridge.userId && event.content?.body === "Agent session reset.",
+          ),
+        "reset acknowledgement",
+        30_000,
+        pair,
+      );
+      assert.equal(
+        events.filter(
+          (event) => event.sender === environment.bridge.userId && event.content?.body === "Agent session reset.",
+        ).length,
+        1,
+      );
       const prompts = requests("session/prompt");
       assert.equal(prompts.length, 2);
       assert.ok(response(prompts[0])?.frame.result);
