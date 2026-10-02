@@ -1,7 +1,7 @@
 +++
 name = "steering-sas-encrypted-live-resume-20261002T002521"
 creation_date = 2026-10-02T00:25:21Z
-status = "running"
+status = "failed"
 session_id = "01a0fa00-b3b7-7fa2-a079-d477ba0e35a4"
 system = "codex"
 +++
