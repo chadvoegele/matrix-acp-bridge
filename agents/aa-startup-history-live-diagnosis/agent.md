@@ -1,7 +1,8 @@
 +++
 name = "startup-history-live-diagnosis"
 creation_date = 2026-10-02T00:26:47Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 # WAAP developer: actual live startup/history diagnosis
