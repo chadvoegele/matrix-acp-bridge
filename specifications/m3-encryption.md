@@ -10,9 +10,9 @@ Status: accepted (2026-08-04)
 
 This document defines the minimum accepted Milestone 3 needed to run the bridge
 in end-to-end encrypted Matrix rooms. It supersedes the Milestone 3 and E2EE
-sections of [m1-plaintext-matrix.md](../m1-plaintext-matrix/spec.md).
+sections of [m1-plaintext-matrix.md](m1-plaintext-matrix.md).
 
-Milestone 3 builds on the reduced Milestone 2 in [m2-persistence.md](../m2-persistence/spec.md), not the older
+Milestone 3 builds on the reduced Milestone 2 in [m2-persistence.md](m2-persistence.md), not the older
 durable-inbox design still described in `m1-plaintext-matrix.md`. Its restart and delivery
 semantics remain best effort.
 

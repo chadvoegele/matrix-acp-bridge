@@ -9,7 +9,7 @@ last_update = 2026-10-01
 Status: accepted (2026-08-04)
 
 This document defines a smaller Milestone 2 than the durable-delivery design
-historically described in [m1-plaintext-matrix.md](../m1-plaintext-matrix/spec.md). It replaces that superseded M2
+historically described in [m1-plaintext-matrix.md](m1-plaintext-matrix.md). It replaces that superseded M2
 scope.
 
 ## Goal

@@ -12,7 +12,7 @@ Keep the existing Matrix client, ACP sessions, completed-event ledger, and
 Rust crypto instance alive through transient transport failures. Recovery is
 owned by the pinned matrix-js-sdk; bridge restart recovery is separately
 defined by the normal initial-sync completed-ID contract in
-[m2-persistence.md](../m2-persistence/spec.md).
+[m2-persistence.md](m2-persistence.md).
 
 ## Scope
 

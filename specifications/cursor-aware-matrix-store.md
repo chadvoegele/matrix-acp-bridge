@@ -12,7 +12,7 @@ startup guidance.
 
 The current release deliberately uses the SDK's normal initial-sync request on
 every process start. Recovery is based on the bridge-owned schema-v12
-completed-event ledger described in [Milestone 2 — restart continuity](../m2-persistence/spec.md):
+completed-event ledger described in [Milestone 2 — restart continuity](m2-persistence.md):
 the first initial sync creates a suppression baseline, and later initial-sync
 timelines admit only unseen IDs within the documented age and count bounds.
 The bridge does not persist or seed a Matrix sync cursor, does not restore a
@@ -201,7 +201,7 @@ The early-cursor replay scenario must run in CI or be included in the required r
 
 ## References
 
-- [Milestone 2 — restart continuity](../m2-persistence/spec.md)
+- [Milestone 2 — restart continuity](m2-persistence.md)
 - `src/matrix-client.ts`
 - `src/bridge-state.ts`
 - `src/sync-coordinator.ts`
