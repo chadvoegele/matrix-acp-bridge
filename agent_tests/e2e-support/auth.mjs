@@ -98,7 +98,7 @@ export async function validateReusableState(environment, identity, role) {
     const { openCryptoStateStore } = await import("../../dist/crypto-state.js");
     const store = await openCryptoStateStore({ stateDir: identity.stateDir, identity: expected });
     // Reusable devices must already have their original device-bound snapshot.
-    // This checks identity, bootstrap, database completeness and SAS for bridge.
+    // This checks identity, bootstrap and database completeness before normal SAS.
     const manifest = store.assertReadyForVerification();
     const snapshotPath = join(identity.stateDir, "matrix-crypto", ".indexeddb.snapshot");
     await validatePrivatePath(snapshotPath);

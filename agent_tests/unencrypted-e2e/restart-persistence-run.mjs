@@ -98,6 +98,14 @@ function matchingPrompts(pair, text) {
   return requests(pair, "session/prompt").filter((request) => promptText(request) === text);
 }
 
+let initiallyInitialized = false;
+try {
+  const initialState = await readState();
+  initiallyInitialized = initialState.initialized === true;
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+
 let pair;
 try {
   process.stdout.write("Starting normal initial sync and first memory turn...\n");
@@ -136,8 +144,10 @@ try {
   assert(matchingPrompts(pair, firstPrompt).length === 1, "initial prompt must reach ACP exactly once");
   assertCleanDiagnostics(
     pair,
-    ["completed-event-baseline-established", "startup-ready"],
-    ["completed-event-ledger-loaded"],
+    initiallyInitialized
+      ? ["completed-event-ledger-loaded", "initial-sync-recovery-finished", "startup-ready"]
+      : ["completed-event-baseline-established", "startup-ready"],
+    initiallyInitialized ? ["completed-event-baseline-established"] : ["completed-event-ledger-loaded"],
   );
   await stopBridgePair(pair);
   pair = undefined;

@@ -26,8 +26,8 @@ mode. Existing startup-ready and sender initial-sync gates run before any input.
 two-second baseline observation requires zero session creation/loading, prompts, or steering requests. Use
 a separate token/device/store profile or new disposable devices for each response mode. Replacing
 state on an already used device can replay inputs through incremental sync after
-an older initial snapshot. The runner records a private device baseline next to
-the bridge token and rejects a different mode or state before live operations.
+an older initial snapshot. The runner records a private device baseline in
+the bridge state directory and rejects a different mode or state before live operations.
 Preserve all session IDs, clean up the old device set, then provision the next
 mode. Intentional initialized recovery uses the separate startup probe below.
 
