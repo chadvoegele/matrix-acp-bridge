@@ -76,6 +76,9 @@ Per-case results are durable even if a later case fails. A prior historical pass
 never counts as verification of the final code. The existing shell entry points
 remain supported for individual scenarios and report their setup errors directly.
 
+The [final persistent-cache verification report](cache-live-verification-report.md)
+records the tested revision, separate fresh setup, functional results and cleanup.
+
 ## Token mode
 
 Set `E2E_AUTH_MODE=token`. Supplying any role token/device/state variable (even an empty value) also selects token mode
