@@ -23,7 +23,7 @@ reference and is intentionally non-normative.
 
 ## Purpose
 
-Make Matrix restart recovery use the bridge's persisted `/sync` cursor without modifying matrix-js-sdk or patching `node_modules`. This fixes the history replay described in [Incident: Matrix history replay after bridge restart](incident-2026-08-19-matrix-history-replay.md).
+Make Matrix restart recovery use the bridge's persisted `/sync` cursor without modifying matrix-js-sdk or patching `node_modules`. This addresses the Matrix history replay after bridge restart on 2026-08-19.
 
 The bridge must supply the SDK's supported `IStore` integration through `createClient({ store })`. The store must expose the persisted cursor through `getSavedSyncToken()` for the next SDK startup while returning no cached `/sync` response.
 
@@ -201,7 +201,6 @@ The early-cursor replay scenario must run in CI or be included in the required r
 
 ## References
 
-- [Incident: Matrix history replay after bridge restart](incident-2026-08-19-matrix-history-replay.md)
 - [Milestone 2 — restart continuity](m2-persistence.md)
 - `src/matrix-client.ts`
 - `src/bridge-state.ts`
