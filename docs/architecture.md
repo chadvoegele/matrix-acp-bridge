@@ -96,6 +96,18 @@ connection capability state; steering does not acquire a prompt permit or
 replace the active turn. Both delivery paths share presentation and room output
 ordering.
 
+Queue entries combine common event identity, admission sequence and completion
+state with a discriminated conversation operation. Reset owns only `kind:
+"reset"`; a message owns `kind: "message"`, payload, required explicit/default
+provenance and prompt/steer delivery. The intersection types keep this distinction
+without another runtime object or replacing entry identity. Only messages enter
+the steering lane or steering work; reset cannot be passed to fallback helpers.
+The discriminator, payload and provenance are readonly. Fallback mutates only a
+message's delivery, preserving its queue slot, sequence and completion promise.
+Prompt dispatch receives the payload after the reset branch returns, so its
+asynchronous callback does not need to access an unnarrowed queue entry. These
+are internal types; durable schemas and routing contracts stay unchanged.
+
 ### Zoom: delivery and wire
 
 ```mermaid

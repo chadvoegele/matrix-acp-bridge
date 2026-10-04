@@ -100,12 +100,21 @@ export interface BridgeSnapshot {
   readonly unresolvedPrompts: number;
 }
 
-interface MutableQueueEntry {
+interface MessageOperation {
+  readonly kind: "message";
+  readonly payload: string;
+  readonly deliveryProvenance: MessageDeliveryProvenance;
+  delivery: "prompt" | "steer";
+}
+
+type ConversationOperation = { readonly kind: "reset" } | MessageOperation;
+
+type MutableQueueEntry = QueueEntryState & ConversationOperation;
+type MessageQueueEntry = QueueEntryState & MessageOperation;
+
+interface QueueEntryState {
   readonly event: NormalizedInboundEvent;
   readonly sequence: number;
-  readonly payload: string;
-  readonly deliveryProvenance: MessageDeliveryProvenance | undefined;
-  delivery: "prompt" | "steer" | "reset";
   readonly terminalCompletion: BridgeTerminalCompletion | undefined;
   readonly resolve: () => void;
   readonly completion: Promise<void>;
@@ -121,7 +130,7 @@ interface ConversationState {
   readonly identity: ConversationIdentity;
   readonly room: RoomState;
   readonly waiting: MutableQueueEntry[];
-  readonly steering: MutableQueueEntry[];
+  readonly steering: MessageQueueEntry[];
   steeringCall: SteeringWork | undefined;
   active: MutableQueueEntry | undefined;
   sessionId: AcpSessionId | undefined;
@@ -129,7 +138,7 @@ interface ConversationState {
 
 /** Decision lifetime is separate from its durable callback/output lifetime. */
 interface SteeringWork {
-  readonly entry: MutableQueueEntry;
+  readonly entry: MessageQueueEntry;
   readonly conversation: ConversationState;
   readonly sessionId: AcpSessionId;
   readonly interrupt: () => void;
@@ -323,9 +332,7 @@ function makeQueueEntry(
   event: NormalizedInboundEvent,
   terminalCompletion: BridgeTerminalCompletion | undefined,
   sequence: number,
-  delivery: MutableQueueEntry["delivery"],
-  payload: string,
-  deliveryProvenance: MessageDeliveryProvenance | undefined,
+  operation: ConversationOperation,
 ): MutableQueueEntry {
   let resolve!: () => void;
   const completion = new Promise<void>((done) => {
@@ -335,9 +342,7 @@ function makeQueueEntry(
     event,
     terminalCompletion,
     sequence,
-    delivery,
-    payload,
-    deliveryProvenance,
+    ...operation,
     resolve,
     completion,
     completed: false,
@@ -830,13 +835,18 @@ export class BridgeCoordinator {
       },
       terminalCompletion,
       this.#admissionSequence++,
-      selection.kind,
-      selection.kind === "reset" ? "" : selection.payload,
-      selection.kind === "reset" ? undefined : selection.provenance,
+      selection.kind === "reset"
+        ? { kind: "reset" }
+        : {
+            kind: "message",
+            delivery: selection.kind,
+            payload: selection.payload,
+            deliveryProvenance: selection.provenance,
+          },
     );
     if (reserveActive) {
       conversation.active = entry;
-    } else if (entry.delivery === "steer") {
+    } else if (entry.kind === "message" && entry.delivery === "steer") {
       conversation.steering.push(entry);
     } else {
       conversation.waiting.push(entry);
@@ -950,7 +960,7 @@ export class BridgeCoordinator {
       this.#pumpSteering(conversation);
       return;
     }
-    if (entry.delivery === "steer") {
+    if (entry.kind === "message" && entry.delivery === "steer") {
       entry.delivery = "prompt";
       this.#fallbackNotice(conversation, entry, this.#steeringSupported ? "steering_idle" : "steering_unavailable");
     }
@@ -989,7 +999,7 @@ export class BridgeCoordinator {
 
   #fallbackNotice(
     conversation: ConversationState,
-    entry: MutableQueueEntry,
+    entry: MessageQueueEntry,
     kind: "steering_idle" | "steering_unavailable",
   ): void {
     if (kind === "steering_idle" && entry.deliveryProvenance === "default") return;
@@ -1007,7 +1017,7 @@ export class BridgeCoordinator {
 
   #convertSteering(
     conversation: ConversationState,
-    entry: MutableQueueEntry,
+    entry: MessageQueueEntry,
     kind: "steering_idle" | "steering_unavailable",
   ): void {
     entry.delivery = "prompt";
@@ -1020,9 +1030,9 @@ export class BridgeCoordinator {
     if (!this.#dispatchOpen || this.#stopping || this.#fatal !== undefined) return;
 
     const reset =
-      conversation.active?.delivery === "reset"
+      conversation.active?.kind === "reset"
         ? conversation.active
-        : conversation.waiting.find((entry) => entry.delivery === "reset");
+        : conversation.waiting.find((entry) => entry.kind === "reset");
     // Unsupported input and input behind a reset transfer their existing slot
     // to ordinary FIFO. Ordinary waiting prompts do not form this barrier.
     for (const entry of conversation.steering.filter(
@@ -1152,7 +1162,7 @@ export class BridgeCoordinator {
         return;
       }
 
-      if (run.entry.delivery === "reset") {
+      if (run.entry.kind === "reset") {
         try {
           // Commit the durable deletion before changing the live view.  A
           // failed replacement is fatal, and must not make the coordinator
@@ -1254,7 +1264,7 @@ export class BridgeCoordinator {
       this.#turnsBySession.set(session.sessionId, turn);
 
       this.#startTyping(run);
-      const prompt = await this.#awaitPrompt(run, controller, releasePermit);
+      const prompt = await this.#awaitPrompt(run, controller, releasePermit, run.entry.payload);
       if (prompt.graceExpired || this.#stopping || this.#fatal !== undefined) {
         return;
       }
@@ -1552,7 +1562,7 @@ export class BridgeCoordinator {
   }
 
   #startTyping(run: ActiveRun): void {
-    if (run.entry.delivery === "reset" || this.#matrix.sendTyping === undefined) {
+    if (run.entry.kind === "reset" || this.#matrix.sendTyping === undefined) {
       return;
     }
     run.typingStarted = true;
@@ -1637,6 +1647,7 @@ export class BridgeCoordinator {
     run: ActiveRun,
     controller: CancellationController,
     releasePermit: () => void,
+    payload: string,
   ): Promise<PromptResult> {
     let resolveResult!: (result: PromptResult) => void;
     let settled = false;
@@ -1672,7 +1683,7 @@ export class BridgeCoordinator {
         }
         run.promptStarted = true;
         this.#unresolvedPrompts += 1;
-        const prompt = this.#acp.prompt(run.sessionId!, run.entry.payload, controller.signal);
+        const prompt = this.#acp.prompt(run.sessionId!, payload, controller.signal);
         this.#pumpSteering(run.conversation);
         return prompt;
       })

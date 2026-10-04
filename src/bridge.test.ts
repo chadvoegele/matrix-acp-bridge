@@ -4000,6 +4000,63 @@ void test("unsupported steering uses FIFO, explicit payloads are not reparsed, a
   await bridge.stop();
 });
 
+void test("queued reset operations stay distinct from literal reset messages through steering fallback", async () => {
+  for (const steering of [false, true]) {
+    const acp = new FakeSteeringAcp();
+    const prompts = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({
+      config: steeringConfig({ maxQueuedTurnsPerConversation: 3 }),
+      acp,
+      matrix,
+      steering,
+      dispatchOpen: false,
+    });
+    const completed: string[] = [];
+    const inputs = ["/reset", "/steer /reset", "/reset", "/prompt /reset"];
+    const pending = inputs.map((body, index) =>
+      bridge.handleTimelineEvent(event(`$operation-${index}`, ROOM_ONE, body), async () => {
+        completed.push(`$operation-${index}`);
+      }),
+    );
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 3);
+    assert.deepEqual(completed, []);
+    bridge.enableDispatch();
+    await pending[0];
+    await flush();
+    assert.deepEqual(acp.promptCalls, [{ sessionId: "session-1", text: "/reset" }]);
+    assert.deepEqual(completed, ["$operation-0"]);
+    assert.deepEqual(
+      matrix.sent.filter((part) => part.responseKind === "reset").map((part) => part.inboundEventId),
+      ["$operation-0"],
+    );
+    prompts.get("/reset")!(methodError());
+    await pending[1];
+    await pending[2];
+    await flush();
+    assert.deepEqual(acp.promptCalls, [
+      { sessionId: "session-1", text: "/reset" },
+      { sessionId: "session-2", text: "/reset" },
+    ]);
+    assert.deepEqual(completed, ["$operation-0", "$operation-1", "$operation-2"]);
+    prompts.get("/reset")!(methodError());
+    await pending[3];
+    await bridge.waitForIdle();
+    assert.deepEqual(
+      completed,
+      inputs.map((_, index) => `$operation-${index}`),
+    );
+    assert.deepEqual(
+      matrix.sent.filter((part) => part.responseKind === "reset").map((part) => part.inboundEventId),
+      ["$operation-0", "$operation-2"],
+    );
+    assert.deepEqual(acp.steeringCalls, []);
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 0);
+    assert.equal(bridge.fatalError, undefined);
+    await bridge.stop();
+  }
+});
+
 void test("shutdown interrupts unresolved steering at grace and ignores late promptRequired", async () => {
   const clock = new FakeClock();
   const acp = new FakeSteeringAcp();
