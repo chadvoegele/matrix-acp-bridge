@@ -1,3 +1,4 @@
+import { readMatrixRetryAfterMs } from "./matrix-retry.js";
 import { calculateRetryBackoff, createClient, MemoryStore } from "matrix-js-sdk";
 import { logger as matrixSdkRootLogger } from "matrix-js-sdk/lib/logger.js";
 import { classifyCryptoFailure, SAS_VERIFICATION_METHOD } from "./crypto-runtime.js";
@@ -939,68 +940,6 @@ function own(value: MatrixErrorRecord, key: string): unknown {
   return Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined;
 }
 
-function property(value: MatrixErrorRecord, key: string): unknown {
-  return value[key];
-}
-
-function retryDelayFromError(error: unknown): number | undefined {
-  if (isRecord(error)) {
-    const getRetryAfterMs = property(error, "getRetryAfterMs");
-    if (typeof getRetryAfterMs === "function") {
-      try {
-        const result = (getRetryAfterMs as () => unknown).call(error);
-        if (typeof result === "number" && Number.isFinite(result) && result >= 0) {
-          return result;
-        }
-      } catch {
-        // An invalid SDK hint is treated as absent.  The SDK fallback below
-        // still supplies a safe retryability decision.
-      }
-    }
-
-    const data = property(error, "data");
-    const retryAfterMs = numberProperty(data, "retry_after_ms");
-    if (retryAfterMs !== undefined && Number.isInteger(retryAfterMs) && retryAfterMs >= 0) {
-      return retryAfterMs;
-    }
-
-    const headers = property(error, "httpHeaders");
-    if (isRecord(headers)) {
-      const get = property(headers, "get");
-      if (typeof get === "function") {
-        try {
-          const value = (get as (name: string) => unknown).call(headers, "Retry-After");
-          const parsed = parseRetryAfterHeader(value);
-          if (parsed !== undefined) {
-            return parsed;
-          }
-        } catch {
-          // Ignore malformed server hints.
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
-function parseRetryAfterHeader(value: unknown): number | undefined {
-  if (typeof value !== "string" || value.length === 0) {
-    return undefined;
-  }
-  if (/^\d+$/u.test(value)) {
-    const seconds = Number(value);
-    if (Number.isSafeInteger(seconds)) {
-      return seconds * 1000;
-    }
-    return undefined;
-  }
-  const timestamp = Date.parse(value);
-  if (!Number.isNaN(timestamp)) {
-    return Math.max(0, timestamp - Date.now());
-  }
-  return undefined;
-}
-
 function sdkRetryDelay(error: unknown, attempts: number): number {
   try {
     return calculateRetryBackoff(error, attempts, true);
@@ -1054,7 +993,8 @@ export function classifyMatrixError(error: unknown, attempts = 0): MatrixFailure
   }
 
   const retryAfterMs =
-    retryDelayFromError(error) ?? (sdkDelay >= 0 ? sdkDelay : 1000 * 2 ** Math.min(Math.max(0, attempts), 4));
+    readMatrixRetryAfterMs(error, Date.now()) ??
+    (sdkDelay >= 0 ? sdkDelay : 1000 * 2 ** Math.min(Math.max(0, attempts), 4));
   return {
     kind,
     retryable,

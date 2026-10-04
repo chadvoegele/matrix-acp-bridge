@@ -6,6 +6,11 @@ if [ "$#" -ne 5 ]; then
   exit 2
 fi
 
+# Hold the shared lock across checks, provisioning, verification, tests and cleanup.
+if [ "${E2E_LIVE_LOCK_HELD:-}" != 1 ]; then
+  exec flock -n /tmp/matrix-acp-bridge-steering-live.lock env E2E_LIVE_LOCK_HELD=1 "$0" "$@"
+fi
+
 script_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
 environment_variable=$1
@@ -21,6 +26,11 @@ case $environment_file in
   /*) ;;
   *) environment_file=$(pwd)/$environment_file ;;
 esac
+
+if [ -e "$environment_file" ]; then
+  echo "Existing E2E environment requires explicit recovery/cleanup before another test invocation" >&2
+  exit 2
+fi
 
 # Setup runs from the repository root; keep its path identical to cleanup's.
 export "$environment_variable=$environment_file"

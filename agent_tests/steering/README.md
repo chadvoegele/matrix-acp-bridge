@@ -1,10 +1,18 @@
 # Live Matrix steering verification
 
+Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
+before running. Cache mode is the default for repeated suites: absent profiles
+use one-time designated test passwords; existing profiles reuse their original
+tokens and persistent stores without login. Explicit token mode remains supported. Cleanup
+preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
+Legacy password mode creates disposable devices. Shell test entry points hold
+the shared live lock; manual sequences must hold it through cleanup.
+
 `live-matrix.mjs` is an opt-in live homeserver test. It launches the built bridge
 CLI and the environment's real ACP command through unchanged NDJSON taps. Use
 only the two documented test accounts and designated test rooms from the ignored
 root `.env`. Check that configuration privately before evaluating any credential
-lookups; retrieve passwords with `nopass_pass.sh`. Never commit or print tokens,
+lookups; retrieve approved test credentials with `nopass_pass.sh`. Never commit or print tokens,
 private Matrix identifiers, or raw wire traces.
 
 Build with `npm ci && npm run build`. Supply an exact pi-acp PR115 build through
@@ -17,10 +25,10 @@ Provision through the existing documented harnesses. Set a distinct ignored
 sets the temporary bridge config to default steering and the selected response
 mode. Existing startup-ready and sender initial-sync gates run before any input. A
 two-second baseline observation requires zero session creation/loading, prompts, or steering requests. Use
-new temporary devices and fresh isolated state for each response mode. Replacing
+a separate token/device/store profile or new disposable devices for each response mode. Replacing
 state on an already used device can replay inputs through incremental sync after
-an older initial snapshot. The runner records a private device baseline next to
-the bridge token and rejects a different mode or state before live operations.
+an older initial snapshot. The runner records a private device baseline in
+the bridge state directory and rejects a different mode or state before live operations.
 Preserve all session IDs, clean up the old device set, then provision the next
 mode. Intentional initialized recovery uses the separate startup probe below.
 
@@ -51,7 +59,8 @@ For encrypted room mode, use `encrypted-e2e/provision.mjs`,
 steering. No trust bypass is supported.
 
 Always run cleanup even after a failed test. Cleanup deletes ACP sessions,
-revokes temporary devices, and then removes local state. If cleanup fails,
+revokes only owned temporary devices, and then removes run files. Reusable
+tokens and crypto stores remain; initialized delivery ledgers are preserved. If cleanup fails,
 preserve environment/token/state files privately for recovery before allowing a
 launcher to remove the worktree. Room events remain. Do not reprovision over an
 existing environment. The examples show explicit cleanup so an operator can
@@ -110,8 +119,12 @@ IDs from wire evidence and every state's session mappings for ordered cleanup.
 These probes retain startup/shutdown frames and child diagnostics and audit
 Matrix failures and RPC errors after awaited teardown.
 
-The optional `reset` probe requires initialized plaintext room state and a config
-with `default_message_delivery = "steer"`. It starts a real tool turn, confirms
+The optional `reset` probe requires initialized plaintext room state with a
+retained live ACP room session mapping and a config
+with `default_message_delivery = "steer"`. After token cleanup detaches mappings,
+first use the documented `send`, `catchup`, and `quiet` sequence to establish
+that session. Keep the same environment through `reset` and then clean up.
+It starts a real tool turn, confirms
 an injected steering acknowledgement and independent durable completion, then
 queues `/reset` and default-selected input while the original prompt is pending.
 It verifies that later input becomes one tracked prompt on a replacement session,
@@ -135,3 +148,15 @@ covering startup through awaited teardown with a documented margin; every
 previously checked event must appear as encrypted. Hold the shared live lock,
 use only documented rooms and never reuse the retained environment's revoked
 tokens. A retrospective window cannot reconstruct destroyed causal traces.
+
+For the initialized reset probe, idle-notice and reset-acknowledgement counts are
+scoped by the first controlled input's server timestamp. This excludes delayed
+older incremental history on reusable devices; notices emitted during the current
+probe still fail. Private evidence retains all observed events. RPC and Matrix
+failure audits still cover the full observed startup/scenario/shutdown sequence.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

@@ -8,7 +8,11 @@ import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { renderMatrixText } from "../../dist/matrix-text-rendering.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { readEnvironment, readToken, writePrivateFile } from "../e2e-support/common.mjs";
-import { assertSteeringBaseline, assertSteeringHealthy } from "../e2e-support/steering-observations.mjs";
+import {
+  assertSteeringBaseline,
+  assertSteeringHealthy,
+  selectEventsSinceInput,
+} from "../e2e-support/steering-observations.mjs";
 
 // The caller must hold the shared live lock and retain each state's session IDs
 // for cleanup. This probe intentionally separates sending while stopped from
@@ -158,15 +162,16 @@ try {
       );
       await waitFor(
         () =>
-          events.some(
+          selectEventsSinceInput(events, resetInputs[0]).some(
             (event) => event.sender === environment.bridge.userId && event.content?.body === "Agent session reset.",
           ),
         "reset acknowledgement",
         30_000,
         pair,
       );
+      const scenarioEvents = selectEventsSinceInput(events, resetInputs[0]);
       assert.equal(
-        events.filter(
+        scenarioEvents.filter(
           (event) => event.sender === environment.bridge.userId && event.content?.body === "Agent session reset.",
         ).length,
         1,
@@ -182,7 +187,7 @@ try {
       assert.equal(requests("_session/steering")[0].frame.params._meta.steering.idleBehavior, "promptRequired");
       assert.equal(requests("session/new").length, 1);
       assert.equal(
-        events.filter(
+        scenarioEvents.filter(
           (event) =>
             event.sender === environment.bridge.userId &&
             event.content?.body === "No running turn; message queued as a prompt.",

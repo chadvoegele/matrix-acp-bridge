@@ -1,5 +1,13 @@
 # Encrypted Matrix end-to-end test helpers
 
+Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
+before running. Cache mode is the default for repeated suites: absent profiles
+use one-time designated test passwords; existing profiles reuse their original
+tokens and persistent stores without login. Explicit token mode remains supported. Cleanup
+preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
+Legacy password mode creates disposable devices. Shell test entry points hold
+the shared live lock; manual sequences must hold it through cleanup.
+
 These test-only programs provision three dedicated devices on two existing Matrix accounts. They exercise normal SDK initial sync and completed-ID suppression across restart:
 
 1. the bridge device;
@@ -15,7 +23,7 @@ The mode-specific sender and crypto checks remain in this directory; shared prov
 - Node.js in the range accepted by `package.json`;
 - util-linux `script` for the bridge CLI's controlling terminal;
 - two existing Matrix accounts already joined to one encrypted room;
-- password login enabled for those accounts; and
+- either designated device-bound tokens with matching stores or password login enabled for those accounts; and
 - an ACP command that exposes one full-duplex ACP process on stdin/stdout.
 
 Export the private environment. Prefer retrieving passwords from a secret manager while sourcing your ignored `.env`, rather than writing passwords into that file:
@@ -25,6 +33,7 @@ export E2E_HOMESERVER='https://matrix.example.org'
 export E2E_ROOM_ID='!encrypted-room:matrix.example.org'
 export E2E_BRIDGE_USER_ID='@bridge-test:matrix.example.org'
 export E2E_SENDER_USER_ID='@sender-test:matrix.example.org'
+export E2E_AUTH_MODE=cache # one-time bootstrap, then persistent reuse
 export E2E_BRIDGE_PASSWORD='bridge-account-password'
 export E2E_SENDER_PASSWORD='sender-account-password'
 export E2E_ACP_CWD='/tmp'
@@ -41,7 +50,7 @@ The normal entry point provisions, tests, and cleans up even when setup or the t
 agent_tests/encrypted-e2e/test.sh
 ```
 
-It deletes the test-created ACP session with `session/delete`, logs out all three Matrix devices, and removes private local state. Matrix room events remain because they cannot be deleted reliably.
+It deletes the test-created ACP session with `session/delete`, logs out only owned disposable Matrix devices, and removes run files; reusable tokens/stores remain. Matrix room events remain because they cannot be deleted reliably.
 
 ## Retained setup for debugging
 
@@ -52,7 +61,7 @@ agent_tests/encrypted-e2e/setup.sh
 node agent_tests/encrypted-e2e/run.mjs
 ```
 
-Setup performs the normal checks, logs in three new device IDs, writes mode-`0600` token/config files, bootstraps all three persistent crypto stores, and runs the bridge's public `crypto verify` command. `verify-sas.mjs` compares both emoji and decimal SAS representations before confirming either client. It does not mark a device trusted through a local bypass.
+Setup performs the normal checks, validates supplied token devices (or logs in three new owned device IDs in password mode), writes mode-`0600` token/config files, validates existing reusable crypto stores (or bootstraps newly owned stores), and runs the bridge's public `crypto verify` command. `verify-sas.mjs` compares both emoji and decimal SAS representations before confirming either client. It does not mark a device trusted through a local bypass.
 
 Private state is recorded in:
 
@@ -82,7 +91,7 @@ The runner:
 
 ## Manual cleanup
 
-After a retained debugging run, delete the ACP session, revoke all three test devices, and remove private state:
+After a retained debugging run, delete owned ACP sessions/run files; retain cached devices and state:
 
 ```sh
 node agent_tests/encrypted-e2e/cleanup.mjs
@@ -109,3 +118,9 @@ command.
 
 Thread tests are a separate suite: [thread-sessions](../thread-sessions/README.md).
 This suite always uses room mode, including its senders and activity tests.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

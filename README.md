@@ -34,6 +34,9 @@ npm run format                 # fix spacing and format the repository
 npm run check                  # formatting, lint, typecheck, and test gate
 ```
 
+The [architecture and guidance assessment](docs/architecture.md) describes component
+ownership, compatibility and verification boundaries.
+
 ## ACP Connection
 
 The bridge must have a full-duplex ACP stdio connection:
@@ -120,3 +123,10 @@ reasoning effort and can run the integration tests.
 **Initial Prompt**
 
 I want to build a matrix client to acp bridge. This will allow me to create a matrix room with a 'chadagent' user and my user 'chad' and I'll be able to send messages which the agent will respond to. We'll connect to the agent via acp using a stdio. I want the agent user to be a normal user. Hopefully no application service needed for synapse. Let's start by inspecting these two implementations ~/code/github.com/openclaw/openclaw/extensions/matrix and ~/code/github.com/zooid-ai/zooid. Start some notes in spec/spec.md. What's going to be involved? How practical is it? How simple can we keep it? What's needed for security? Can we support e2ee?
+
+Live test authentication and cleanup are documented in
+[the shared harness contract](agent_tests/e2e-support/README.md). Supplied
+test-device tokens avoid repeated password login and preserve device-bound crypto.
+
+Live test profiles default to private persistent token/device/crypto caches outside
+the repository. See [cache bootstrap and separate setup/function reporting](agent_tests/e2e-support/README.md).

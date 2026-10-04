@@ -4000,6 +4000,63 @@ void test("unsupported steering uses FIFO, explicit payloads are not reparsed, a
   await bridge.stop();
 });
 
+void test("queued reset operations stay distinct from literal reset messages through steering fallback", async () => {
+  for (const steering of [false, true]) {
+    const acp = new FakeSteeringAcp();
+    const prompts = heldPrompts(acp);
+    const matrix = new FakeMatrix();
+    const bridge = new BridgeCoordinator({
+      config: steeringConfig({ maxQueuedTurnsPerConversation: 3 }),
+      acp,
+      matrix,
+      steering,
+      dispatchOpen: false,
+    });
+    const completed: string[] = [];
+    const inputs = ["/reset", "/steer /reset", "/reset", "/prompt /reset"];
+    const pending = inputs.map((body, index) =>
+      bridge.handleTimelineEvent(event(`$operation-${index}`, ROOM_ONE, body), async () => {
+        completed.push(`$operation-${index}`);
+      }),
+    );
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 3);
+    assert.deepEqual(completed, []);
+    bridge.enableDispatch();
+    await pending[0];
+    await flush();
+    assert.deepEqual(acp.promptCalls, [{ sessionId: "session-1", text: "/reset" }]);
+    assert.deepEqual(completed, ["$operation-0"]);
+    assert.deepEqual(
+      matrix.sent.filter((part) => part.responseKind === "reset").map((part) => part.inboundEventId),
+      ["$operation-0"],
+    );
+    prompts.get("/reset")!(methodError());
+    await pending[1];
+    await pending[2];
+    await flush();
+    assert.deepEqual(acp.promptCalls, [
+      { sessionId: "session-1", text: "/reset" },
+      { sessionId: "session-2", text: "/reset" },
+    ]);
+    assert.deepEqual(completed, ["$operation-0", "$operation-1", "$operation-2"]);
+    prompts.get("/reset")!(methodError());
+    await pending[3];
+    await bridge.waitForIdle();
+    assert.deepEqual(
+      completed,
+      inputs.map((_, index) => `$operation-${index}`),
+    );
+    assert.deepEqual(
+      matrix.sent.filter((part) => part.responseKind === "reset").map((part) => part.inboundEventId),
+      ["$operation-0", "$operation-2"],
+    );
+    assert.deepEqual(acp.steeringCalls, []);
+    assert.equal(bridge.getQueueDepth(ROOM_ONE), 0);
+    assert.equal(bridge.fatalError, undefined);
+    await bridge.stop();
+  }
+});
+
 void test("shutdown interrupts unresolved steering at grace and ignores late promptRequired", async () => {
   const clock = new FakeClock();
   const acp = new FakeSteeringAcp();
@@ -4669,4 +4726,35 @@ void test("mixed setup batches preserve idle and promptRequired provenance and t
     await bridge.waitForIdle();
     await bridge.stop();
   }
+});
+
+void test("shutdown abandons response backoff immediately without spending the grace deadline", async (context) => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeMatrix();
+  acp.promptImpl = async () => ({ kind: "method_error", operation: "session_prompt", fatal: false });
+  let attempts = 0;
+  matrix.send = async () => {
+    attempts += 1;
+    throw { failure: { kind: "transient", retryable: true, retryAfterMs: 60_000 } };
+  };
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  context.after(async () => {
+    clock.runAll();
+    await bridge.stop();
+  });
+  const completion = bridge.handleTimelineEvent(event("$shutdown-backoff"));
+  await waitFor(() => attempts === 1);
+  let stopped = false;
+  const stopping = bridge.stop().then(() => {
+    stopped = true;
+  });
+  await flush();
+  assert.equal(stopped, true);
+  await stopping;
+  await completion;
+  assert.equal(attempts, 1);
+  assert.equal(clock.pendingTimerCount, 0);
+  assert.equal(matrix.stopped, true);
+  assert.equal(acp.closed, true);
 });

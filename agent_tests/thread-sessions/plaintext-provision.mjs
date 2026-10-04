@@ -5,6 +5,7 @@ import { defaultEnvironmentPath, makeConfig, testDir } from "./plaintext-lib.mjs
 await provisionHarness({
   defaultEnvironmentPath,
   makeConfig,
+  responseMode: "thread",
   testDir,
   privateRootSuffix: "private/plaintext",
   environmentVariable: "THREAD_PLAINTEXT_ENVIRONMENT_FILE",

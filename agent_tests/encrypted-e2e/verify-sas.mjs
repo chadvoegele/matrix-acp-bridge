@@ -8,6 +8,11 @@ import { SasBridgeDiagnostics } from "./sas-diagnostics.mjs";
 
 const environmentPath = process.argv[2] ?? process.env.E2E_ENVIRONMENT_FILE ?? join(testDir, "environment.json");
 const environment = await readEnvironment(environmentPath);
+const { hasCachedSas } = await import("../e2e-support/cache.mjs");
+if (await hasCachedSas(environment)) {
+  process.stdout.write("SETUP REUSED: persistent public-CLI SAS verification retained.\n");
+  process.exit(0);
+}
 const timeoutMs = 180_000;
 let helper;
 let bridge;
@@ -219,6 +224,8 @@ const result = new Promise((resolve, reject) => {
 
 try {
   await result;
+  const { recordCachedSas } = await import("../e2e-support/cache.mjs");
+  await recordCachedSas(environment);
   process.stdout.write("SAS verification completed; emoji and decimal values matched.\n");
 } finally {
   stop(bridge);

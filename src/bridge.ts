@@ -1,16 +1,18 @@
+import { MatrixDelivery, type DeliveryOptions } from "./matrix-delivery.js";
+import { PromptPermits } from "./prompt-permits.js";
 import { createCancellationController } from "./cancellation.js";
 import { createHash } from "node:crypto";
 import { AcpActivityModel, type AcpActivity } from "./acp-activity.js";
 import { AcpActivityBatches, type ActivityBatch } from "./acp-activity-batches.js";
 import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
 import type { MatrixSafeHtml } from "./matrix-html.js";
-import { systemClock } from "./clock.js";
+import { systemClock, clampTimerMilliseconds } from "./clock.js";
 import type { CancellationController, Unsubscribe } from "./cancellation.js";
 import type { Clock, TimerHandle } from "./clock.js";
 import type { DiagnosticFields, DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
 import type { BridgeConfig } from "./config.js";
 import { selectMessageDelivery, type MessageDeliveryProvenance } from "./message-delivery.js";
-import { isRecord, numberProperty, stringProperty } from "./object-validation.js";
+import { isRecord } from "./object-validation.js";
 import {
   createInboundAuthorizer,
   isValidMatrixEventId,
@@ -41,7 +43,6 @@ import type {
   InboundMatrixEvent,
   MatrixBridgeAdapter,
   MatrixEventId,
-  MatrixFailureClassification,
   MatrixRoomId,
   MatrixHtmlMessage,
 } from "./matrix-client.js";
@@ -53,8 +54,6 @@ const TYPING_TIMEOUT_MS = 30_000;
 const TYPING_REFRESH_MS = 10_000;
 const CLOSED_MESSAGE_ID_LIMIT = 1000;
 const EVENT_ID_LIMIT = 10_000;
-const DEFAULT_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16_000, 30_000] as const;
-const MAX_TIMER_MS = 2_147_483_647;
 
 const noop = (): void => undefined;
 
@@ -101,12 +100,21 @@ export interface BridgeSnapshot {
   readonly unresolvedPrompts: number;
 }
 
-interface MutableQueueEntry {
+interface MessageOperation {
+  readonly kind: "message";
+  readonly payload: string;
+  readonly deliveryProvenance: MessageDeliveryProvenance;
+  delivery: "prompt" | "steer";
+}
+
+type ConversationOperation = { readonly kind: "reset" } | MessageOperation;
+
+type MutableQueueEntry = QueueEntryState & ConversationOperation;
+type MessageQueueEntry = QueueEntryState & MessageOperation;
+
+interface QueueEntryState {
   readonly event: NormalizedInboundEvent;
   readonly sequence: number;
-  readonly payload: string;
-  readonly deliveryProvenance: MessageDeliveryProvenance | undefined;
-  delivery: "prompt" | "steer" | "reset";
   readonly terminalCompletion: BridgeTerminalCompletion | undefined;
   readonly resolve: () => void;
   readonly completion: Promise<void>;
@@ -115,7 +123,6 @@ interface MutableQueueEntry {
 
 interface RoomState {
   readonly roomId: MatrixRoomId;
-  readonly outbound: OutboundMutex;
   readonly conversations: Map<string, ConversationState>;
 }
 
@@ -123,7 +130,7 @@ interface ConversationState {
   readonly identity: ConversationIdentity;
   readonly room: RoomState;
   readonly waiting: MutableQueueEntry[];
-  readonly steering: MutableQueueEntry[];
+  readonly steering: MessageQueueEntry[];
   steeringCall: SteeringWork | undefined;
   active: MutableQueueEntry | undefined;
   sessionId: AcpSessionId | undefined;
@@ -131,7 +138,7 @@ interface ConversationState {
 
 /** Decision lifetime is separate from its durable callback/output lifetime. */
 interface SteeringWork {
-  readonly entry: MutableQueueEntry;
+  readonly entry: MessageQueueEntry;
   readonly conversation: ConversationState;
   readonly sessionId: AcpSessionId;
   readonly interrupt: () => void;
@@ -209,66 +216,6 @@ interface SessionResolution {
   readonly methodFailure?: boolean;
 }
 
-interface DeliveryOptions {
-  readonly allowDuringStop?: boolean;
-  readonly retry?: boolean;
-}
-
-interface RetryWait {
-  readonly cancel: () => void;
-}
-
-function boolProperty(value: unknown, ...names: readonly string[]): boolean | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  for (const name of names) {
-    const candidate = value[name];
-    if (typeof candidate === "boolean") {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-function retryAfterFromError(value: unknown): number | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const retryGetter = value.getRetryAfterMs;
-  if (typeof retryGetter === "function") {
-    try {
-      const result = retryGetter.call(value) as unknown;
-      if (typeof result === "number" && Number.isFinite(result) && result >= 0) {
-        return result;
-      }
-    } catch {
-      // Fall through to the raw Matrix metadata forms.
-    }
-  }
-  const headers = value.httpHeaders ?? value.headers;
-  if (isRecord(headers) && typeof headers.get === "function") {
-    try {
-      const header = (headers.get as (name: string) => unknown).call(headers, "Retry-After");
-      if (typeof header === "string" && /^\d+$/u.test(header)) {
-        const seconds = Number(header);
-        if (Number.isSafeInteger(seconds)) {
-          return seconds * 1000;
-        }
-      }
-      if (typeof header === "string" && header.length > 0) {
-        const timestamp = Date.parse(header);
-        if (!Number.isNaN(timestamp)) {
-          return Math.max(0, timestamp - Date.now());
-        }
-      }
-    } catch {
-      // A malformed server hint is treated as absent.
-    }
-  }
-  return undefined;
-}
-
 function isAcpOutcome(value: unknown): value is AcpOutcome {
   if (!isRecord(value) || typeof value.kind !== "string") {
     return false;
@@ -319,21 +266,8 @@ function acpError(operation: "session_prompt" | "session_cancel"): AcpOutcome {
   return { kind: "transport_error", operation, fatal: true };
 }
 
-function safeErrorMessage(fallback: string): string {
-  // Raw ACP/Matrix errors are deliberately never placed in diagnostics or
-  // fatal messages.  This helper only selects a fixed message.
-  return fallback;
-}
-
-function clampTimer(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-  return Math.min(MAX_TIMER_MS, Math.floor(value));
-}
-
 function secondsToMilliseconds(seconds: number): number {
-  return clampTimer(seconds * 1000);
+  return clampTimerMilliseconds(seconds * 1000);
 }
 
 function sessionOptions(config: BridgeConfig): {
@@ -394,186 +328,11 @@ function sessionFailureCode(value: unknown): SessionFailureCode {
   return "acp_protocol";
 }
 
-function normalizeFailureClassification(value: unknown): MatrixFailureClassification | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const candidate = value.failure ?? value.classification ?? value;
-  if (!isRecord(candidate)) {
-    return undefined;
-  }
-  const kind = candidate.kind;
-  const retryable = candidate.retryable;
-  if ((kind !== "transient" && kind !== "permanent") || typeof retryable !== "boolean") {
-    return undefined;
-  }
-  const retryAfterMs = numberProperty(candidate, "retryAfterMs", "retry_after_ms");
-  const sdkRetryable = boolProperty(candidate, "sdkRetryable", "sdk_retryable") ?? false;
-  const httpStatus = numberProperty(candidate, "httpStatus", "status", "statusCode");
-  const errcode = stringProperty(candidate, "errcode", "errorCode");
-  return {
-    kind,
-    retryable,
-    sdkRetryable,
-    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
-    ...(httpStatus === undefined ? {} : { httpStatus }),
-    ...(errcode === undefined ? {} : { errcode }),
-  };
-}
-
-function matrixFailureFor(error: unknown): MatrixFailureClassification {
-  const explicit = normalizeFailureClassification(error);
-  if (explicit !== undefined) {
-    return explicit;
-  }
-
-  const status = numberProperty(error, "httpStatus", "status", "statusCode");
-  const retryAfterMs = numberProperty(error, "retryAfterMs", "retry_after_ms");
-  const data = isRecord(error) ? error.data : undefined;
-  const dataRetryAfter = numberProperty(data, "retry_after_ms");
-  const effectiveRetryAfter = retryAfterMs ?? dataRetryAfter ?? retryAfterFromError(error);
-  const transientStatus = status === 408 || status === 429 || (status !== undefined && status >= 500 && status < 600);
-  const code = stringProperty(error, "code");
-  const name = stringProperty(error, "name");
-  const message = stringProperty(error, "message")?.toLowerCase() ?? "";
-  const networkFailure =
-    code === "ECONNRESET" ||
-    code === "ECONNREFUSED" ||
-    code === "ETIMEDOUT" ||
-    code === "ENOTFOUND" ||
-    code === "EAI_AGAIN" ||
-    message.includes("network") ||
-    message.includes("socket") ||
-    message.includes("connection") ||
-    message.includes("fetch") ||
-    message.includes("timed out");
-  const sdkRetryable = boolProperty(error, "sdkRetryable", "isRetryable", "retryable") === true;
-  const retryable = transientStatus || networkFailure || sdkRetryable;
-  return {
-    kind: retryable ? "transient" : "permanent",
-    retryable,
-    sdkRetryable,
-    ...(effectiveRetryAfter === undefined ? {} : { retryAfterMs: effectiveRetryAfter }),
-    ...(status === undefined ? {} : { httpStatus: status }),
-    ...(name === undefined ? {} : { errcode: name }),
-  };
-}
-
-function retryDelay(failure: MatrixFailureClassification, attempt: number, random: () => number): number {
-  if (failure.retryAfterMs !== undefined && Number.isFinite(failure.retryAfterMs)) {
-    return clampTimer(Math.max(0, failure.retryAfterMs));
-  }
-  const cap = DEFAULT_RETRY_DELAYS_MS[Math.min(attempt, DEFAULT_RETRY_DELAYS_MS.length - 1)] ?? 30_000;
-  let sample = 0.5;
-  try {
-    sample = random();
-  } catch {
-    sample = 0.5;
-  }
-  if (!Number.isFinite(sample)) {
-    sample = 0.5;
-  }
-  return Math.floor(cap * Math.min(1, Math.max(0, sample)));
-}
-
-/** FIFO async mutex used for complete Matrix responses, not just one part. */
-class OutboundMutex {
-  #tail: Promise<void> = Promise.resolve();
-
-  run<T>(operation: () => Promise<T>): Promise<T> {
-    const previous = this.#tail;
-    let release: (() => void) | undefined;
-    this.#tail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return previous.then(operation).finally(() => {
-      release?.();
-    });
-  }
-}
-
-interface PermitWaiter {
-  readonly resolve: (release: (() => void) | undefined) => void;
-  cancelled: boolean;
-}
-
-/** A small cancellable semaphore for unresolved ACP prompt requests. */
-class PromptSemaphore {
-  #available: number;
-
-  readonly #waiters: PermitWaiter[] = [];
-
-  constructor(limit: number) {
-    if (!Number.isSafeInteger(limit) || limit <= 0) {
-      throw new RangeError("maxConcurrentPrompts must be a positive safe integer");
-    }
-    this.#available = limit;
-  }
-
-  acquire(): Promise<(() => void) | undefined> {
-    if (this.#available > 0) {
-      this.#available -= 1;
-      let released = false;
-      return Promise.resolve(() => {
-        if (released) {
-          return;
-        }
-        released = true;
-        this.#releaseOne();
-      });
-    }
-    return new Promise((resolve) => {
-      this.#waiters.push({ resolve, cancelled: false });
-    });
-  }
-
-  cancelWaiters(): void {
-    while (this.#waiters.length > 0) {
-      const waiter = this.#waiters.shift();
-      if (waiter === undefined) {
-        continue;
-      }
-      waiter.cancelled = true;
-      // eslint-disable-next-line unicorn/no-useless-undefined -- undefined releases a cancelled waiter without a permit
-      waiter.resolve(undefined);
-    }
-  }
-
-  get available(): number {
-    return this.#available;
-  }
-
-  get waiting(): number {
-    return this.#waiters.length;
-  }
-
-  #releaseOne(): void {
-    while (this.#waiters.length > 0) {
-      const waiter = this.#waiters.shift();
-      if (waiter === undefined || waiter.cancelled) {
-        continue;
-      }
-      let released = false;
-      waiter.resolve(() => {
-        if (released) {
-          return;
-        }
-        released = true;
-        this.#releaseOne();
-      });
-      return;
-    }
-    this.#available += 1;
-  }
-}
-
 function makeQueueEntry(
   event: NormalizedInboundEvent,
   terminalCompletion: BridgeTerminalCompletion | undefined,
   sequence: number,
-  delivery: MutableQueueEntry["delivery"],
-  payload: string,
-  deliveryProvenance: MessageDeliveryProvenance | undefined,
+  operation: ConversationOperation,
 ): MutableQueueEntry {
   let resolve!: () => void;
   const completion = new Promise<void>((done) => {
@@ -583,9 +342,7 @@ function makeQueueEntry(
     event,
     terminalCompletion,
     sequence,
-    delivery,
-    payload,
-    deliveryProvenance,
+    ...operation,
     resolve,
     completion,
     completed: false,
@@ -619,8 +376,6 @@ export class BridgeCoordinator {
 
   readonly #diagnostics: DiagnosticSink | undefined;
 
-  readonly #random: () => number;
-
   readonly #rooms = new Map<MatrixRoomId, RoomState>();
 
   readonly #eventIds = new Set<MatrixEventId>();
@@ -635,13 +390,13 @@ export class BridgeCoordinator {
 
   readonly #steeringWork = new Set<SteeringWork>();
 
-  readonly #retryWaits = new Set<RetryWait>();
+  readonly #delivery: MatrixDelivery;
 
   readonly #fatalListeners = new Set<FatalErrorListener>();
 
   readonly #idleWaiters = new Set<() => void>();
 
-  readonly #semaphore: PromptSemaphore;
+  readonly #semaphore: PromptPermits;
 
   readonly #subscriptions: Unsubscribe[] = [];
 
@@ -710,7 +465,14 @@ export class BridgeCoordinator {
     this.#matrix = matrix;
     this.#clock = options.clock ?? systemClock;
     this.#diagnostics = options.diagnostics;
-    this.#random = options.random ?? Math.random;
+    this.#delivery = new MatrixDelivery({
+      matrix,
+      clock: this.#clock,
+      random: options.random ?? Math.random,
+      canSend: (allowDuringStop) =>
+        !this.#stopped && (allowDuringStop === true || (!this.#stopping && this.#fatal === undefined)),
+      ...(this.#diagnostics === undefined ? {} : { diagnostics: this.#diagnostics }),
+    });
     this.#sessionStore = options.sessionStore ?? new InMemorySessionStore();
     this.#stateStore = options.stateStore;
     this.#loadSession = options.loadSession === true;
@@ -727,7 +489,7 @@ export class BridgeCoordinator {
         ...(this.#diagnostics === undefined ? {} : { diagnostics: this.#diagnostics }),
         clock: this.#clock,
       });
-    this.#semaphore = new PromptSemaphore(this.#config.limits.maxConcurrentPrompts);
+    this.#semaphore = new PromptPermits(this.#config.limits.maxConcurrentPrompts);
     this.#intakeOpen = options.intakeOpen ?? true;
     this.#dispatchOpen = options.dispatchOpen ?? true;
 
@@ -904,7 +666,7 @@ export class BridgeCoordinator {
       } catch (error) {
         this.#triggerFatal({
           code: isFatalAcpOutcome(error) ? "acp_protocol" : "startup",
-          message: safeErrorMessage("ACP initialization failed"),
+          message: "ACP initialization failed",
         });
         throw new Error("ACP initialization failed");
       }
@@ -941,6 +703,7 @@ export class BridgeCoordinator {
     this.#stopping = true;
     this.#intakeOpen = false;
     this.#dispatchOpen = false;
+    this.#delivery.cancelRetries();
     try {
       this.#matrix.stopIntake();
     } catch {
@@ -1072,13 +835,18 @@ export class BridgeCoordinator {
       },
       terminalCompletion,
       this.#admissionSequence++,
-      selection.kind,
-      selection.kind === "reset" ? "" : selection.payload,
-      selection.kind === "reset" ? undefined : selection.provenance,
+      selection.kind === "reset"
+        ? { kind: "reset" }
+        : {
+            kind: "message",
+            delivery: selection.kind,
+            payload: selection.payload,
+            deliveryProvenance: selection.provenance,
+          },
     );
     if (reserveActive) {
       conversation.active = entry;
-    } else if (entry.delivery === "steer") {
+    } else if (entry.kind === "message" && entry.delivery === "steer") {
       conversation.steering.push(entry);
     } else {
       conversation.waiting.push(entry);
@@ -1154,7 +922,6 @@ export class BridgeCoordinator {
   #newRoom(roomId: MatrixRoomId): RoomState {
     return {
       roomId,
-      outbound: new OutboundMutex(),
       conversations: new Map(),
     };
   }
@@ -1193,7 +960,7 @@ export class BridgeCoordinator {
       this.#pumpSteering(conversation);
       return;
     }
-    if (entry.delivery === "steer") {
+    if (entry.kind === "message" && entry.delivery === "steer") {
       entry.delivery = "prompt";
       this.#fallbackNotice(conversation, entry, this.#steeringSupported ? "steering_idle" : "steering_unavailable");
     }
@@ -1232,7 +999,7 @@ export class BridgeCoordinator {
 
   #fallbackNotice(
     conversation: ConversationState,
-    entry: MutableQueueEntry,
+    entry: MessageQueueEntry,
     kind: "steering_idle" | "steering_unavailable",
   ): void {
     if (kind === "steering_idle" && entry.deliveryProvenance === "default") return;
@@ -1250,7 +1017,7 @@ export class BridgeCoordinator {
 
   #convertSteering(
     conversation: ConversationState,
-    entry: MutableQueueEntry,
+    entry: MessageQueueEntry,
     kind: "steering_idle" | "steering_unavailable",
   ): void {
     entry.delivery = "prompt";
@@ -1263,9 +1030,9 @@ export class BridgeCoordinator {
     if (!this.#dispatchOpen || this.#stopping || this.#fatal !== undefined) return;
 
     const reset =
-      conversation.active?.delivery === "reset"
+      conversation.active?.kind === "reset"
         ? conversation.active
-        : conversation.waiting.find((entry) => entry.delivery === "reset");
+        : conversation.waiting.find((entry) => entry.kind === "reset");
     // Unsupported input and input behind a reset transfer their existing slot
     // to ordinary FIFO. Ordinary waiting prompts do not form this barrier.
     for (const entry of conversation.steering.filter(
@@ -1395,7 +1162,7 @@ export class BridgeCoordinator {
         return;
       }
 
-      if (run.entry.delivery === "reset") {
+      if (run.entry.kind === "reset") {
         try {
           // Commit the durable deletion before changing the live view.  A
           // failed replacement is fatal, and must not make the coordinator
@@ -1497,7 +1264,7 @@ export class BridgeCoordinator {
       this.#turnsBySession.set(session.sessionId, turn);
 
       this.#startTyping(run);
-      const prompt = await this.#awaitPrompt(run, controller, releasePermit);
+      const prompt = await this.#awaitPrompt(run, controller, releasePermit, run.entry.payload);
       if (prompt.graceExpired || this.#stopping || this.#fatal !== undefined) {
         return;
       }
@@ -1795,7 +1562,7 @@ export class BridgeCoordinator {
   }
 
   #startTyping(run: ActiveRun): void {
-    if (run.entry.delivery === "reset" || this.#matrix.sendTyping === undefined) {
+    if (run.entry.kind === "reset" || this.#matrix.sendTyping === undefined) {
       return;
     }
     run.typingStarted = true;
@@ -1880,6 +1647,7 @@ export class BridgeCoordinator {
     run: ActiveRun,
     controller: CancellationController,
     releasePermit: () => void,
+    payload: string,
   ): Promise<PromptResult> {
     let resolveResult!: (result: PromptResult) => void;
     let settled = false;
@@ -1915,7 +1683,7 @@ export class BridgeCoordinator {
         }
         run.promptStarted = true;
         this.#unresolvedPrompts += 1;
-        const prompt = this.#acp.prompt(run.sessionId!, run.entry.payload, controller.signal);
+        const prompt = this.#acp.prompt(run.sessionId!, payload, controller.signal);
         this.#pumpSteering(run.conversation);
         return prompt;
       })
@@ -2282,25 +2050,7 @@ export class BridgeCoordinator {
     };
     this.#outboundOperations += 1;
     try {
-      return await turn.room.outbound.run(async () => {
-        let attempt = 0;
-        for (;;) {
-          if (this.#stopping || this.#fatal !== undefined) return;
-          try {
-            return await this.#matrix.sendHtmlMessage!(message);
-          } catch (error) {
-            const failure = matrixFailureFor(error);
-            if (!failure.retryable) {
-              this.#diagnostic("warn", "matrix-live-abandoned", {
-                kind: "delivery",
-              });
-              return;
-            }
-            const delay = retryDelay(failure, attempt++, this.#random);
-            if (!(await this.#waitForRetry(delay))) return;
-          }
-        }
-      });
+      return await this.#delivery.sendLive(message);
     } finally {
       this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
       this.#resolveIdleWaiters();
@@ -2341,86 +2091,12 @@ export class BridgeCoordinator {
     }
     this.#outboundOperations += 1;
     try {
-      return await room.outbound.run(async () => {
-        let attempt = 0;
-        for (const part of parts) {
-          while (true) {
-            // The room mutex or an earlier multipart send may have waited
-            // across shutdown. Recheck before starting each SDK request.
-            if (this.#stopped || ((this.#stopping || this.#fatal !== undefined) && options.allowDuringStop !== true)) {
-              return false;
-            }
-            let sent = false;
-            try {
-              await this.#matrix.sendMessage(part);
-              sent = true;
-            } catch (error) {
-              const failure = matrixFailureFor(error);
-              if (options.retry === false || !failure.retryable || this.#stopping || this.#fatal !== undefined) {
-                this.#diagnostic("warn", "matrix-response-abandoned", {
-                  roomId: room.roomId,
-                  eventId: part.inboundEventId,
-                  responseKind: part.responseKind,
-                  partNumber: part.partNumber,
-                });
-                return false;
-              }
-              const delay = retryDelay(failure, attempt, this.#random);
-              attempt += 1;
-              if (!(await this.#waitForRetry(delay))) {
-                return false;
-              }
-            }
-            if (sent) {
-              attempt = 0;
-              break;
-            }
-          }
-        }
-        return true;
-      });
+      return await this.#delivery.sendParts(room.roomId, parts, options);
     } finally {
       this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
       this.#resolveIdleWaiters();
       this.#maybeFinalizeStop();
     }
-  }
-
-  #waitForRetry(delayMs: number): Promise<boolean> {
-    if (this.#stopping || this.#fatal !== undefined) {
-      return Promise.resolve(false);
-    }
-    // The cancellation callback closes over the timer before it is created.
-    // eslint-disable-next-line prefer-const -- timer initialization follows wait construction
-    let timer: TimerHandle;
-    let settled = false;
-    let resolveWait!: (completed: boolean) => void;
-    const promise = new Promise<boolean>((resolve) => {
-      resolveWait = resolve;
-    });
-    const wait: RetryWait = {
-      cancel: () => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        if (timer !== undefined) {
-          this.#clock.clearTimeout(timer);
-        }
-        this.#retryWaits.delete(wait);
-        resolveWait(false);
-      },
-    };
-    this.#retryWaits.add(wait);
-    timer = this.#clock.setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      this.#retryWaits.delete(wait);
-      resolveWait(true);
-    }, clampTimer(delayMs));
-    return promise;
   }
 
   #finishRun(run: ActiveRun): void {
@@ -2543,9 +2219,7 @@ export class BridgeCoordinator {
       this.#clock.clearTimeout(this.#stopDeadlineTimer);
       this.#stopDeadlineTimer = undefined;
     }
-    for (const wait of this.#retryWaits) {
-      wait.cancel();
-    }
+    this.#delivery.cancelRetries();
     for (const subscription of this.#subscriptions.splice(0)) {
       try {
         subscription();

@@ -1,5 +1,12 @@
 # Restart Persistence Matrix E2E Test
 
+Follow the shared [authentication, ownership and recovery contract](../e2e-support/README.md).
+Token mode uses designated reusable test devices and their original persistent
+state without `/login`; cleanup preserves tokens, devices, crypto and delivery
+ledgers while deleting owned ACP sessions. Fresh-device login/bootstrap steps
+below apply only to disposable password mode. Hold the shared live lock for
+manual operations; shell test entry points hold it automatically.
+
 ## Run
 
 Configure the live environment described in
@@ -9,9 +16,9 @@ Configure the live environment described in
 agent_tests/unencrypted-e2e/restart-persistence-test.sh
 ```
 
-The entry point runs `npm run check`, provisions fresh Matrix devices and an
-empty private bridge state directory, executes the test, deletes the created
-ACP session, revokes both devices, and removes local private state. Cleanup is
+The entry point runs `npm run check`, validates reusable Matrix tokens and their original delivery state, or provisions
+fresh owned password-mode devices/state. It executes the test, deletes created
+ACP sessions, revokes only owned devices, and preserves reusable credentials/stores. Cleanup is
 also attempted after failures and ordinary signals. If remote cleanup fails,
 private state is retained so cleanup can be retried safely.
 
@@ -20,7 +27,7 @@ private state is retained so cleanup can be retried safely.
 1. Start the ACP proxy and bridge and wait for `startup-ready`.
 2. Send a unique value in a memory instruction and require a deterministic
    acknowledgement that does not echo the value.
-3. Assert exactly one `session/new`, one prompt, initialized schema-v12 state,
+3. Assert exactly one `session/new`, one prompt, initialized schema-v13 state,
    a bounded completed-ID ledger, and a room mapping to the created session.
    Fail clearly unless ACP advertises `loadSession`.
 4. Gracefully stop the bridge and ACP proxy, waiting for state flush and lock
@@ -43,3 +50,9 @@ private state is retained so cleanup can be retried safely.
 
 The test uses graceful shutdown and makes no claim about ambiguous crash
 boundaries or durable recovery of an interrupted response.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

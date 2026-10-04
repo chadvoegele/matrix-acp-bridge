@@ -15,10 +15,10 @@ run_script=$4
 
 case $mode in
   encrypted)
-    required_names='E2E_HOMESERVER E2E_ROOM_ID E2E_BRIDGE_USER_ID E2E_SENDER_USER_ID E2E_BRIDGE_PASSWORD E2E_SENDER_PASSWORD E2E_ACP_COMMAND'
+    required_names='E2E_HOMESERVER E2E_ROOM_ID E2E_BRIDGE_USER_ID E2E_SENDER_USER_ID E2E_ACP_COMMAND'
     ;;
   unencrypted)
-    required_names='E2E_HOMESERVER E2E_BRIDGE_USER_ID E2E_SENDER_USER_ID E2E_BRIDGE_PASSWORD E2E_SENDER_PASSWORD E2E_ACP_COMMAND'
+    required_names='E2E_HOMESERVER E2E_BRIDGE_USER_ID E2E_SENDER_USER_ID E2E_ACP_COMMAND'
     ;;
   *)
     echo "unknown E2E mode: $mode" >&2
@@ -39,6 +39,11 @@ if [ "$mode" = unencrypted ] && [ -z "${UNENCRYPTED_E2E_ROOM_ID:-${E2E_ROOM_ID:-
 fi
 
 cd "$repo_root"
+node --input-type=module - "$mode" <<'JS'
+import { roleAuthentication, selectAuthMode } from "./agent_tests/e2e-support/auth.mjs";
+const mode = selectAuthMode();
+for (const role of process.argv[2] === "encrypted" ? ["bridge", "sender", "helper"] : ["bridge", "sender"]) roleAuthentication(role, mode);
+JS
 npm ci
 npm run check
 node "$repo_root/$provision_script"

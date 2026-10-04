@@ -1,5 +1,12 @@
 # Unencrypted Message Test
 
+Follow the shared [authentication, ownership and recovery contract](../e2e-support/README.md).
+Token mode uses designated reusable test devices and their original persistent
+state without `/login`; cleanup preserves tokens, devices, crypto and delivery
+ledgers while deleting owned ACP sessions. Fresh-device login/bootstrap steps
+below apply only to disposable password mode. Hold the shared live lock for
+manual operations; shell test entry points hold it automatically.
+
 ## Conditions
 
 1. The configured room must not have encryption enabled.
@@ -28,7 +35,7 @@ docker --host ssh://ACP_DOCKER_HOST exec -i pi-acp \
 2. A sender account and temporary device.
 3. An unencrypted room containing both accounts.
 
-The harness shares the encrypted test's `E2E_HOMESERVER`, account, password, ACP, and working-directory variables. Set `UNENCRYPTED_E2E_ROOM_ID` for the plaintext room; `E2E_ROOM_ID` is the fallback. See [`../unencrypted-e2e/README.md`](../unencrypted-e2e/README.md).
+The harness shares the encrypted test's `E2E_HOMESERVER`, account, authentication, ACP, and working-directory variables. Set `UNENCRYPTED_E2E_ROOM_ID` for the plaintext room; `E2E_ROOM_ID` is the fallback. See [`../unencrypted-e2e/README.md`](../unencrypted-e2e/README.md).
 
 ### Bridge configuration
 
@@ -64,9 +71,9 @@ shutdown_grace_seconds = 30
    npm run check
    ```
 
-2. Create a new empty bridge state directory.
+2. In disposable password mode, create a new empty state directory. In token mode, retain the original initialized delivery state and (for encryption) bootstrapped crypto stores.
 
-3. Log in temporary bridge and sender devices. No crypto bootstrap or SAS verification is needed.
+3. Validate supplied bridge/sender tokens, or log in new disposable devices in password mode. No crypto bootstrap or SAS verification is needed.
 
 4. Start the ACP stdio proxy and bridge. Wait for the bridge's `startup-ready` diagnostic.
 
@@ -95,18 +102,18 @@ shutdown_grace_seconds = 30
 node agent_tests/unencrypted-e2e/cleanup.mjs
 ```
 
-Cleanup must delete saved ACP sessions, log out both temporary Matrix devices, and remove generated tokens, configuration, sync/session state, and locks. It preserves local state if remote cleanup fails.
+Cleanup deletes saved ACP sessions and run configuration. Only owned password-mode devices are logged out and their generated tokens/stores removed. Reusable tokens, crypto and initialized delivery ledgers remain. It preserves local state if remote cleanup fails.
 
 ## State created by the test
 
 A successful setup creates:
 
-- two temporary Matrix device IDs and access tokens;
+- two reusable token devices or newly owned password-mode devices;
 - one ACP agent session and its agent-owned transcript/state;
 - ignored local identity configuration and token files; and
 - bridge sync state, room-to-ACP mapping, and lock files.
 
-Cleanup removes the active devices, ACP session, and local files. It leaves plaintext room events, service logs, and normal ignored build outputs such as `node_modules/` and `dist/`.
+Cleanup removes owned disposable devices, the ACP session and run files; reusable credentials and stores remain. It leaves plaintext room events, service logs, and normal ignored build outputs such as `node_modules/` and `dist/`.
 
 ## Expected outcome
 
@@ -129,3 +136,9 @@ The test passes only when all these conditions hold:
 - A missing response usually means the sender or room allowlist is wrong, the bridge device is not joined, or ACP did not answer.
 - More than one matching `session/prompt` means one Matrix event was submitted to ACP more than once.
 - An encrypted wire event means the test room or client setup violates the disabled-mode contract.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

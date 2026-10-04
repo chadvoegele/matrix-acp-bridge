@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { startBridgePair, stopBridgePair } from "./acp.mjs";
+import { selectEventsSinceInput } from "./steering-observations.mjs";
 import { assertThreadResponse } from "./thread-sessions.mjs";
 import { installLiveDecryptionFailureHandler } from "../encrypted-e2e/decryption-failure-gate.mjs";
 
@@ -68,15 +69,7 @@ export async function runActivityHarness({ readEnvironment, readToken, createAda
     });
     await final;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
-    if (threadMode) {
-      assert.equal(typeof promptTimestamp, "number", "encrypted thread root timestamp was not observed");
-      // Reused crypto stores can finish decrypting old history in a live batch.
-      // Scope by the test prompt's server timestamp, never by the expected root:
-      // incorrectly routed new output must still fail the relation assertions.
-      events = events.filter(
-        (event) => typeof event.originServerTs === "number" && event.originServerTs >= promptTimestamp,
-      );
-    }
+    events = selectEventsSinceInput(events, { originServerTs: promptTimestamp });
     assert(events.length >= 5, "encrypted activity did not send expected messages");
     for (const event of events) {
       assert(

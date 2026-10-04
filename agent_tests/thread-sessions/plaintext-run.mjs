@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import { childExit, runSender, startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
 import { ThreadSessionMonitor } from "../e2e-support/thread-sessions.mjs";
-import { defaultEnvironmentPath, readEnvironment, testDir } from "./plaintext-lib.mjs";
+import { createUnknownThreadRoot } from "../e2e-support/unknown-thread-root.mjs";
+import { defaultEnvironmentPath, readEnvironment, readToken, testDir } from "./plaintext-lib.mjs";
 
 const environmentPath = process.argv[2] ?? process.env.THREAD_PLAINTEXT_ENVIRONMENT_FILE ?? defaultEnvironmentPath;
 const environment = await readEnvironment(environmentPath);
@@ -101,7 +102,7 @@ try {
     );
   }
 
-  const unknownRoot = `$unknown-${marker.toLowerCase()}:example.org`;
+  const unknownRoot = await createUnknownThreadRoot(environment, await readToken(environment.bridge.tokenFile));
   const unknownPrompt = `UNKNOWN_THREAD_${marker}`;
   const promptsBeforeUnknown = promptSessions.size;
   const sessionsBeforeUnknown = sessionIds.size;

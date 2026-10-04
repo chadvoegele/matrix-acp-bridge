@@ -1,14 +1,21 @@
 # `/reset` Message Test
 
+Follow the shared [authentication, ownership and recovery contract](../e2e-support/README.md).
+Token mode uses designated reusable test devices and their original persistent
+state without `/login`; cleanup preserves tokens, devices, crypto and delivery
+ledgers while deleting owned ACP sessions. Fresh-device login/bootstrap steps
+below apply only to disposable password mode. Hold the shared live lock for
+manual operations; shell test entry points hold it automatically.
+
 ## Conditions
 
-1. The configured room is unencrypted and begins with empty bridge state.
+1. The configured room is unencrypted and begins without active ACP mappings; reusable token profiles retain their initialized delivery ledger.
 2. The allowed Matrix sender sends all three top-level plaintext messages.
 3. The ACP endpoint supports `session/delete` so both test-created sessions can be cleaned up.
 
 ## Automated test
 
-The harness in [`../unencrypted-e2e/`](../unencrypted-e2e/README.md) provisions temporary devices, taps the ACP protocol in both directions, runs the exchanges, and cleans up. Generated credentials, bridge state, and the retained session-ID list stay in ignored private paths.
+The harness in [`../unencrypted-e2e/`](../unencrypted-e2e/README.md) prepares reusable token devices or new owned password devices, taps the ACP protocol in both directions, runs the exchanges, and cleans up. Generated credentials, bridge state, and the retained session-ID list stay in ignored private paths.
 
 ```sh
 agent_tests/unencrypted-e2e/test-reset.sh
@@ -21,7 +28,7 @@ The test performs this sequence:
 3. Send exact `/reset` and require exactly `Agent session reset.`.
 4. Send a second unique ordinary prompt and require its exact response.
 5. Confirm the follow-up uses a different newly created ACP session.
-6. Stop cleanly and delete both ACP sessions and both Matrix test devices.
+6. Stop cleanly and delete both ACP sessions; revoke only owned disposable Matrix devices.
 
 ## Assertions
 
@@ -33,3 +40,9 @@ The test performs this sequence:
 - Cleanup reads the ignored retained-ID list as well as the final bridge mapping, ensuring reset cannot hide the first session from deletion.
 
 Cleanup preserves private local state if ACP deletion or Matrix device revocation fails, allowing safe diagnosis and retry.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

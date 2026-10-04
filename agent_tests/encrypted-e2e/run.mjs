@@ -4,6 +4,7 @@ import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runSender as runSenderProcess, startBridgePair, stopBridgePair } from "../e2e-support/acp.mjs";
+import { assertCompletedEventLedger } from "../e2e-support/completed-event-ledger.mjs";
 import { defaultEnvironmentPath, readEnvironment, testDir } from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
@@ -78,15 +79,12 @@ async function bridgeState() {
   return JSON.parse(await readFile(join(environment.bridge.stateDir, "bridge-state.json"), "utf8"));
 }
 
-function assertSchemaV12State(state, label) {
+function assertCurrentState(state, label) {
   if (state.initialized !== true || Object.hasOwn(state, "cursor") || Object.hasOwn(state, "pendingBatches")) {
-    throw new Error(`${label} bridge state is not schema-v12 completed-ID state`);
+    throw new Error(`${label} bridge state is not initialized completed-ID state`);
   }
   const ids = state.completedEventIds?.[environment.roomId];
-  if (!Array.isArray(ids) || new Set(ids).size !== ids.length || ids.length > 100) {
-    throw new Error(`${label} completed-ID ledger is missing, duplicate, or unbounded`);
-  }
-  return ids;
+  return assertCompletedEventLedger(ids, label);
 }
 
 async function assertNoTemporarySnapshot() {
@@ -102,9 +100,9 @@ async function assertNoTemporarySnapshot() {
 // Each invocation starts a new delivery test while preserving the established
 // crypto identity. This prevents messages from an interrupted prior test run
 // from being submitted as bounded catch-up work.
-await rm(join(environment.bridge.stateDir, "bridge-state.json"), {
-  force: true,
-});
+if (environment.bridge.ownership !== "reusable") {
+  await rm(join(environment.bridge.stateDir, "bridge-state.json"), { force: true });
+}
 const originalFingerprints = await fingerprints();
 let pair;
 try {
@@ -118,7 +116,7 @@ try {
     );
   }
   const firstState = await bridgeState();
-  assertSchemaV12State(firstState, "first");
+  assertCurrentState(firstState, "first");
   if (!firstState.completedEventIds[environment.roomId].includes(first.promptEventId)) {
     throw new Error("first encrypted prompt was not recorded as completed");
   }
@@ -143,7 +141,7 @@ try {
     );
   }
   const secondState = await bridgeState();
-  const completedIds = assertSchemaV12State(secondState, "second");
+  const completedIds = assertCurrentState(secondState, "second");
   if (!completedIds.includes(second.promptEventId)) {
     throw new Error("second encrypted prompt was not recorded as completed");
   }
