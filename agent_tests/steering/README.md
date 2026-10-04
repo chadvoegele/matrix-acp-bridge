@@ -118,8 +118,12 @@ IDs from wire evidence and every state's session mappings for ordered cleanup.
 These probes retain startup/shutdown frames and child diagnostics and audit
 Matrix failures and RPC errors after awaited teardown.
 
-The optional `reset` probe requires initialized plaintext room state and a config
-with `default_message_delivery = "steer"`. It starts a real tool turn, confirms
+The optional `reset` probe requires initialized plaintext room state with a
+retained live ACP room session mapping and a config
+with `default_message_delivery = "steer"`. After token cleanup detaches mappings,
+first use the documented `send`, `catchup`, and `quiet` sequence to establish
+that session. Keep the same environment through `reset` and then clean up.
+It starts a real tool turn, confirms
 an injected steering acknowledgement and independent durable completion, then
 queues `/reset` and default-selected input while the original prompt is pending.
 It verifies that later input becomes one tracked prompt on a replacement session,
