@@ -1,10 +1,17 @@
 # Live Matrix steering verification
 
+Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
+before running. Token mode is preferred for repeated suites: supplied test-device
+tokens use their original persistent stores, with no password login. Cleanup
+preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
+Legacy password mode creates disposable devices. Shell test entry points hold
+the shared live lock; manual sequences must hold it through cleanup.
+
 `live-matrix.mjs` is an opt-in live homeserver test. It launches the built bridge
 CLI and the environment's real ACP command through unchanged NDJSON taps. Use
 only the two documented test accounts and designated test rooms from the ignored
 root `.env`. Check that configuration privately before evaluating any credential
-lookups; retrieve passwords with `nopass_pass.sh`. Never commit or print tokens,
+lookups; retrieve approved test credentials with `nopass_pass.sh`. Never commit or print tokens,
 private Matrix identifiers, or raw wire traces.
 
 Build with `npm ci && npm run build`. Supply an exact pi-acp PR115 build through
@@ -17,7 +24,7 @@ Provision through the existing documented harnesses. Set a distinct ignored
 sets the temporary bridge config to default steering and the selected response
 mode. Existing startup-ready and sender initial-sync gates run before any input. A
 two-second baseline observation requires zero session creation/loading, prompts, or steering requests. Use
-new temporary devices and fresh isolated state for each response mode. Replacing
+a separate token/device/store profile or new disposable devices for each response mode. Replacing
 state on an already used device can replay inputs through incremental sync after
 an older initial snapshot. The runner records a private device baseline next to
 the bridge token and rejects a different mode or state before live operations.
@@ -51,7 +58,8 @@ For encrypted room mode, use `encrypted-e2e/provision.mjs`,
 steering. No trust bypass is supported.
 
 Always run cleanup even after a failed test. Cleanup deletes ACP sessions,
-revokes temporary devices, and then removes local state. If cleanup fails,
+revokes only owned temporary devices, and then removes run files. Reusable
+tokens and crypto stores remain; initialized delivery ledgers are preserved. If cleanup fails,
 preserve environment/token/state files privately for recovery before allowing a
 launcher to remove the worktree. Room events remain. Do not reprovision over an
 existing environment. The examples show explicit cleanup so an operator can

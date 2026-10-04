@@ -1,5 +1,12 @@
 # Unencrypted Matrix end-to-end test helpers
 
+Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
+before running. Token mode is preferred for repeated suites: supplied test-device
+tokens use their original persistent stores, with no password login. Cleanup
+preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
+Legacy password mode creates disposable devices. Shell test entry points hold
+the shared live lock; manual sequences must hold it through cleanup.
+
 These test-only programs provision bridge and sender devices on two existing Matrix accounts. They send two plaintext exchanges across a bridge restart, verify both wire events are `m.room.message`, check the first response's Matrix Markdown formatting, and assert that the completed first prompt is suppressed by normal initial-sync recovery.
 
 Generated configuration and tokens live under ignored private paths.
@@ -10,7 +17,7 @@ The raw Matrix sender and plaintext wire assertions remain in this directory; sh
 
 - Node.js in the range accepted by `package.json`;
 - two existing Matrix accounts joined to one **unencrypted** room;
-- password login enabled for both accounts; and
+- either designated device-bound tokens with matching stores or password login enabled for both accounts; and
 - an ACP command exposing one full-duplex ACP process on stdin/stdout.
 
 The harness shares the encrypted test's account, password, homeserver, ACP, and working-directory variables. Only the room normally differs:
@@ -20,6 +27,7 @@ export E2E_HOMESERVER='https://matrix.example.org'
 export UNENCRYPTED_E2E_ROOM_ID='!plaintext-room:matrix.example.org'
 export E2E_BRIDGE_USER_ID='@bridge-test:matrix.example.org'
 export E2E_SENDER_USER_ID='@sender-test:matrix.example.org'
+export E2E_AUTH_MODE=password # legacy disposable-device example
 export E2E_BRIDGE_PASSWORD='bridge-account-password'
 export E2E_SENDER_PASSWORD='sender-account-password'
 export E2E_ACP_CWD='/tmp'
@@ -50,7 +58,7 @@ Run the required completed-ID recovery test:
 agent_tests/unencrypted-e2e/completed-id-recovery-test.sh
 ```
 
-Each entry point installs dependencies, runs checks, provisions two devices, runs its exchanges, deletes test-created ACP sessions, revokes both devices, and removes local private state. Matrix room events remain.
+Each entry point installs dependencies, runs checks, provisions two devices, runs its exchanges, deletes test-created ACP sessions, revokes only owned disposable devices, and removes run files; reusable stores remain. Matrix room events remain.
 
 The `/reset` test records both observed ACP session IDs in ignored private state. This lets cleanup delete the initial session even though reset removes its room mapping from `bridge-state.json`.
 

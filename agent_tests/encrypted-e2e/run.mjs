@@ -100,9 +100,9 @@ async function assertNoTemporarySnapshot() {
 // Each invocation starts a new delivery test while preserving the established
 // crypto identity. This prevents messages from an interrupted prior test run
 // from being submitted as bounded catch-up work.
-await rm(join(environment.bridge.stateDir, "bridge-state.json"), {
-  force: true,
-});
+if (environment.bridge.ownership !== "reusable") {
+  await rm(join(environment.bridge.stateDir, "bridge-state.json"), { force: true });
+}
 const originalFingerprints = await fingerprints();
 let pair;
 try {

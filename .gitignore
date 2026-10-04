@@ -3,3 +3,8 @@ node_modules/
 dist/
 dist-test/
 coverage/
+
+# Private live harness credentials, stores, recovery records and evidence
+agent_tests/**/private/
+agent_tests/**/*environment.json
+agent_tests/**/*.e2e-device-binding.json

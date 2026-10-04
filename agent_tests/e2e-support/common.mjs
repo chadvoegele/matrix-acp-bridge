@@ -1,8 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  claimReusableState,
+  pathsOverlap,
+  validatePrivatePath,
+  validateReusableState,
+  validateTokenIdentity,
+} from "./auth.mjs";
 
 export const supportDir = dirname(fileURLToPath(import.meta.url));
 
@@ -39,8 +47,9 @@ export async function readToken(path) {
 
 export async function writePrivateFile(path, content) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, content, { mode: 0o600 });
-  await chmod(path, 0o600);
+  const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
+  await writeFile(temporary, content, { mode: 0o600, flag: "wx" });
+  await rename(temporary, path);
 }
 
 export function required(name) {
@@ -53,30 +62,25 @@ export function deviceId(prefix) {
   return `${prefix}${randomBytes(6).toString("hex").toUpperCase()}`;
 }
 
-export async function login(homeserver, userId, passwordValue, id, displayName) {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const response = await fetch(`${homeserver}/_matrix/client/v3/login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        type: "m.login.password",
-        identifier: { type: "m.id.user", user: userId },
-        password: passwordValue,
-        device_id: id,
-        initial_device_display_name: displayName,
-      }),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (response.ok && typeof body.access_token === "string" && body.device_id === id && body.user_id === userId)
-      return body.access_token;
-    if (response.status === 429 && attempt < 4) {
-      const delay = Number.isFinite(body.retry_after_ms) ? Math.max(1000, body.retry_after_ms) : 30_000;
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, delay));
-      continue;
-    }
-    throw new Error(`Matrix login failed for ${displayName}: HTTP ${response.status}`);
-  }
-  throw new Error(`Matrix login retries exhausted for ${displayName}`);
+export async function login(homeserver, userId, passwordValue, id, displayName, onIssued) {
+  const response = await fetch(`${homeserver}/_matrix/client/v3/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "m.login.password",
+      identifier: { type: "m.id.user", user: userId },
+      password: passwordValue,
+      device_id: id,
+      initial_device_display_name: displayName,
+    }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (response.ok && typeof body.access_token === "string") await onIssued?.(body.access_token);
+  if (response.ok && typeof body.access_token === "string" && body.device_id === id && body.user_id === userId)
+    return body.access_token;
+  throw new Error(
+    `Matrix login failed for ${displayName}: HTTP ${response.status}; no automatic login retry. Prefer designated test tokens or wait for the server rate limit.`,
+  );
 }
 
 export async function runCommand(command, arguments_) {
@@ -104,6 +108,8 @@ export async function provisionEnvironment({
   makeConfig,
   afterProvision,
   message,
+  transport = "plaintext",
+  responseMode = "room",
 }) {
   if (
     !Array.isArray(acpCommand) ||
@@ -112,70 +118,97 @@ export async function provisionEnvironment({
   ) {
     throw new Error("E2E_ACP_COMMAND must be a nonempty JSON string array");
   }
-  if (privateRoot === "/" || privateRoot.length < 8) throw new Error("unsafe private root");
+  if (!privateRoot.startsWith("/") || privateRoot === "/" || privateRoot.length < 8)
+    throw new Error("unsafe private root");
   try {
     await stat(environmentPath);
-    throw new Error(`environment already exists; revoke its devices before reprovisioning: ${environmentPath}`);
+    throw new Error(
+      `environment already exists; run ownership-aware cleanup before reprovisioning: ${environmentPath}`,
+    );
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  await rm(privateRoot, { recursive: true, force: true });
-  await mkdir(privateRoot, { recursive: true, mode: 0o700 });
-  await chmod(privateRoot, 0o700);
-
   const roles = {};
+  const environment = { homeserver, roomId, acpCwd, acpCommand, transport, responseMode, privateRoot, ...roles };
+  const reusableBindings = [];
   for (const definition of roleDefinitions) {
+    const roleRoot = join(privateRoot, definition.name);
+    const reusable = definition.ownership === "reusable";
     const identity = {
       userId: definition.userId,
       deviceId: definition.deviceId,
-      displayName: definition.displayName,
+      ownership: reusable ? "reusable" : "owned",
+      tokenFile: reusable ? definition.tokenFile : join(roleRoot, "access-token"),
+      tokenIssued: reusable,
     };
-    const roleRoot = join(privateRoot, definition.name);
-    identity.tokenFile = join(roleRoot, "access-token");
-    if (definition.state) identity.stateDir = join(roleRoot, "state");
+    if (definition.state || reusable) identity.stateDir = reusable ? definition.stateDir : join(roleRoot, "state");
     if (definition.config) identity.configFile = join(roleRoot, "config.toml");
     roles[definition.name] = identity;
+    environment[definition.name] = identity;
   }
-
+  const reusablePaths = Object.values(roles)
+    .filter((identity) => identity.ownership === "reusable")
+    .flatMap((identity) => [identity.tokenFile, identity.stateDir]);
+  for (const path of reusablePaths) {
+    if (pathsOverlap(privateRoot, path) || pathsOverlap(path, privateRoot) || pathsOverlap(path, environmentPath)) {
+      throw new Error("Run private root/environment must be separate from reusable tokens and stores");
+    }
+  }
+  for (const [index, first] of Object.values(roles).entries()) {
+    for (const second of Object.values(roles).slice(index + 1)) {
+      if (first.userId === second.userId && first.deviceId === second.deviceId)
+        throw new Error("Test roles must use distinct devices");
+      if (
+        first.ownership === "reusable" &&
+        second.ownership === "reusable" &&
+        (pathsOverlap(first.stateDir, second.stateDir) || pathsOverlap(second.stateDir, first.stateDir))
+      ) {
+        throw new Error("Test roles must use separate persistent state directories");
+      }
+    }
+  }
+  for (const [role, identity] of Object.entries(roles)) {
+    if (identity.ownership !== "reusable") continue;
+    await validatePrivatePath(identity.tokenFile);
+    await validatePrivatePath(identity.stateDir, true);
+    await validateTokenIdentity(homeserver, identity, await readToken(identity.tokenFile));
+    reusableBindings.push(await validateReusableState(environment, identity, role));
+  }
+  // Never wipe existing roots: they can contain interrupted owned resources.
+  await mkdir(dirname(privateRoot), { recursive: true, mode: 0o700 });
+  await mkdir(privateRoot, { mode: 0o700 });
+  await chmod(privateRoot, 0o700);
+  // Persist provenance before issuing a device or claiming a reusable store.
+  await writePrivateFile(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
   for (const identity of Object.values(roles)) {
-    if (identity.stateDir !== undefined) await mkdir(identity.stateDir, { recursive: true, mode: 0o700 });
+    if (identity.ownership === "reusable") {
+      await claimReusableState(environmentPath, identity);
+      identity.stateClaimed = true;
+      await writePrivateFile(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
+    } else if (identity.stateDir !== undefined) {
+      await mkdir(identity.stateDir, { recursive: true, mode: 0o700 });
+    }
   }
-  const issuedTokens = [];
-  try {
-    for (const definition of roleDefinitions) {
-      const identity = roles[definition.name];
-      const token = await login(
+  for (const binding of reusableBindings) await writePrivateFile(binding.path, `${JSON.stringify(binding.binding)}\n`);
+  for (const definition of roleDefinitions) {
+    const identity = roles[definition.name];
+    if (identity.ownership === "owned") {
+      await login(
         homeserver,
         identity.userId,
         definition.password,
         identity.deviceId,
-        identity.displayName,
+        definition.displayName,
+        async (token) => {
+          await writePrivateFile(identity.tokenFile, `${token}\n`);
+          identity.tokenIssued = true;
+          await writePrivateFile(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
+        },
       );
-      issuedTokens.push(token);
-      await writePrivateFile(identity.tokenFile, `${token}\n`);
-      delete identity.displayName;
     }
-  } catch (error) {
-    await Promise.all(
-      issuedTokens.map((token) =>
-        fetch(`${homeserver}/_matrix/client/v3/logout`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}` },
-        }).catch(() => {}),
-      ),
-    );
-    await rm(privateRoot, { recursive: true, force: true });
-    throw error;
-  }
-
-  const environment = { homeserver, roomId, acpCwd, acpCommand, ...roles };
-  for (const definition of roleDefinitions) {
-    const identity = environment[definition.name];
-    if (identity.configFile !== undefined) {
+    if (identity.configFile !== undefined)
       await writePrivateFile(identity.configFile, makeConfig(environment, definition.name));
-    }
   }
-  await writePrivateFile(environmentPath, `${JSON.stringify(environment, null, 2)}\n`);
   await afterProvision?.(environment);
   process.stdout.write(`${message}\nEnvironment: ${environmentPath}\n`);
 }

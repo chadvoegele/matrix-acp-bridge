@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { readEnvironment as readSharedEnvironment, readToken } from "../e2e-support/common.mjs";
 
+import { assertReusableAdapterFingerprints } from "../e2e-support/auth.mjs";
+
 export const testDir = dirname(fileURLToPath(import.meta.url));
 
 export const defaultEnvironmentPath = join(testDir, "environment.json");
@@ -44,8 +46,14 @@ export async function createAdapter(environment, role) {
   ]);
   const adapter = createMatrixClientAdapter(matrixConfig(environment, role), token);
   await adapter.validateIdentity();
-  await adapter.initializeCrypto(cryptoPaths(environment[role].stateDir));
-  return adapter;
+  try {
+    await adapter.initializeCrypto(cryptoPaths(environment[role].stateDir));
+    await assertReusableAdapterFingerprints(environment, role, adapter);
+    return adapter;
+  } catch (error) {
+    await adapter.stop();
+    throw error;
+  }
 }
 
 export function tomlString(value) {

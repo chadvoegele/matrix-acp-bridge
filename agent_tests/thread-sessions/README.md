@@ -1,5 +1,12 @@
 # Thread sessions
 
+Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
+before running. Token mode is preferred for repeated suites: supplied test-device
+tokens use their original persistent stores, with no password login. Cleanup
+preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
+Legacy password mode creates disposable devices. Shell test entry points hold
+the shared live lock; manual sequences must hold it through cleanup.
+
 Separate live agent tests for `matrix.response_mode = "thread"`. The
 `encrypted-e2e` and `unencrypted-e2e` suites remain room-mode tests.
 
@@ -49,7 +56,7 @@ old history is excluded by the test prompt's server timestamp, not its root.
 ## Setup and cleanup
 
 Each test wrapper runs shared setup (dependency installation and project
-checks), provisions fresh devices with dedicated configs, and installs an exit
+checks), prepares token devices with persistent stores (or fresh owned password devices) and dedicated configs, and installs an exit
 trap before setup. Encrypted setup reuses the SAS verifier/helper with the
 thread environment explicitly supplied; helper and sender configs stay in room
 mode, while the bridge config uses thread mode. No room harness is copied.
@@ -78,8 +85,8 @@ node agent_tests/thread-sessions/encrypted-cleanup.mjs
 ```
 
 Cleanup deletes retained ACP sessions (including detached reset sessions in
-`e2e-session-ids.json`), logs out the suite's devices, and removes private state
-and its environment file. Failures preserve state for retry. Encrypted cleanup
+`e2e-session-ids.json`), logs out only owned disposable devices, and removes the run files. Reusable
+credentials and crypto state remain; their completed-event ledgers are preserved. Failures preserve state for retry. Encrypted cleanup
 covers bridge, helper, and sender; plaintext covers bridge and sender.
 
 ## Local regressions

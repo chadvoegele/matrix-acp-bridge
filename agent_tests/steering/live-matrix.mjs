@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { startBridgePair, stopBridgePair, waitFor } from "../e2e-support/acp.mjs";
@@ -13,6 +13,7 @@ import {
   assertSteeringIdleNotices,
   assertSteeringDeviceBaseline,
 } from "../e2e-support/steering-observations.mjs";
+import { assertReusableAdapterFingerprints } from "../e2e-support/auth.mjs";
 import { cryptoPaths } from "../encrypted-e2e/lib.mjs";
 import {
   assertRawSteeringEncryption,
@@ -27,10 +28,16 @@ assert.ok(environmentPath, "Usage: live-matrix.mjs <environment.json> <plaintext
 assert.ok(["plaintext", "encrypted"].includes(transport));
 assert.ok(["room", "thread"].includes(responseMode));
 const environment = await readEnvironment(environmentPath);
+if (
+  environment.bridge.ownership === "reusable" &&
+  (environment.transport !== transport || environment.responseMode !== responseMode)
+) {
+  throw new Error("Reusable token profile does not match the steering transport/response mode; use its bound profile");
+}
 const evidencePath = resolve(process.env.STEERING_EVIDENCE_FILE ?? "node_modules/.live-steering/evidence.json");
 // State replacement alone does not reset the homeserver's device sync baseline.
 // Refuse accidental mode/state transitions before any live account operation.
-const deviceBaselinePath = resolve(dirname(environment.bridge.tokenFile), "steering-device-baseline.json");
+const deviceBaselinePath = resolve(environment.bridge.stateDir, "steering-device-baseline.json");
 const deviceBaseline = {
   version: 1,
   homeserver: environment.homeserver,
@@ -198,7 +205,10 @@ async function toolAfter(index) {
 try {
   if (transport === "encrypted") rawBoundary = await captureRawRoomBoundary(loadRawPage);
   await sender.validateIdentity();
-  if (transport === "encrypted") await sender.initializeCrypto(cryptoPaths(environment.sender.stateDir));
+  if (transport === "encrypted") {
+    await sender.initializeCrypto(cryptoPaths(environment.sender.stateDir));
+    await assertReusableAdapterFingerprints(environment, "sender", sender);
+  }
   sender.onSyncBatch((batch) => {
     if (batch.phase === "initial") return;
     for (const room of batch.rooms) if (room.roomId === environment.roomId) events.push(...room.timeline);

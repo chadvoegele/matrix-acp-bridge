@@ -1,6 +1,8 @@
 import { resolve } from "node:path";
 import { deviceId, provisionEnvironment, repoRoot, required, runCommand } from "./common.mjs";
 
+import { roleAuthentication, selectAuthMode } from "./auth.mjs";
+
 export async function provisionHarness({
   defaultEnvironmentPath,
   makeConfig,
@@ -8,13 +10,16 @@ export async function provisionHarness({
   environmentVariable,
   privateRootVariable,
   privateRootSuffix = "private",
+  responseMode = "room",
 }) {
   const homeserver = required("E2E_HOMESERVER").replace(/\/$/u, "");
   const roomId = required("E2E_ROOM_ID");
   const bridgeUserId = required("E2E_BRIDGE_USER_ID");
   const senderUserId = required("E2E_SENDER_USER_ID");
-  const bridgePassword = required("E2E_BRIDGE_PASSWORD");
-  const senderPassword = required("E2E_SENDER_PASSWORD");
+  const authMode = selectAuthMode();
+  const bridgeAuthentication = roleAuthentication("bridge", authMode);
+  const senderAuthentication = roleAuthentication("sender", authMode);
+  const helperAuthentication = roleAuthentication("helper", authMode);
   const acpCwd = resolve(process.env.E2E_ACP_CWD ?? "/tmp");
   const acpCommand = JSON.parse(required("E2E_ACP_COMMAND"));
   const privateRoot = resolve(process.env[privateRootVariable] ?? `${testDir}/${privateRootSuffix}`);
@@ -32,7 +37,7 @@ export async function provisionHarness({
         name: "bridge",
         userId: bridgeUserId,
         deviceId: deviceId("MABE2EB"),
-        password: bridgePassword,
+        ...bridgeAuthentication,
         displayName: "Matrix ACP E2E bridge",
         state: true,
         config: true,
@@ -41,7 +46,7 @@ export async function provisionHarness({
         name: "helper",
         userId: bridgeUserId,
         deviceId: deviceId("MABE2EH"),
-        password: bridgePassword,
+        ...helperAuthentication,
         displayName: "Matrix ACP E2E SAS helper",
         state: true,
         config: true,
@@ -50,15 +55,18 @@ export async function provisionHarness({
         name: "sender",
         userId: senderUserId,
         deviceId: deviceId("MABE2ES"),
-        password: senderPassword,
+        ...senderAuthentication,
         displayName: "Matrix ACP E2E sender",
         state: true,
         config: true,
       },
     ],
     makeConfig,
+    responseMode,
+    transport: "encrypted",
     afterProvision: async (environment) => {
       for (const role of ["bridge", "helper", "sender"]) {
+        if (environment[role].ownership === "reusable") continue;
         await runCommand(process.execPath, [
           `${repoRoot}/dist/main.js`,
           "--config",
@@ -68,6 +76,6 @@ export async function provisionHarness({
         ]);
       }
     },
-    message: "Provisioned three private Matrix test devices.",
+    message: "Prepared three private Matrix test devices.",
   });
 }
