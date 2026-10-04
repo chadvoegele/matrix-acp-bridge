@@ -23,6 +23,10 @@ requested thread. With `loadSession`, it resets one thread, restarts again,
 checks the other thread retains its session, and checks the reset thread gets a
 fresh session. Without `loadSession`, old follow-ups receive the unknown-session
 response. Unknown roots must never create, load, or prompt an ACP session.
+The unknown-root fixture is an existing top-level event sent by the test bridge
+account, which the bridge's self-event filter excludes from session creation.
+This lets the homeserver accept the thread relation while the bridge has no
+session for its root; invented event IDs can be rejected before reaching it.
 
 The encrypted scenario checks authenticated decrypted prompt/response relations,
 `m.room.encrypted` wire types, and reuse of the same ACP session for a follow-up.
