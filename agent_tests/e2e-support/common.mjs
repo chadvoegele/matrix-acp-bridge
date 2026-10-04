@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertReusableStateAvailable,
   claimReusableState,
   pathsOverlap,
   validatePrivatePath,
@@ -171,6 +172,7 @@ export async function provisionEnvironment({
     if (identity.ownership !== "reusable") continue;
     await validatePrivatePath(identity.tokenFile);
     await validatePrivatePath(identity.stateDir, true);
+    await assertReusableStateAvailable(identity);
     await validateTokenIdentity(homeserver, identity, await readToken(identity.tokenFile));
     reusableBindings.push(await validateReusableState(environment, identity, role));
   }

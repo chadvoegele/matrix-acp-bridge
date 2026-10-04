@@ -2,8 +2,8 @@ import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export function selectAuthMode(environment = process.env) {
-  const configuredTokens = Object.keys(environment).some(
-    (name) => /^E2E_(?:BRIDGE|SENDER|HELPER)_ACCESS_TOKEN_FILE$/u.test(name) && environment[name],
+  const configuredTokens = Object.keys(environment).some((name) =>
+    /^E2E_(?:BRIDGE|SENDER|HELPER)_(?:ACCESS_TOKEN_FILE|DEVICE_ID|STATE_DIR)$/u.test(name),
   );
   const mode = environment.E2E_AUTH_MODE ?? (configuredTokens ? "token" : "password");
   if (!["token", "password"].includes(mode)) throw new Error("E2E_AUTH_MODE must be token or password");
@@ -176,4 +176,16 @@ export async function assertReusableAdapterFingerprints(environment, role, adapt
     identity: { homeserver: environment.homeserver, ...environment[role] },
   });
   store.assertReadyForVerification(await adapter.getDeviceKeyFingerprints());
+}
+
+export async function assertReusableStateAvailable(identity) {
+  try {
+    await lstat(join(identity.stateDir, "e2e-active-environment.json"));
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(
+    "Test device state is in use or interrupted; recover its retained environment before inspecting state",
+  );
 }

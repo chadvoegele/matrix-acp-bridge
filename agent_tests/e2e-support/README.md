@@ -10,7 +10,7 @@ controller call shell entry points without taking its own lock twice.
 
 ## Token mode
 
-Set `E2E_AUTH_MODE=token`. Supplying any role token file also selects token mode
+Set `E2E_AUTH_MODE=token`. Supplying any role token/device/state variable (even an empty value) also selects token mode
 when the mode is unset. Explicit password mode with any configured token fails;
 missing/expired/mismatched tokens never fall back to password authentication.
 Token mode uses authenticated `GET /account/whoami` and `GET /devices/{deviceId}`
@@ -70,7 +70,8 @@ replace an existing environment or private root. Partial provisioning leaves
 issued tokens and the environment for ownership-aware cleanup, including when
 a later password login is rate limited. No automatic login retries occur.
 
-Token mode claims a per-store `e2e-active-environment.json` with exclusive creation.
+Before inspecting persistent state, token mode rejects existing active claims.
+Under the shared live lock, token mode claims a per-store `e2e-active-environment.json` with exclusive creation.
 An existing claim means an active/interrupted run: recover its referenced private
 environment instead of clearing the claim and starting over. Keep evidence and
 recovery environments outside disposable worktrees, with directories 0700 and

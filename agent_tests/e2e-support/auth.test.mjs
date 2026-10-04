@@ -63,6 +63,8 @@ async function fixture(t) {
 test("token selection is automatic, complete, and never falls back to passwords", () => {
   assert.equal(selectAuthMode({}), "password");
   assert.equal(selectAuthMode({ E2E_BRIDGE_ACCESS_TOKEN_FILE: "/test" }), "token");
+  assert.equal(selectAuthMode({ E2E_BRIDGE_ACCESS_TOKEN_FILE: "" }), "token");
+  assert.equal(selectAuthMode({ E2E_SENDER_STATE_DIR: "/test-state" }), "token");
   assert.throws(() => selectAuthMode({ E2E_AUTH_MODE: "other" }), /must be/u);
   assert.throws(
     () => selectAuthMode({ E2E_AUTH_MODE: "password", E2E_SENDER_ACCESS_TOKEN_FILE: "/test" }),
@@ -158,9 +160,11 @@ test("active reusable state blocks parallel provisioning and cleanup cannot clai
     privateRoot: join(options.privateRoot, "other"),
     environmentPath: join(options.privateRoot, "other-environment.json"),
   };
+  const stagingPath = join(identity.stateDir, ".bridge-state.json.active.tmp");
+  await writeFile(stagingPath, "active writer staging bytes", { mode: 0o600 });
   await assert.rejects(provisionEnvironment(second), /in use or interrupted/u);
-  const secondEnvironment = JSON.parse(await readFile(second.environmentPath, "utf8"));
-  await cleanupEnvironment(second.environmentPath, secondEnvironment, { roles: ["bridge"] });
+  assert.equal(await readFile(stagingPath, "utf8"), "active writer staging bytes");
+  await assert.rejects(stat(second.environmentPath), { code: "ENOENT" });
   assert.equal(await readFile(identity.tokenFile, "utf8"), "supplied-test-token\n");
   assert.equal(
     JSON.parse(await readFile(join(identity.stateDir, "e2e-active-environment.json"), "utf8")).environmentPath,
