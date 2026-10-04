@@ -71,7 +71,7 @@ export default defineConfig([
         projectService: {
           allowDefaultProject: ["src/*.test.ts", "src/test-support/*.ts"],
           defaultProject: "tsconfig.test.json",
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 32,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 33,
         },
         tsconfigRootDir: import.meta.dirname,
       },

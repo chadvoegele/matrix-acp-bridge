@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
 import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -221,27 +222,66 @@ void test("database validation rejects symlinks, insecure modes, and non-regular
   });
 });
 
-void test("database validation retries a disappearing Node IndexedDB snapshot temporary", async () => {
+void test("database validation accepts disappearing snapshot staging files without rescanning", async (context) => {
   await withStateDir(async (stateDir) => {
     const databasePath = await ensureCryptoDatabaseDirectory(stateDir);
     const temporaryPath = join(databasePath, ".indexeddb.snapshot.tmp");
     await writeFile(temporaryPath, "snapshot bytes");
     await chmod(temporaryPath, 0o600);
 
+    // Simulate a busy writer publishing between every readdir/lstat pair.
+    // Returning the captured listing on each read reproduces retry exhaustion.
+    const entries = await fs.readdir(databasePath, { withFileTypes: true });
+    const originalReaddir = fs.readdir;
+    context.mock.method(fs, "readdir", (async (...args: Parameters<typeof fs.readdir>) => {
+      if (args[0] === databasePath) return entries;
+      return originalReaddir(...args);
+    }) as typeof fs.readdir);
     let removed = false;
+    let inspections = 0;
     const store = await openCryptoStateStore({
       stateDir,
       faultInjector: async (point) => {
-        if (point === "database-entry-before-stat" && !removed) {
+        if (point === "database-entry-before-stat") {
+          assert.equal(removed, false, "validation must not rescan an active snapshot writer");
           removed = true;
+          inspections += 1;
           await rm(temporaryPath);
         }
       },
     });
 
     assert.equal(removed, true);
+    assert.equal(inspections, 1);
     assert.equal(store.databaseExists, true);
   });
+});
+
+void test("snapshot staging races do not hide unsafe committed database entries", async () => {
+  for (const unsafe of ["permissions", "unsafe-path"] as const) {
+    await withStateDir(async (stateDir) => {
+      const databasePath = await ensureCryptoDatabaseDirectory(stateDir);
+      const temporaryPath = join(databasePath, ".indexeddb.snapshot.tmp");
+      const snapshotPath = join(databasePath, ".indexeddb.snapshot");
+      await writeFile(temporaryPath, "staging", { mode: 0o600 });
+      if (unsafe === "permissions") {
+        await writeFile(snapshotPath, "committed", { mode: 0o644 });
+        await chmod(snapshotPath, 0o644);
+      } else {
+        await symlink(temporaryPath, snapshotPath);
+      }
+      await expectCryptoError(
+        () =>
+          openCryptoStateStore({
+            stateDir,
+            faultInjector: async (point) => {
+              if (point === "database-entry-before-stat") await rm(temporaryPath);
+            },
+          }),
+        unsafe,
+      );
+    });
+  }
 });
 
 void test("manifest writes are serialized, atomic, private, and clean up interrupted temporaries", async () => {
