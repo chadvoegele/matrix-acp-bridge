@@ -7,7 +7,7 @@ last_update = 2026-10-01
 # Matrix–ACP bridge specification
 
 Milestone 2 and Milestone 3 are accepted in their reduced forms in
-[spec/m2-persistence.md](m2-persistence.md) and [spec/m3-encryption.md](m3-encryption.md). Those documents are normative for
+[Milestone 2](../m2-persistence/spec.md) and [Milestone 3](../m3-encryption/spec.md). Those documents are normative for
 the current release. The older durable-delivery material below is retained as
 history only and must not be implemented or used to expand the accepted M2
 contract.
@@ -182,7 +182,7 @@ Configuration rules:
   OS advisory lock on `state_dir/.lock` for the process lifetime; an unlocked
   stale lock file is harmless.
 - M1/M2 deployments use `encryption = "disabled"`; required mode follows the
-  accepted M3 contract in [spec/m3-encryption.md](m3-encryption.md).
+  accepted M3 contract in [Milestone 3](../m3-encryption/spec.md).
 - Matrix passwords, interactive login, token creation, environment-variable
   tokens, and checked-in secrets are unsupported.
 
@@ -409,7 +409,7 @@ The durable `pending`/`claimed`/`replying`/`completed` inbox design that was
 formerly described here was superseded before implementation. The accepted M2
 contract is the smaller best-effort cursor, bounded catch-up, optional
 `session/load`, `/reset`, typing, receipt, and private-state design in
-[spec/m2-persistence.md](m2-persistence.md). It does not provide durable event bodies, prompt replay,
+[Milestone 2](../m2-persistence/spec.md). It does not provide durable event bodies, prompt replay,
 exactly-once delivery, or automatic history pagination.
 
 ## Failure and shutdown behavior
@@ -525,7 +525,7 @@ operator action, not an automatic new-device fallback.
 
 ### Milestone 2 — accepted reliability and operator controls
 
-The accepted M2 scope is defined by [spec/m2-persistence.md](m2-persistence.md): private sync cursor,
+The accepted M2 scope is defined by [Milestone 2](../m2-persistence/spec.md): private sync cursor,
 bounded best-effort offline catch-up, optional session restoration, `/reset`,
 typing, receipts, and explicit state diagnostics. Durable inbox delivery and
 automatic prompt/reply recovery remain deferred.

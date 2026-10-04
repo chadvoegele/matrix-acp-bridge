@@ -324,6 +324,6 @@ follow the correction, is the acceptance criterion.
 ## References
 
 - [pi-acp PR #115](https://github.com/svkozak/pi-acp/pull/115), reviewed while open.
-- [Thread-scoped agent sessions](thread-scoped-agent-sessions.md).
-- [Persistence milestone](m2-persistence.md).
-- [Verbose ACP output](verbose-acp-output.md).
+- [Thread-scoped agent sessions](../thread-scoped-agent-sessions/spec.md).
+- [Persistence milestone](../m2-persistence/spec.md).
+- [Verbose ACP output](../verbose-acp-output/spec.md).

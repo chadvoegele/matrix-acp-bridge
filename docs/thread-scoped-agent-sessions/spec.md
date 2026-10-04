@@ -249,8 +249,8 @@ A downgrade/export tool is not required.
 
 ## References
 
-- [Plaintext Matrix bridge](m1-plaintext-matrix.md)
-- [Persistence and session reset](m2-persistence.md)
-- [Encryption](m3-encryption.md)
-- [Verbose ACP output](verbose-acp-output.md)
-- [Matrix bridge as MCP server](matrix-bridge-as-mcp-server.md)
+- [Plaintext Matrix bridge](../m1-plaintext-matrix/spec.md)
+- [Persistence and session reset](../m2-persistence/spec.md)
+- [Encryption](../m3-encryption/spec.md)
+- [Verbose ACP output](../verbose-acp-output/spec.md)
+- [Matrix bridge as MCP server](../matrix-bridge-as-mcp-server/spec.md)
