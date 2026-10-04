@@ -4669,4 +4669,33 @@ void test("mixed setup batches preserve idle and promptRequired provenance and t
     await bridge.waitForIdle();
     await bridge.stop();
   }
+void test("shutdown abandons response backoff immediately without spending the grace deadline", async (context) => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeMatrix();
+  acp.promptImpl = async () => ({ kind: "method_error", operation: "session_prompt", fatal: false });
+  let attempts = 0;
+  matrix.send = async () => {
+    attempts += 1;
+    throw { failure: { kind: "transient", retryable: true, retryAfterMs: 60_000 } };
+  };
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  context.after(async () => {
+    clock.runAll();
+    await bridge.stop();
+  });
+  const completion = bridge.handleTimelineEvent(event("$shutdown-backoff"));
+  await waitFor(() => attempts === 1);
+  let stopped = false;
+  const stopping = bridge.stop().then(() => {
+    stopped = true;
+  });
+  await flush();
+  assert.equal(stopped, true);
+  await stopping;
+  await completion;
+  assert.equal(attempts, 1);
+  assert.equal(clock.pendingTimerCount, 0);
+  assert.equal(matrix.stopped, true);
+  assert.equal(acp.closed, true);
 });
