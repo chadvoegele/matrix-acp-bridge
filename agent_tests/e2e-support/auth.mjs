@@ -115,14 +115,14 @@ export async function validateReusableState(environment, identity, role) {
     if (
       snapshot?.schemaVersion !== 1 ||
       !Array.isArray(snapshot.databases) ||
-      !["matrix-sdk-crypto", "matrix-sdk-crypto-meta"].every((suffix) =>
-        snapshot.databases.some(
-          (database) =>
-            database.name === `${prefix}::${suffix}` &&
-            Array.isArray(database.objectStores) &&
-            (suffix === "matrix-sdk-crypto-meta" ||
-              database.objectStores.some((objectStore) => objectStore.records?.length > 0)),
-        ),
+      !snapshot.databases.some(
+        (database) =>
+          database?.name === `${prefix}::matrix-sdk-crypto` &&
+          Array.isArray(database.objectStores) &&
+          database.objectStores.some(
+            (objectStore) =>
+              objectStore?.name === "core" && Array.isArray(objectStore.records) && objectStore.records.length > 0,
+          ),
       )
     ) {
       throw new Error(

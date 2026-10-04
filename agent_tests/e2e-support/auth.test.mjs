@@ -250,7 +250,7 @@ test("encrypted token provisioning compares server keys, rejects missing snapsho
     schemaVersion: 1,
     databases: ["matrix-sdk-crypto", "matrix-sdk-crypto-meta"].map((suffix) => ({
       name: `${databasePath}::${suffix}`,
-      objectStores: [{ records: ["opaque-private-test-record"] }],
+      objectStores: [{ name: "core", records: ["opaque-private-test-record"] }],
     })),
   };
   const snapshotPath = join(databasePath, ".indexeddb.snapshot");
@@ -287,6 +287,18 @@ test("encrypted token provisioning compares server keys, rejects missing snapsho
   });
   await writeFile(snapshotPath, serialize(snapshot), { mode: 0o600 });
   serverEdKey = fingerprints.ed25519Fingerprint;
+  for (const databases of [
+    [],
+    [{ ...snapshot.databases[0], objectStores: [] }],
+    [{ ...snapshot.databases[0], objectStores: [{ name: "core", records: [] }] }],
+    [{ ...snapshot.databases[0], objectStores: [{ name: "devices", records: ["not-device-core"] }] }],
+  ]) {
+    await writeFile(snapshotPath, serialize({ ...snapshot, databases }), { mode: 0o600 });
+    await assert.rejects(provisionEnvironment({ ...options, transport: "encrypted" }), /missing its device databases/u);
+  }
+  // The pinned SDK does not create the optional crypto-meta database without a passphrase.
+  snapshot.databases = [snapshot.databases[0]];
+  await writeFile(snapshotPath, serialize(snapshot), { mode: 0o600 });
   const manifestPath = join(identity.stateDir, "crypto-state.json");
   const manifestBytes = await readFile(manifestPath);
   const snapshotBytes = await readFile(snapshotPath);
