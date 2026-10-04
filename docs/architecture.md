@@ -26,6 +26,18 @@ specification, thread state operations and executable SDK tests describe the
 current implementation. The abandoned cursor-store and MCP-server proposals
 are historical, not features to implement in this refactor.
 
+Mid-turn steering remains part of the current contract. Configuration selects
+prompt or steering delivery, with `/prompt` and `/steer` overrides. Capability
+negotiation gates `_session/steering`; each conversation serializes bounded
+steering work separately from its prompt FIFO. Injection preserves the active
+collector and deadline, consumes no prompt permit, and records its own durable
+completion. Idle and `promptRequired` outcomes convert to tracked prompts in
+admission order; reset keeps later work behind the session replacement boundary.
+Authorization, thread identity, catch-up bounds and stopped-send gates apply to
+both paths. ACP, bridge, config, state and SDK integration tests cover these
+contracts, including shutdown and persistence races. The refactor retains the
+latest default-branch steering implementation and its tests.
+
 A durable terminal completion favors avoiding duplicate ACP work over ensuring
 response delivery: a crash between completion persistence and Matrix acceptance
 can lose a response. ACP v1 updates have no prompt ID; late id-less output cannot
@@ -79,6 +91,10 @@ conversations and typing activity. Permit release precedes quiet drain; session
 creation/loading and Matrix output never consume a permit. Durable reset precedes
 in-memory reset and acknowledgement. Output completion precedes the next turn
 in that conversation; other conversations progress independently.
+The coordinator also owns per-conversation steering serialization and its
+connection capability state; steering does not acquire a prompt permit or
+replace the active turn. Both delivery paths share presentation and room output
+ordering.
 
 ### Zoom: delivery and wire
 
@@ -160,7 +176,7 @@ SAS or state migration change. Explicit behavior corrections are:
 - Fatal malformed ACP framing cancels the byte source as well as releasing the
   reader lock; an errored wrapper stream cannot delegate later cancellation.
 - Response delivery checks the stop gate before every part/queued response,
-  preventing sends that used to start after shutdown.
+  retaining the latest default branch's protection against sends after shutdown.
 - Shutdown immediately cancels response backoff instead of needlessly waiting
   for the grace deadline when no request is active.
 - Permanent raw HTTP/authentication failures beat network wording or retry flags.
@@ -228,10 +244,13 @@ where a further abstraction would cost more than it clarifies.
 
 ## Verification and remaining limits
 
-Baseline: `npm ci` and `npm run check` passed 399 tests. Characterization after
+Before the upstream steering changes, `npm ci` and `npm run check` passed 399
+baseline tests. Characterization after
 extraction passed 412 tests before the failure-path corrections. New framing
 cleanup, stopped-send and shutdown-backoff regressions fail against their
-previous behavior. Final `npm run check` passed 420 tests on Node 26.10.0, including formatting,
+previous behavior. That implementation passed 420 tests before rebasing. After
+rebasing onto the latest default branch and repairing a test boundary and
+coordinator formatting, final `npm run check` passed 491 tests on Node 26.10.0, including formatting,
 lint, typecheck, production build and the hermetic/harness test suites.
 Node 22 verification is configured in GitHub CI and was not run locally.
 `npm audit fix --ignore-scripts` applied compatible development-only patches and

@@ -464,7 +464,8 @@ export class BridgeCoordinator {
       matrix,
       clock: this.#clock,
       random: options.random ?? Math.random,
-      canSend: (allowDuringStop) => !this.#stopped && (allowDuringStop === true || (!this.#stopping && this.#fatal === undefined)),
+      canSend: (allowDuringStop) =>
+        !this.#stopped && (allowDuringStop === true || (!this.#stopping && this.#fatal === undefined)),
       ...(this.#diagnostics === undefined ? {} : { diagnostics: this.#diagnostics }),
     });
     this.#sessionStore = options.sessionStore ?? new InMemorySessionStore();

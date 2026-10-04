@@ -4669,6 +4669,8 @@ void test("mixed setup batches preserve idle and promptRequired provenance and t
     await bridge.waitForIdle();
     await bridge.stop();
   }
+});
+
 void test("shutdown abandons response backoff immediately without spending the grace deadline", async (context) => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
