@@ -1,6 +1,8 @@
+import { prepareCachedRoles } from "./cache.mjs";
+
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,8 +51,24 @@ export async function readToken(path) {
 export async function writePrivateFile(path, content) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomBytes(8).toString("hex")}.tmp`;
-  await writeFile(temporary, content, { mode: 0o600, flag: "wx" });
-  await rename(temporary, path);
+  try {
+    const file = await open(temporary, "wx", 0o600);
+    try {
+      await file.writeFile(content);
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    await rename(temporary, path);
+    const directory = await open(dirname(path), "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 export function required(name) {
@@ -79,9 +97,12 @@ export async function login(homeserver, userId, passwordValue, id, displayName, 
   if (response.ok && typeof body.access_token === "string") await onIssued?.(body.access_token);
   if (response.ok && typeof body.access_token === "string" && body.device_id === id && body.user_id === userId)
     return body.access_token;
-  throw new Error(
+  const error = new Error(
     `Matrix login failed for ${displayName}: HTTP ${response.status}; no automatic login retry. Prefer designated test tokens or wait for the server rate limit.`,
   );
+  error.status = response.status;
+  error.retryAfterMs = body.retry_after_ms;
+  throw error;
 }
 
 export async function runCommand(command, arguments_) {
@@ -111,6 +132,7 @@ export async function provisionEnvironment({
   message,
   transport = "plaintext",
   responseMode = "room",
+  authMode,
 }) {
   if (
     !Array.isArray(acpCommand) ||
@@ -129,6 +151,8 @@ export async function provisionEnvironment({
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
+  if (authMode === "cache")
+    roleDefinitions = await prepareCachedRoles({ homeserver, roomId, transport, responseMode }, roleDefinitions);
   const roles = {};
   const environment = { homeserver, roomId, acpCwd, acpCommand, transport, responseMode, privateRoot, ...roles };
   const reusableBindings = [];
@@ -141,6 +165,13 @@ export async function provisionEnvironment({
       ownership: reusable ? "reusable" : "owned",
       tokenFile: reusable ? definition.tokenFile : join(roleRoot, "access-token"),
       tokenIssued: reusable,
+      ...(definition.cacheManifest
+        ? {
+            cacheManifest: definition.cacheManifest,
+            cacheInitial: definition.cacheInitial,
+            cacheCryptoInitial: definition.cacheCryptoInitial,
+          }
+        : {}),
     };
     if (definition.state || reusable) identity.stateDir = reusable ? definition.stateDir : join(roleRoot, "state");
     if (definition.config) identity.configFile = join(roleRoot, "config.toml");

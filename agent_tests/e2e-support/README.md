@@ -8,6 +8,69 @@ process-held lock across the entire sequence, including recovery. Do not set
 `E2E_LIVE_LOCK_HELD=1` unless the parent holds the lock. This flag lets a serial
 controller call shell entry points without taking its own lock twice.
 
+## Persistent cache (default)
+
+With no explicit authentication settings, `cache` mode stores profiles beneath
+`$HOME/.local/state/matrix-acp-bridge/test-cache`, outside Git and disposable
+worktrees. Override with an absolute `E2E_CACHE_DIR`; repository paths are refused.
+`E2E_CACHE_PROFILE=default` selects a named set. A digest of homeserver, room,
+transport and response mode isolates plaintext/encrypted room/thread state.
+Accounts and roles are bound in each private profile manifest. Change the profile
+name when intentionally provisioning a new account set; never copy tokens/stores.
+
+Absent roles log in once using designated `E2E_BRIDGE_PASSWORD` or
+`E2E_SENDER_PASSWORD` from trusted private configuration/pass; helper uses the test
+bridge password. Tokens/device IDs and crypto remain paired in 0700 directories
+with 0600 files. Password bytes are never written. Subsequent runs authenticate
+with `whoami` and reuse tokens without password login. Cached devices are reusable,
+so automatic cleanup never logs them out or removes their stores.
+
+`profile.json` records credential issuance, public-CLI crypto bootstrap and actual
+SAS completion separately. New encrypted devices run the public bootstrap CLI and
+compare/confirm real decimal and emoji SAS. Functional reuse validates retained
+crypto snapshots/server keys and uses that verified state, without repeating initial
+setup. The initialized completed-event ledger is retained across scenarios.
+
+An exclusive `bootstrap.lock` serializes creation; existing per-store leases exclude
+active/interrupted runs. HTTP429 retains the same proposed device and a `retryAt`
+boundary; invocation before that time is blocked without another login. Retry only
+after the legitimate window. Missing passwords report `SETUP BLOCKED`. Uncertain
+issuance, malformed/partial manifests, missing tokens, identity/key mismatch or lost
+state never silently trigger replacement login/crypto. Preserve the profile and
+private evidence; restore its original state or explicitly recover the known issued
+device under the live lock. An interrupted crypto bootstrap requires inspection and
+public-CLI recovery of the same store, never deletion to simulate first use. Only
+remove an interrupted bootstrap lock after confirming its process has stopped.
+
+## Separate setup and functional reports
+
+After `npm ci && npm run check`, source the trusted private test configuration and
+run the aggregate serial entry point:
+
+```sh
+node agent_tests/e2e-support/live-all.mjs
+```
+
+Optional positional case names select cases, for example
+`fresh-crypto-setup plaintext-room-normal encrypted-thread-activity`.
+`E2E_LIVE_REPORT_DIR` selects a new private evidence directory outside worktrees.
+The default is under `$HOME/.local/state/matrix-acp-validation/`. The runner holds
+the shared lock, runs a separate disposable fresh public-CLI bootstrap/SAS test,
+then cached room/thread normal/activity/steering and plaintext reset, persistence,
+completed-ID recovery, real activity and initialized startup/reset tests. Configure
+an isolated real ACP command supporting load/delete/steering; real activity also
+requires the documented scratch cleanup command. Never point it at production
+sessions. Owned fresh devices are revoked; cached devices remain.
+
+Each result has independent `setup`, `function` and `cleanup` fields. A blocked
+fresh setup does not stop independent cached/plaintext tests. Exit 0 means all
+selected cases passed; 2 means blocked setup/skipped functionality; 1 means failed
+setup/function or retained cleanup resources. Inspect private `suite.log` for the
+precise cause; logs may contain private identifiers. Do not publish raw evidence.
+Per-case results are durable even if a later case fails. A prior historical pass
+never counts as verification of the final code. The existing shell entry points
+remain supported for individual scenarios and report their setup errors directly.
+
 ## Token mode
 
 Set `E2E_AUTH_MODE=token`. Supplying any role token/device/state variable (even an empty value) also selects token mode
@@ -100,8 +163,7 @@ or mismatched keys require operator recovery, not an automatic reset.
 
 ## Password compatibility
 
-With no token variables, legacy password mode remains supported; it can also
-be selected explicitly with `E2E_AUTH_MODE=password`. It creates fresh owned
+Legacy password mode is selected explicitly with `E2E_AUTH_MODE=password`. It creates fresh owned
 random devices/stores and revokes/removes them on cleanup. Passwords remain
 in memory, never the environment record. Each login is attempted once; HTTP429
 stops provisioning with retained cleanup evidence. Prefer token mode for repeated

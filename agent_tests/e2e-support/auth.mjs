@@ -5,9 +5,9 @@ export function selectAuthMode(environment = process.env) {
   const configuredTokens = Object.keys(environment).some((name) =>
     /^E2E_(?:BRIDGE|SENDER|HELPER)_(?:ACCESS_TOKEN_FILE|DEVICE_ID|STATE_DIR)$/u.test(name),
   );
-  const mode = environment.E2E_AUTH_MODE ?? (configuredTokens ? "token" : "password");
-  if (!["token", "password"].includes(mode)) throw new Error("E2E_AUTH_MODE must be token or password");
-  if (mode === "password" && configuredTokens)
+  const mode = environment.E2E_AUTH_MODE ?? (configuredTokens ? "token" : "cache");
+  if (!["token", "password", "cache"].includes(mode)) throw new Error("E2E_AUTH_MODE must be token, cache or password");
+  if (mode !== "token" && configuredTokens)
     throw new Error("Configured tokens cannot be combined with password mode; select E2E_AUTH_MODE=token");
   return mode;
 }
@@ -18,6 +18,7 @@ export function roleAuthentication(role, mode = selectAuthMode(), environment = 
     if (!environment[name]) throw new Error(`${name} is required for ${mode} mode`);
     return environment[name];
   };
+  if (mode === "cache") return {};
   if (mode === "password")
     return { password: required(role === "helper" ? "E2E_BRIDGE_PASSWORD" : `${prefix}_PASSWORD`) };
   const tokenFile = required(`${prefix}_ACCESS_TOKEN_FILE`);
@@ -94,7 +95,7 @@ export async function validateReusableState(environment, identity, role) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  if (environment.transport === "encrypted") {
+  if (environment.transport === "encrypted" && !identity.cacheCryptoInitial) {
     const { openCryptoStateStore } = await import("../../dist/crypto-state.js");
     const store = await openCryptoStateStore({ stateDir: identity.stateDir, identity: expected });
     // Reusable devices must already have their original device-bound snapshot.
@@ -143,7 +144,7 @@ export async function validateReusableState(environment, identity, role) {
   if (role === "bridge") {
     const { openBridgeStateStore } = await import("../../dist/bridge-state.js");
     const store = await openBridgeStateStore({ stateDir: identity.stateDir, identity: expected });
-    if (!store.getSnapshot().initialized) {
+    if (!store.getSnapshot().initialized && !identity.cacheInitial) {
       throw new Error(
         "Reusable bridge token requires its initialized delivery state; restore the original completed-event ledger",
       );

@@ -307,6 +307,22 @@ try {
     );
   }
 
+  await check(async () => {
+    const state = await snapshot();
+    return sent.every((event) => state.completedEventIds[environment.roomId]?.includes(event.eventId));
+  }, "all tracked and injected inputs durably complete");
+  await check(
+    () =>
+      agentOutputs.every((output) =>
+        events.some(
+          (event) =>
+            event.sender === environment.bridge.userId &&
+            event.content?.body === output.text &&
+            event.originServerTs >= sent[0].originServerTs,
+        ),
+      ),
+    "all real agent replies delivered",
+  );
   phase = "Matrix output and encrypted wire verification";
   const replies = events.filter(
     (event) =>

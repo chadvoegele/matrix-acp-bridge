@@ -32,3 +32,9 @@ The runner:
 The test inspects only sanitized ACP method names, event counts, event IDs, and
 state shape. It never prints prompt bodies, Matrix access tokens, or raw
 service diagnostics.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

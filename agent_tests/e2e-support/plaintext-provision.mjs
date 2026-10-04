@@ -26,6 +26,7 @@ export async function provisionHarness({
 
   await provisionEnvironment({
     homeserver,
+    authMode,
     roomId,
     acpCwd,
     acpCommand,

@@ -1,3 +1,5 @@
+import { finishCachedSetup } from "./cache.mjs";
+
 import { spawn } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -179,6 +181,7 @@ export async function cleanupEnvironment(
       for (const path of additionalSessionFiles) await writePrivateFile(path, "[]\n");
     }
   }
+  await finishCachedSetup(environment);
   let failed = false;
   for (const role of roles) {
     const identity = environment[role];

@@ -61,7 +61,7 @@ async function fixture(t) {
 }
 
 test("token selection is automatic, complete, and never falls back to passwords", () => {
-  assert.equal(selectAuthMode({}), "password");
+  assert.equal(selectAuthMode({}), "cache");
   assert.equal(selectAuthMode({ E2E_BRIDGE_ACCESS_TOKEN_FILE: "/test" }), "token");
   assert.equal(selectAuthMode({ E2E_BRIDGE_ACCESS_TOKEN_FILE: "" }), "token");
   assert.equal(selectAuthMode({ E2E_SENDER_STATE_DIR: "/test-state" }), "token");

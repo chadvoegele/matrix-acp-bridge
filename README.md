@@ -127,3 +127,6 @@ I want to build a matrix client to acp bridge. This will allow me to create a ma
 Live test authentication and cleanup are documented in
 [the shared harness contract](agent_tests/e2e-support/README.md). Supplied
 test-device tokens avoid repeated password login and preserve device-bound crypto.
+
+Live test profiles default to private persistent token/device/crypto caches outside
+the repository. See [cache bootstrap and separate setup/function reporting](agent_tests/e2e-support/README.md).

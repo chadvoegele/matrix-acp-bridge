@@ -1,8 +1,9 @@
 # Thread sessions
 
 Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
-before running. Token mode is preferred for repeated suites: supplied test-device
-tokens use their original persistent stores, with no password login. Cleanup
+before running. Cache mode is the default for repeated suites: absent profiles
+use one-time designated test passwords; existing profiles reuse their original
+tokens and persistent stores without login. Explicit token mode remains supported. Cleanup
 preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
 Legacy password mode creates disposable devices. Shell test entry points hold
 the shared live lock; manual sequences must hold it through cleanup.
@@ -99,3 +100,9 @@ Some support tests require an existing `dist/` build. These tests do not log in,
 run live E2E, or require credentials. Suite-routing/config regressions live in
 `../e2e-support/thread-suite.test.mjs` so the existing scoped test glob includes
 them.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

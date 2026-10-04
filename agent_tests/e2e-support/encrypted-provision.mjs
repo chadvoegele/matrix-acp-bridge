@@ -27,6 +27,7 @@ export async function provisionHarness({
 
   await provisionEnvironment({
     homeserver,
+    authMode,
     roomId,
     acpCwd,
     acpCommand,
@@ -66,7 +67,16 @@ export async function provisionHarness({
     transport: "encrypted",
     afterProvision: async (environment) => {
       for (const role of ["bridge", "helper", "sender"]) {
-        if (environment[role].ownership === "reusable") continue;
+        if (environment[role].ownership === "reusable" && !environment[role].cacheCryptoInitial) continue;
+        if (environment[role].cacheCryptoInitial) {
+          const { lstat } = await import("node:fs/promises");
+          try {
+            await lstat(`${environment[role].stateDir}/crypto-state.json`);
+            throw new Error("Interrupted cache crypto setup: recover existing manifest/store without rebootstrap");
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+          }
+        }
         await runCommand(process.execPath, [
           `${repoRoot}/dist/main.js`,
           "--config",
@@ -74,6 +84,8 @@ export async function provisionHarness({
           "crypto",
           "bootstrap",
         ]);
+        const { recordCachedBootstrap } = await import("./cache.mjs");
+        await recordCachedBootstrap(environment[role]);
       }
     },
     message: "Prepared three private Matrix test devices.",

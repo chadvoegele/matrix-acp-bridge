@@ -40,3 +40,9 @@ The test performs this sequence:
 - Cleanup reads the ignored retained-ID list as well as the final bridge mapping, ensuring reset cannot hide the first session from deletion.
 
 Cleanup preserves private local state if ACP deletion or Matrix device revocation fails, allowing safe diagnosis and retry.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

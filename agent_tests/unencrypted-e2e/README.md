@@ -1,8 +1,9 @@
 # Unencrypted Matrix end-to-end test helpers
 
 Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
-before running. Token mode is preferred for repeated suites: supplied test-device
-tokens use their original persistent stores, with no password login. Cleanup
+before running. Cache mode is the default for repeated suites: absent profiles
+use one-time designated test passwords; existing profiles reuse their original
+tokens and persistent stores without login. Explicit token mode remains supported. Cleanup
 preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
 Legacy password mode creates disposable devices. Shell test entry points hold
 the shared live lock; manual sequences must hold it through cleanup.
@@ -27,7 +28,7 @@ export E2E_HOMESERVER='https://matrix.example.org'
 export UNENCRYPTED_E2E_ROOM_ID='!plaintext-room:matrix.example.org'
 export E2E_BRIDGE_USER_ID='@bridge-test:matrix.example.org'
 export E2E_SENDER_USER_ID='@sender-test:matrix.example.org'
-export E2E_AUTH_MODE=password # legacy disposable-device example
+export E2E_AUTH_MODE=cache # one-time bootstrap, then persistent reuse
 export E2E_BRIDGE_PASSWORD='bridge-account-password'
 export E2E_SENDER_PASSWORD='sender-account-password'
 export E2E_ACP_CWD='/tmp'
@@ -159,3 +160,9 @@ coverage. Device and session cleanup still run through the usual harness.
 
 Thread tests are a separate suite: [thread-sessions](../thread-sessions/README.md).
 This suite always uses room mode, including its senders and activity tests.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

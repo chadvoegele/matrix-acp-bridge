@@ -136,3 +136,9 @@ The test passes only when all these conditions hold:
 - A missing response usually means the sender or room allowlist is wrong, the bridge device is not joined, or ACP did not answer.
 - More than one matching `session/prompt` means one Matrix event was submitted to ACP more than once.
 - An encrypted wire event means the test room or client setup violates the disabled-mode contract.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

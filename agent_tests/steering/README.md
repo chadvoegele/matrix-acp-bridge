@@ -1,8 +1,9 @@
 # Live Matrix steering verification
 
 Read the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
-before running. Token mode is preferred for repeated suites: supplied test-device
-tokens use their original persistent stores, with no password login. Cleanup
+before running. Cache mode is the default for repeated suites: absent profiles
+use one-time designated test passwords; existing profiles reuse their original
+tokens and persistent stores without login. Explicit token mode remains supported. Cleanup
 preserves reusable credentials, devices and crypto, and deletes owned ACP sessions.
 Legacy password mode creates disposable devices. Shell test entry points hold
 the shared live lock; manual sequences must hold it through cleanup.
@@ -153,3 +154,9 @@ scoped by the first controlled input's server timestamp. This excludes delayed
 older incremental history on reusable devices; notices emitted during the current
 probe still fail. Private evidence retains all observed events. RPC and Matrix
 failure audits still cover the full observed startup/scenario/shutdown sequence.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.

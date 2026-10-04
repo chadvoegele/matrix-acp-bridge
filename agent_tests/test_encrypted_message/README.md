@@ -166,3 +166,9 @@ The test passes only when all of these conditions hold:
 - A response that exists but cannot be decrypted usually means the response's Megolm room key could not be shared with the sender device.
 - `ENOENT` while renaming `.indexeddb.snapshot.tmp` indicates concurrent snapshot writers rather than a Matrix encryption failure.
 - A changed fingerprint after restart means crypto persistence failed and the result must not be accepted.
+
+Repeated live runs default to the private persistent cache. Absent profiles use
+one-time designated test password bootstrap; existing profiles reuse their original
+tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
+Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
+separate fresh crypto/SAS setup results and independent functional results.
