@@ -143,3 +143,9 @@ covering startup through awaited teardown with a documented margin; every
 previously checked event must appear as encrypted. Hold the shared live lock,
 use only documented rooms and never reuse the retained environment's revoked
 tokens. A retrospective window cannot reconstruct destroyed causal traces.
+
+For the initialized reset probe, idle-notice and reset-acknowledgement counts are
+scoped by the first controlled input's server timestamp. This excludes delayed
+older incremental history on reusable devices; notices emitted during the current
+probe still fail. Private evidence retains all observed events. RPC and Matrix
+failure audits still cover the full observed startup/scenario/shutdown sequence.

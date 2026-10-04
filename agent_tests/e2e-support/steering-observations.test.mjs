@@ -5,6 +5,7 @@ import {
   assertSteeringHealthy,
   assertSteeringIdleNotices,
   assertSteeringDeviceBaseline,
+  selectEventsSinceInput,
 } from "./steering-observations.mjs";
 
 test("startup guard rejects session creation even before a prompt starts", () => {
@@ -65,4 +66,21 @@ test("live mode isolation rejects a new state or response mode on an already use
   assert.throws(() => assertSteeringDeviceBaseline(baseline, { ...baseline, stateDir: "/private/fresh-state" }));
   assert.throws(() => assertSteeringDeviceBaseline(baseline, { ...baseline, responseMode: "thread" }));
   assert.throws(() => assertSteeringDeviceBaseline(baseline, { ...baseline, deviceId: "different-device" }));
+});
+
+test("reset observation excludes delayed older notices without hiding new idle notices or RPC errors", () => {
+  const notice = {
+    sender: "bridge",
+    originServerTs: 99,
+    content: { body: "No running turn; message queued as a prompt." },
+  };
+  const newNotice = { ...notice, originServerTs: 101 };
+  const input = { originServerTs: 100 };
+  assert.deepEqual(selectEventsSinceInput([notice, input], input), [input]);
+  const current = selectEventsSinceInput([notice, input, newNotice], input);
+  assert.deepEqual(current, [input, newNotice]);
+  assert.equal(current.filter((event) => event.content?.body === notice.content.body).length, 1);
+  assert.throws(() => selectEventsSinceInput([notice], {}), /controlled input/u);
+  assert.throws(() => selectEventsSinceInput([{}], input), /observed event/u);
+  assert.throws(() => assertSteeringHealthy([{ direction: "in", frame: { error: {} } }], current, "bridge"));
 });

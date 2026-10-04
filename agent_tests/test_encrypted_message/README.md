@@ -1,5 +1,12 @@
 # Encrypted Message Test
 
+Follow the shared [authentication, ownership and recovery contract](../e2e-support/README.md).
+Token mode uses designated reusable test devices and their original persistent
+state without `/login`; cleanup preserves tokens, devices, crypto and delivery
+ledgers while deleting owned ACP sessions. Fresh-device login/bootstrap steps
+below apply only to disposable password mode. Hold the shared live lock for
+manual operations; shell test entry points hold it automatically.
+
 ## Conditions
 
 1. The test must never permit plaintext fallback.
@@ -62,9 +69,9 @@ shutdown_grace_seconds = 30
    npm run check
    ```
 
-2. Create a new empty bridge state directory.
+2. In disposable password mode, create a new empty state directory. In token mode, retain the original initialized delivery state and (for encryption) bootstrapped crypto stores.
 
-3. Bootstrap the bridge crypto identity:
+3. In disposable password mode only, bootstrap the new bridge crypto identity:
 
    ```sh
    node dist/main.js --config /tmp/matrix-acp-e2e/config.toml crypto bootstrap
@@ -116,8 +123,8 @@ node agent_tests/encrypted-e2e/cleanup.mjs
 Cleanup must:
 
 - call ACP `session/delete` for every session ID saved in bridge state;
-- log out the bridge, SAS-helper, and sender devices, removing their access tokens and device records;
-- remove generated token files, TOML files, manifests, Matrix crypto databases, sync/session mappings, snapshots, and locks; and
+- log out only owned disposable bridge, SAS-helper and sender devices; never revoke reusable token devices;
+- remove run TOML/configuration files and owned disposable tokens/stores; preserve all reusable crypto manifests/databases/snapshots and delivery ledgers; and
 - preserve local state and report failure if remote ACP or Matrix cleanup fails.
 
 Encrypted room events remain in room history. Homeserver, ACP, proxy, and service logs may also retain ordinary operational records.
@@ -126,20 +133,20 @@ Encrypted room events remain in room history. Homeserver, ACP, proxy, and servic
 
 A successful setup creates:
 
-- three temporary Matrix device IDs and access tokens: bridge, SAS helper, and sender;
+- three reusable token devices or owned disposable password devices: bridge, SAS helper and sender;
 - public device keys, one-time keys, and temporary to-device verification/key-sharing traffic for those devices;
 - one ACP agent session and its agent-owned transcript/state;
 - ignored local identity configuration and token files;
 - three persistent Matrix Rust crypto stores plus manifests and snapshots; and
 - bridge sync state, room-to-ACP mapping, and lock files.
 
-`cleanup.mjs` removes the active Matrix devices, ACP session, and local files. It intentionally leaves room messages, server/proxy logs, and normal ignored build outputs such as `node_modules/` and `dist/`.
+`cleanup.mjs` removes owned disposable Matrix devices, ACP sessions and run files; reusable token devices and their persistent stores remain. It intentionally leaves room messages, server/proxy logs, and normal ignored build outputs such as `node_modules/` and `dist/`.
 
 ## Expected outcome
 
 The test passes only when all of these conditions hold:
 
-- Bootstrap and SAS verification complete without ACP initialization.
+- Existing bootstrap validation (or new owned-device bootstrap) and normal SAS verification complete without ACP initialization.
 - The bridge starts in `required` mode and reports `startup-ready`.
 - The sender's prompt is `m.room.encrypted` on the wire.
 - The bridge decrypts the prompt and sends its exact clear text to ACP once.
