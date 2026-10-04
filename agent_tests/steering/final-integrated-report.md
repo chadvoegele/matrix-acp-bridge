@@ -55,7 +55,7 @@ HTTP status/backoff diagnostics. No trust or encryption setting changed.
 
 ## Independent specification and security review
 
-Reviewed the integrated implementation against `docs/mid-turn-steering/spec.md`,
+Reviewed the integrated implementation against `specifications/mid-turn-steering/spec.md`,
 separately from the earlier implementation agents. No product change was needed.
 
 - Command selection follows normalization, authorization, encryption/relation
