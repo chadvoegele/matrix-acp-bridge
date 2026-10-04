@@ -34,6 +34,9 @@ npm run format                 # fix spacing and format the repository
 npm run check                  # formatting, lint, typecheck, and test gate
 ```
 
+The [architecture and guidance assessment](docs/architecture.md) describes component
+ownership, compatibility and verification boundaries.
+
 ## ACP Connection
 
 The bridge must have a full-duplex ACP stdio connection:

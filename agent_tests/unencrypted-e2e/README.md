@@ -47,10 +47,8 @@ agent_tests/unencrypted-e2e/test-reset.sh
 Run the required completed-ID recovery test:
 
 ```sh
-npm run test:recovery
+agent_tests/unencrypted-e2e/completed-id-recovery-test.sh
 ```
-
-This command invokes `agent_tests/unencrypted-e2e/completed-id-recovery-test.sh`.
 
 Each entry point installs dependencies, runs checks, provisions two devices, runs its exchanges, deletes test-created ACP sessions, revokes both devices, and removes local private state. Matrix room events remain.
 
