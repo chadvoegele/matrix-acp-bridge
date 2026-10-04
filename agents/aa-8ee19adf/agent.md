@@ -1,6 +1,7 @@
 +++
 creation_date = 2026-10-04T02:27:31Z
-status = "ready"
+status = "running"
+system = "codex"
 +++
 
 Implement WAAP ticket `tt-refactor-matrix-acp-bridge-under-codemd-guidance` completely.
