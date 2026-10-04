@@ -8,14 +8,15 @@ export function selectAuthMode(environment = process.env) {
   const mode = environment.E2E_AUTH_MODE ?? (configuredTokens ? "token" : "cache");
   if (!["token", "password", "cache"].includes(mode)) throw new Error("E2E_AUTH_MODE must be token, cache or password");
   if (mode !== "token" && configuredTokens)
-    throw new Error("Configured tokens cannot be combined with password mode; select E2E_AUTH_MODE=token");
+    throw new Error("Configured tokens cannot be combined with cache/password mode; select E2E_AUTH_MODE=token");
   return mode;
 }
 
 export function roleAuthentication(role, mode = selectAuthMode(), environment = process.env) {
   const prefix = `E2E_${role.toUpperCase()}`;
   const required = (name) => {
-    if (!environment[name]) throw new Error(`${name} is required for ${mode} mode`);
+    if (!environment[name])
+      throw new Error(`${mode === "password" ? "SETUP BLOCKED: " : ""}${name} is required for ${mode} mode`);
     return environment[name];
   };
   if (mode === "cache") return {};

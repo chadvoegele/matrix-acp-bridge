@@ -31,3 +31,35 @@ test("unknown-thread fixture requires the homeserver's event ID", async () => {
     );
   }
 });
+
+test("fixture respects server retry timing and reuses its transaction ID", async () => {
+  const requests = [];
+  const delays = [];
+  const root = await createUnknownThreadRoot(
+    environment,
+    "test-token",
+    async (url) => {
+      requests.push(url);
+      return requests.length === 1
+        ? { ok: false, status: 429, json: async () => ({ retry_after_ms: 2000 }) }
+        : { ok: true, json: async () => ({ event_id: "$root" }) };
+    },
+    async (delay) => delays.push(delay),
+  );
+  assert.equal(root, "$root");
+  assert.deepEqual(delays, [2000]);
+  assert.equal(requests[0], requests[1]);
+});
+
+test("fixture refuses unbounded or malformed rate-limit delays", async () => {
+  for (const delay of [undefined, -1, "invalid", 180_001])
+    await assert.rejects(
+      createUnknownThreadRoot(
+        environment,
+        "test-token",
+        async () => ({ ok: false, status: 429, json: async () => ({ retry_after_ms: delay }) }),
+        async () => assert.fail("must not retry"),
+      ),
+      /HTTP 429/u,
+    );
+});

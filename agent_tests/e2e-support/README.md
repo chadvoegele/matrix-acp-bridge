@@ -67,6 +67,11 @@ fresh setup does not stop independent cached/plaintext tests. Exit 0 means all
 selected cases passed; 2 means blocked setup/skipped functionality; 1 means failed
 setup/function or retained cleanup resources. Inspect private `suite.log` for the
 precise cause; logs may contain private identifiers. Do not publish raw evidence.
+The runner groups cases by transport/mode and warms dormant profiles through normal
+production recovery before strict assertions. Inputs sent by another test mode in
+the same room are actually handled and terminally recorded, never hidden by deleting
+or replacing a ledger. Warm-up sessions are explicitly tracked/deleted; the ledger
+and crypto remain. Failed functional cases require another warm-up before reuse.
 Per-case results are durable even if a later case fails. A prior historical pass
 never counts as verification of the final code. The existing shell entry points
 remain supported for individual scenarios and report their setup errors directly.
