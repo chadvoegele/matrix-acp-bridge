@@ -1,3 +1,4 @@
+import { deserialize } from "node:v8";
 import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -104,10 +105,15 @@ export async function validateReusableState(environment, identity, role) {
     const manifest = store.assertReadyForVerification();
     const snapshotPath = join(identity.stateDir, "matrix-crypto", ".indexeddb.snapshot");
     await validatePrivatePath(snapshotPath);
-    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"));
+    let snapshot;
+    try {
+      snapshot = deserialize(await readFile(snapshotPath));
+    } catch {
+      throw new Error("Reusable crypto snapshot is invalid; restore the original paired store without resetting keys");
+    }
     const prefix = join(identity.stateDir, "matrix-crypto");
     if (
-      snapshot.schemaVersion !== 1 ||
+      snapshot?.schemaVersion !== 1 ||
       !Array.isArray(snapshot.databases) ||
       !["matrix-sdk-crypto", "matrix-sdk-crypto-meta"].every((suffix) =>
         snapshot.databases.some(

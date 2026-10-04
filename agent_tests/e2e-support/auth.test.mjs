@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { serialize } from "node:v8";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -253,7 +254,7 @@ test("encrypted token provisioning compares server keys, rejects missing snapsho
     })),
   };
   const snapshotPath = join(databasePath, ".indexeddb.snapshot");
-  await writeFile(snapshotPath, JSON.stringify(snapshot), { mode: 0o600 });
+  await writeFile(snapshotPath, serialize(snapshot), { mode: 0o600 });
   let serverEdKey = "wrong-device-key";
   t.mock.method(globalThis, "fetch", async (url) => ({
     ok: true,
@@ -278,6 +279,13 @@ test("encrypted token provisioning compares server keys, rejects missing snapsho
     },
   }));
   await assert.rejects(provisionEnvironment({ ...options, transport: "encrypted" }), /keys do not match/u);
+  await writeFile(snapshotPath, "invalid-private-snapshot-contents", { mode: 0o600 });
+  await assert.rejects(provisionEnvironment({ ...options, transport: "encrypted" }), (error) => {
+    assert.match(error.message, /snapshot is invalid/u);
+    assert.ok(!error.message.includes("invalid-private-snapshot-contents"));
+    return true;
+  });
+  await writeFile(snapshotPath, serialize(snapshot), { mode: 0o600 });
   serverEdKey = fingerprints.ed25519Fingerprint;
   const manifestPath = join(identity.stateDir, "crypto-state.json");
   const manifestBytes = await readFile(manifestPath);
