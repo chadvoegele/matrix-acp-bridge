@@ -10,6 +10,7 @@ import {
   stopBridgePair,
   waitFor,
 } from "../e2e-support/acp.mjs";
+import { assertCompletedEventLedger } from "../e2e-support/completed-event-ledger.mjs";
 import { createRestartPersistenceObserver, describeLoadFailure } from "../e2e-support/restart-persistence-observer.mjs";
 import { defaultEnvironmentPath, readEnvironment, testDir } from "./lib.mjs";
 
@@ -57,7 +58,7 @@ function promptText(request) {
   return Array.isArray(parts) ? parts.find((part) => part?.type === "text")?.text : undefined;
 }
 
-function assertSchemaV12State(state, label) {
+function assertCurrentState(state, label) {
   assert(state.initialized === true, `${label} state is not initialized`);
   assert(Object.hasOwn(state, "cursor") === false, `${label} state contains a legacy cursor`);
   assert(Object.hasOwn(state, "pendingBatches") === false, `${label} state contains legacy pending batches`);
@@ -66,7 +67,7 @@ function assertSchemaV12State(state, label) {
     `${label} state has no completed-event ledger`,
   );
   for (const ids of Object.values(state.completedEventIds)) {
-    assert(Array.isArray(ids) && new Set(ids).size === ids.length, `${label} completed-event ledger is not unique`);
+    assertCompletedEventLedger(ids, label);
   }
 }
 
@@ -124,7 +125,7 @@ try {
     pair,
   );
   const firstState = await readState();
-  assertSchemaV12State(firstState, "initial");
+  assertCurrentState(firstState, "initial");
   const originalSessionId = firstState.sessions[environment.roomId];
   assert(
     firstState.completedEventIds[environment.roomId]?.includes(firstExchange.promptEventId),
@@ -199,7 +200,7 @@ try {
     pair,
   );
   const restartState = await readState();
-  assertSchemaV12State(restartState, "restart");
+  assertCurrentState(restartState, "restart");
   assert(
     restartState.sessions?.[environment.roomId] === originalSessionId,
     "room mapping did not remain on the loaded ACP session",
@@ -207,7 +208,7 @@ try {
   const completedIds = restartState.completedEventIds[environment.roomId] ?? [];
   assert(completedIds.includes(firstExchange.promptEventId), "completed first ID was compacted before suppression");
   assert(completedIds.includes(offline.promptEventId), "offline ID was not retained after completion");
-  assert(completedIds.length <= 100, `completed-ID ledger exceeded initial-sync bound: ${completedIds.length}`);
+  assertCompletedEventLedger(completedIds, "restart");
   assertCleanDiagnostics(pair, ["completed-event-ledger-loaded", "initial-sync-recovery-finished", "startup-ready"]);
   await stopBridgePair(pair);
   pair = undefined;

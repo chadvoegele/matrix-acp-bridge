@@ -20,7 +20,7 @@ private state is retained so cleanup can be retried safely.
 1. Start the ACP proxy and bridge and wait for `startup-ready`.
 2. Send a unique value in a memory instruction and require a deterministic
    acknowledgement that does not echo the value.
-3. Assert exactly one `session/new`, one prompt, initialized schema-v12 state,
+3. Assert exactly one `session/new`, one prompt, initialized schema-v13 state,
    a bounded completed-ID ledger, and a room mapping to the created session.
    Fail clearly unless ACP advertises `loadSession`.
 4. Gracefully stop the bridge and ACP proxy, waiting for state flush and lock

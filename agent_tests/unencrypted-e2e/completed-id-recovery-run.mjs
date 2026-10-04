@@ -13,6 +13,7 @@ import {
   stopBridgePair,
   waitFor,
 } from "../e2e-support/acp.mjs";
+import { assertCompletedEventLedger } from "../e2e-support/completed-event-ledger.mjs";
 import { defaultEnvironmentPath, readEnvironment, repoRoot, testDir } from "./lib.mjs";
 
 const environmentPath = process.argv[2] ?? defaultEnvironmentPath;
@@ -158,9 +159,7 @@ function assertCurrentState(state, label) {
   assert(Object.hasOwn(state, "cursor") === false, `${label} state contains a legacy cursor`);
   assert(Object.hasOwn(state, "pendingBatches") === false, `${label} state contains legacy pending batches`);
   const ids = state.completedEventIds?.[environment.roomId];
-  assert(Array.isArray(ids) && new Set(ids).size === ids.length, `${label} completed-event ledger is invalid`);
-  assert(ids.length <= 100, `${label} completed-event ledger is not bounded`);
-  return ids;
+  return assertCompletedEventLedger(ids, label);
 }
 
 async function runSender(arguments_) {

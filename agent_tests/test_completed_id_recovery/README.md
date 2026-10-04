@@ -3,7 +3,7 @@
 Run the isolated live test with:
 
 ```sh
-npm run test:recovery
+agent_tests/unencrypted-e2e/completed-id-recovery-test.sh
 ```
 
 The runner:
