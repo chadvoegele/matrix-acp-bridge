@@ -5,19 +5,27 @@ import type { MatrixFailureClassification } from "./matrix-client.js";
 /** Read server timing hints without retaining headers or exposing error content. */
 export function readMatrixRetryAfterMs(error: unknown, now: number): number | undefined {
   if (!isRecord(error)) return;
-  const direct = numberProperty(error, "retryAfterMs", "retry_after_ms");
+  const direct = numberProperty(error, "retryAfterMs");
   if (direct !== undefined && direct >= 0) return direct;
-  const data = numberProperty(error.data, "retry_after_ms");
-  if (data !== undefined && data >= 0) return data;
+  // HTTP timing takes precedence over deprecated JSON hints. Parse dates
+  // here so SDK getters cannot substitute their wall clock for the caller's.
+  const header = readRetryAfterHeader(error.httpHeaders ?? error.headers, now);
+  if (header !== undefined) return header;
   if (typeof error.getRetryAfterMs === "function") {
     try {
       const hint = error.getRetryAfterMs.call(error) as unknown;
       if (typeof hint === "number" && Number.isFinite(hint) && hint >= 0) return hint;
     } catch {
-      // Invalid SDK hints fall through to the HTTP header.
+      // Invalid SDK hints fall through to deprecated JSON hints.
     }
   }
-  const headers = error.httpHeaders ?? error.headers;
+  const legacy = numberProperty(error, "retry_after_ms");
+  if (legacy !== undefined && legacy >= 0) return legacy;
+  const data = numberProperty(error.data, "retry_after_ms");
+  return data !== undefined && data >= 0 ? data : undefined;
+}
+
+function readRetryAfterHeader(headers: unknown, now: number): number | undefined {
   if (!isRecord(headers) || typeof headers.get !== "function") return;
   try {
     const header = headers.get.call(headers, "Retry-After") as unknown;

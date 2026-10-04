@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { MatrixError } from "matrix-js-sdk";
+import { classifyMatrixError } from "./matrix-client.js";
 import { calculateRetryDelay, classifyDeliveryFailure, readMatrixRetryAfterMs } from "./matrix-retry.js";
 
 void test("permanent HTTP and Matrix authentication failures override network text and retry flags", () => {
@@ -64,6 +66,24 @@ void test("server retry hints fall back safely and dates use an explicit current
   ]) {
     assert.equal(readMatrixRetryAfterMs(error, now), undefined);
   }
+});
+
+void test("Retry-After overrides deprecated body hints for raw and SDK errors", () => {
+  const now = Date.UTC(2020, 0, 1);
+  const data = { errcode: "M_LIMIT_EXCEEDED", retry_after_ms: 1000 };
+  const headers = new Headers({ "Retry-After": "60" });
+  const sdkError = new MatrixError(data, 429, undefined, undefined, headers);
+  assert.equal(readMatrixRetryAfterMs({ data, headers }, now), 60_000);
+  assert.equal(readMatrixRetryAfterMs(sdkError, now), 60_000);
+  assert.equal(classifyMatrixError(sdkError).retryAfterMs, 60_000);
+  headers.set("Retry-After", "Wed, 01 Jan 2020 00:01:00 GMT");
+  assert.equal(readMatrixRetryAfterMs(sdkError, now), 60_000);
+  for (const value of ["invalid", ""]) {
+    headers.set("Retry-After", value);
+    assert.equal(readMatrixRetryAfterMs(sdkError, now), 1000);
+  }
+  headers.delete("Retry-After");
+  assert.equal(readMatrixRetryAfterMs(sdkError, now), 1000);
 });
 
 void test("full jitter has bounded exponential caps and safe entropy fallback", () => {

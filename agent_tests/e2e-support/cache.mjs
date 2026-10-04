@@ -24,8 +24,15 @@ export async function prepareCachedRoles(environment, definitions, settings = pr
     repoRoot,
     execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd: repoRoot, encoding: "utf8" }).trim(),
   );
-  const repository = resolve(commonGit, "..");
-  if (directory.startsWith(`${repository}/`) || directory === repository)
+  const worktrees = execFileSync("git", ["worktree", "list", "--porcelain", "-z"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  })
+    .split("\0")
+    .filter((field) => field.startsWith("worktree "))
+    .map((field) => field.slice("worktree ".length));
+  const roots = [resolve(commonGit, ".."), repoRoot, ...worktrees];
+  if (roots.some((root) => directory.startsWith(`${root}/`) || directory === root))
     throw new Error("Cache must be outside the repository and disposable worktrees");
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await validatePrivatePath(directory, true);

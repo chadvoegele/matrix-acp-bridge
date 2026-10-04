@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,8 @@ import {
   recordCachedBootstrap,
   recordCachedSas,
 } from "./cache.mjs";
+
+import { repoRoot } from "./common.mjs";
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "matrix-cache-"));
@@ -108,9 +111,26 @@ test("bootstrap lock and unsafe location prevent concurrent/repository caches", 
   await writeFile(join(directory, "bootstrap.lock"), "active", { mode: 0o600 });
   await assert.rejects(prepareCachedRoles(f.environment, f.definitions, f.settings), /active\/interrupted/u);
   await assert.rejects(
-    prepareCachedRoles(f.environment, f.definitions, { E2E_CACHE_DIR: process.cwd() }),
+    prepareCachedRoles(f.environment, f.definitions, { E2E_CACHE_DIR: repoRoot }),
     /outside the repository/u,
   );
+});
+
+test("cache rejects other external worktrees before creating files or logging in", async (t) => {
+  const f = await fixture(t);
+  const worktree = join(f.root, "external worktree");
+  execFileSync("git", ["worktree", "add", "--detach", "--no-checkout", worktree, "HEAD"], {
+    cwd: repoRoot,
+    stdio: "ignore",
+  });
+  try {
+    const settings = { ...f.settings, E2E_CACHE_DIR: join(worktree, "cache") };
+    await assert.rejects(prepareCachedRoles(f.environment, f.definitions, settings), /outside the repository/u);
+    await assert.rejects(stat(settings.E2E_CACHE_DIR), { code: "ENOENT" });
+    assert.equal(f.logins(), 0);
+  } finally {
+    execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: repoRoot, stdio: "ignore" });
+  }
 });
 
 test("crypto and real SAS milestones persist separately, never invent verified state", async (t) => {
