@@ -14,10 +14,10 @@ manual operations; shell test entry points hold it automatically.
 
 ## Test setup
 
-The test-only harnesses in [`../unencrypted-e2e/`](../unencrypted-e2e/README.md) automate device provisioning, ACP/bridge process wiring, both exchanges, restart, and cleanup. Generated identities and secrets remain in ignored private files. Prefer the repeatable entry point, which cleans up on success, failure, or an ordinary signal:
+The [test-only harnesses in this folder](harness.md) automate device provisioning, ACP/bridge process wiring, both exchanges, restart, and cleanup. Generated identities and secrets remain in ignored private files. Prefer the repeatable entry point, which cleans up on success, failure, or an ordinary signal:
 
 ```sh
-agent_tests/unencrypted-e2e/test.sh
+agent_tests/test_unencrypted_message/test.sh
 ```
 
 ### Software
@@ -35,20 +35,20 @@ docker --host ssh://ACP_DOCKER_HOST exec -i pi-acp \
 2. A sender account and temporary device.
 3. An unencrypted room containing both accounts.
 
-The harness shares the encrypted test's `E2E_HOMESERVER`, account, authentication, ACP, and working-directory variables. Set `UNENCRYPTED_E2E_ROOM_ID` for the plaintext room; `E2E_ROOM_ID` is the fallback. See [`../unencrypted-e2e/README.md`](../unencrypted-e2e/README.md).
+The harness shares the encrypted test's `E2E_HOMESERVER`, account, authentication, ACP, and working-directory variables. Set `UNENCRYPTED_E2E_ROOM_ID` for the plaintext room; `E2E_ROOM_ID` is the fallback. See [harness configuration](harness.md).
 
 ### Bridge configuration
 
 Create a private state directory and a configuration equivalent to:
 
 ```toml
-state_dir = "/tmp/matrix-acp-unencrypted-e2e/bridge-state"
+state_dir = "/tmp/matrix-acp-test_unencrypted_message/bridge-state"
 
 [matrix]
 homeserver = "https://matrix.example.org"
 user_id = "@bridge:matrix.example.org"
 device_id = "BRIDGE_DEVICE"
-access_token_file = "/tmp/matrix-acp-unencrypted-e2e/bridge-token"
+access_token_file = "/tmp/matrix-acp-test_unencrypted_message/bridge-token"
 allowed_rooms = ["!plaintext-room:matrix.example.org"]
 allowed_senders = ["@sender:matrix.example.org"]
 encryption = "disabled"
@@ -99,7 +99,7 @@ shutdown_grace_seconds = 30
 12. Stop the processes and clean up from an `EXIT` trap:
 
 ```sh
-node agent_tests/unencrypted-e2e/cleanup.mjs
+node agent_tests/test_unencrypted_message/cleanup.mjs
 ```
 
 Cleanup deletes saved ACP sessions and run configuration. Only owned password-mode devices are logged out and their generated tokens/stores removed. Reusable tokens, crypto and initialized delivery ledgers remain. It preserves local state if remote cleanup fails.

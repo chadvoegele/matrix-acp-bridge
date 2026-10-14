@@ -35,7 +35,11 @@ async function runLiveSuites() {
   for (const transport of ["plaintext", "encrypted"]) {
     for (const mode of ["room", "thread"]) {
       const prefix =
-        mode === "thread" ? "thread-sessions" : transport === "plaintext" ? "unencrypted-e2e" : "encrypted-e2e";
+        mode === "thread"
+          ? "test_thread_sessions"
+          : transport === "plaintext"
+            ? "test_unencrypted_message"
+            : "test_encrypted_message";
       const normal = mode === "thread" ? `${transport}-run.mjs` : "run.mjs";
       const activity = mode === "thread" ? `${transport}-activity-wire.mjs` : "activity-wire.mjs";
       cases.push(
@@ -55,14 +59,14 @@ async function runLiveSuites() {
       name: `plaintext-room-${name}`,
       transport: "plaintext",
       mode: "room",
-      prefix: "unencrypted-e2e",
+      prefix: "test_unencrypted_message",
       runner,
     });
   cases.push({
     name: "plaintext-room-startup",
     transport: "plaintext",
     mode: "room",
-    prefix: "unencrypted-e2e",
+    prefix: "test_unencrypted_message",
     startup: true,
   });
   cases.sort((first, second) => rank(first) - rank(second));
@@ -80,7 +84,7 @@ async function runLiveSuites() {
     const directory = join(evidenceRoot, scenario.name);
     await mkdir(directory, { mode: 0o700 });
     const environmentPath = join(directory, "environment.json");
-    const prefix = scenario.prefix ?? "encrypted-e2e";
+    const prefix = scenario.prefix ?? "test_encrypted_message";
     const thread = scenario.mode === "thread";
     const encrypted = scenario.transport === "encrypted";
     const provision = thread ? `${scenario.transport}-provision.mjs` : "provision.mjs";
@@ -159,7 +163,7 @@ async function runLiveSuites() {
         }
         console.log(`${scenario.name}: setup ready; functional validation running`);
         if (scenario.steering)
-          code = await run("agent_tests/steering/live-matrix.mjs", [
+          code = await run("agent_tests/test_steering/live-matrix.mjs", [
             environmentPath,
             scenario.transport,
             scenario.mode,
@@ -172,7 +176,7 @@ async function runLiveSuites() {
             config.replace("[matrix]", '[matrix]\ndefault_message_delivery = "steer"'),
           );
           for (const operation of ["send", "catchup", "quiet", "reset"]) {
-            code = await run("agent_tests/steering/startup-matrix.mjs", [
+            code = await run("agent_tests/test_steering/startup-matrix.mjs", [
               environmentPath,
               operation,
               join(directory, `${operation}-wire.json`),

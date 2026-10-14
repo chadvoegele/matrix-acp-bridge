@@ -15,10 +15,10 @@ manual operations; shell test entry points hold it automatically.
 
 ## Automated test
 
-The harness in [`../unencrypted-e2e/`](../unencrypted-e2e/README.md) prepares reusable token devices or new owned password devices, taps the ACP protocol in both directions, runs the exchanges, and cleans up. Generated credentials, bridge state, and the retained session-ID list stay in ignored private paths.
+The harness in [`../test_unencrypted_message/`](../test_unencrypted_message/README.md) prepares reusable token devices or new owned password devices, taps the ACP protocol in both directions, runs the exchanges, and cleans up. Generated credentials, bridge state, and the retained session-ID list stay in ignored private paths.
 
 ```sh
-agent_tests/unencrypted-e2e/test-reset.sh
+agent_tests/test_unencrypted_message/test-reset.sh
 ```
 
 The test performs this sequence:

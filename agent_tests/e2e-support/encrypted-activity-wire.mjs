@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { startBridgePair, stopBridgePair } from "./acp.mjs";
 import { selectEventsSinceInput } from "./steering-observations.mjs";
 import { assertThreadResponse } from "./thread-sessions.mjs";
-import { installLiveDecryptionFailureHandler } from "../encrypted-e2e/decryption-failure-gate.mjs";
+import { installLiveDecryptionFailureHandler } from "../test_encrypted_message/decryption-failure-gate.mjs";
 
 export async function runActivityHarness({ readEnvironment, readToken, createAdapter, threadMode = false }) {
   const environment = await readEnvironment(process.argv[2]);

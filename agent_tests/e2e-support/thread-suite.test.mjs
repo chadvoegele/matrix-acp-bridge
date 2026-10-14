@@ -8,13 +8,16 @@ import { promisify } from "node:util";
 import { repoRoot } from "./common.mjs";
 import test from "node:test";
 
-import { makeConfig as roomPlain } from "../unencrypted-e2e/lib.mjs";
-import { makeConfig as roomEncrypted } from "../encrypted-e2e/lib.mjs";
-import { makeConfig as threadPlain, defaultEnvironmentPath as plainPath } from "../thread-sessions/plaintext-lib.mjs";
+import { makeConfig as roomPlain } from "../test_unencrypted_message/lib.mjs";
+import { makeConfig as roomEncrypted } from "../test_encrypted_message/lib.mjs";
+import {
+  makeConfig as threadPlain,
+  defaultEnvironmentPath as plainPath,
+} from "../test_thread_sessions/plaintext-lib.mjs";
 import {
   makeConfig as threadEncrypted,
   defaultEnvironmentPath as encryptedPath,
-} from "../thread-sessions/encrypted-lib.mjs";
+} from "../test_thread_sessions/encrypted-lib.mjs";
 import { runSenderHarness as plainSender } from "./plaintext-sender.mjs";
 import { runSenderHarness as encryptedSender } from "./encrypted-sender.mjs";
 
@@ -43,8 +46,8 @@ test("room configs ignore inherited thread mode; dedicated configs select only t
     assert.match(threadPlain(environment), /encryption = "disabled"/u);
     assert.match(threadEncrypted(environment, "bridge"), /encryption = "required"/u);
     assert.notEqual(plainPath, encryptedPath);
-    assert.match(plainPath, /thread-sessions\/plaintext-environment.json$/u);
-    assert.match(encryptedPath, /thread-sessions\/encrypted-environment.json$/u);
+    assert.match(plainPath, /test_thread_sessions\/plaintext-environment.json$/u);
+    assert.match(encryptedPath, /test_thread_sessions\/encrypted-environment.json$/u);
   } finally {
     if (previous === undefined) delete process.env.E2E_RESPONSE_MODE;
     else process.env.E2E_RESPONSE_MODE = previous;
@@ -68,7 +71,7 @@ test("room senders reject thread flags before reading credentials or contacting 
 test("thread entry points use dedicated setup, cleanup, paths and explicit harness mode", async () => {
   for (const label of ["plaintext", "encrypted"]) {
     for (const suffix of ["test", "test-activity"]) {
-      const script = await readFile(new URL(`../thread-sessions/${label}-${suffix}.sh`, import.meta.url), "utf8");
+      const script = await readFile(new URL(`../test_thread_sessions/${label}-${suffix}.sh`, import.meta.url), "utf8");
       for (const part of [
         `THREAD_${label.toUpperCase()}_ENVIRONMENT_FILE`,
         `${label}-environment.json`,
@@ -79,17 +82,17 @@ test("thread entry points use dedicated setup, cleanup, paths and explicit harne
       assert(!script.includes("E2E_RESPONSE_MODE"));
     }
     for (const name of ["sender", "activity-wire"]) {
-      const wrapper = await readFile(new URL(`../thread-sessions/${label}-${name}.mjs`, import.meta.url), "utf8");
+      const wrapper = await readFile(new URL(`../test_thread_sessions/${label}-${name}.mjs`, import.meta.url), "utf8");
       assert(wrapper.includes("threadMode: true"));
       assert(wrapper.includes(`../e2e-support/${label}-${name}.mjs`));
     }
-    const cleanup = await readFile(new URL(`../thread-sessions/${label}-cleanup.mjs`, import.meta.url), "utf8");
+    const cleanup = await readFile(new URL(`../test_thread_sessions/${label}-cleanup.mjs`, import.meta.url), "utf8");
     assert(cleanup.includes("e2e-session-ids.json"), "detached reset sessions must be cleaned up");
   }
 });
 
 test("relocated plaintext scenario retains restart/reset isolation assertions", async () => {
-  const runner = await readFile(new URL("../thread-sessions/plaintext-run.mjs", import.meta.url), "utf8");
+  const runner = await readFile(new URL("../test_thread_sessions/plaintext-run.mjs", import.meta.url), "utf8");
   for (const assertion of [
     "restart eagerly loaded thread sessions",
     "restart did not lazily load only the requested thread",

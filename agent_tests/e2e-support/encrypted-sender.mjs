@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { assertThreadResponse } from "./thread-sessions.mjs";
-import { installLiveDecryptionFailureHandler } from "../encrypted-e2e/decryption-failure-gate.mjs";
+import { installLiveDecryptionFailureHandler } from "../test_encrypted_message/decryption-failure-gate.mjs";
 
 export async function runSenderHarness({ readEnvironment, readToken, createAdapter, threadMode = false }) {
   if (!threadMode && (process.argv.includes("--thread-root") || process.argv.includes("--expect-thread"))) {

@@ -1,7 +1,7 @@
 # Restart and recovery runners
 
 Follow the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
-and [plaintext environment setup](../unencrypted-e2e/README.md). Shell entry
+and [plaintext environment setup](../test_unencrypted_message/README.md). Shell entry
 points hold the shared live lock and attempt cleanup on failure or signals.
 Cleanup deletes owned ACP sessions and disposable devices; reusable credentials,
 crypto and initialized delivery ledgers remain. Retain private state if remote
@@ -10,7 +10,7 @@ cleanup fails.
 ## Graceful session persistence
 
 ```sh
-agent_tests/unencrypted-e2e/restart-persistence-test.sh
+agent_tests/test_unencrypted_message/restart-persistence-test.sh
 ```
 
 Requires ACP `loadSession`. Complete a memory instruction, stop the bridge/ACP
@@ -27,7 +27,7 @@ This verifies retained agent context, not just duplicate suppression.
 ## Interrupted input recovery
 
 ```sh
-agent_tests/unencrypted-e2e/completed-id-recovery-test.sh
+agent_tests/test_unencrypted_message/completed-id-recovery-test.sh
 ```
 
 Complete one prompt, stop the bridge, and send another input while it is down.

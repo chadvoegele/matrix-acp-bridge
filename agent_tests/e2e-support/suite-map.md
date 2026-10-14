@@ -1,20 +1,24 @@
 # Agent-test grouping
 
-All top-level behavior descriptions follow `../AGENTS.md`: concise human-facing
-scenarios, with execution details in subfolders. The full suite is grouped by
-behavior, not by harness implementation or authentication mode:
+Top-level `test_<name>.md` files describe behavior for humans; each has a matching
+`test_<name>/` support folder. Shared transport, authentication, ownership, locks
+and cleanup helpers live in `e2e-support/`.
 
-| Behavior             | Technical instructions                                    | Deliberate overlap                                                                                                                                                                               |
-| -------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Message exchange     | [Message runners](../test_message/README.md)              | Plaintext and encrypted variants share one behavior description; retain separate crypto/SAS instructions. Both have restart smoke coverage.                                                      |
-| Restart and recovery | [Recovery runners](../test_restart_persistence/README.md) | Graceful remembered-context and interrupted-input scenarios share a description and runbook, but remain separate runners because their failure boundaries differ.                                |
-| Reset                | [Reset runner](../test_reset/README.md)                   | Room control behavior is independent; thread tests additionally verify reset isolation, steering tests verify reset barriers.                                                                    |
-| Steering             | [Steering runners](../steering/README.md)                 | Startup, restart and reset checks protect steering selection and fallback, not a second general persistence suite.                                                                               |
-| Thread conversations | [Thread runners](../thread-sessions/README.md)            | Routing and session isolation are independent of basic exchange; encrypted coverage checks relations, while full restart/reset coverage currently uses plaintext.                                |
-| Agent activity       | [Activity runners](../test_activity/README.md)            | One rendering behavior across four transport/response profiles; thread and encrypted wrappers add relation and wire assertions. Real metadata coverage remains separate from scripted rendering. |
+| Behavior             | Support folder                                                    | Coverage boundary                                                                                                                                                        |
+| -------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Encrypted message    | [test_encrypted_message](../test_encrypted_message/README.md)     | Crypto bootstrap, real SAS, persistent device keys and encrypted wire events with no plaintext fallback; exchange/restart assertions are shared with plaintext.          |
+| Unencrypted message  | [test_unencrypted_message](../test_unencrypted_message/README.md) | Disabled encryption, plaintext wire events, Markdown and exchange/restart smoke coverage; no crypto setup.                                                               |
+| Restart and recovery | [test_restart_persistence](../test_restart_persistence/README.md) | Graceful remembered-context and interrupted-input scenarios share a runbook, but remain separate runners because their failure boundaries differ.                        |
+| Reset                | [test_reset](../test_reset/README.md)                             | Room control behavior; thread tests additionally verify reset isolation, steering tests verify reset barriers.                                                           |
+| Steering             | [test_steering](../test_steering/README.md)                       | Startup, restart and reset checks protect steering selection and fallback, not a second general persistence suite.                                                       |
+| Thread conversations | [test_thread_sessions](../test_thread_sessions/README.md)         | Routing and session isolation; encrypted coverage checks relations, while full restart/reset coverage currently uses plaintext.                                          |
+| Agent activity       | [test_activity](../test_activity/README.md)                       | Rendering across four transport/response profiles; thread/encrypted wrappers add relation/wire assertions. Real metadata coverage remains separate from scripted output. |
 
-Authentication, ownership, locks and cleanup remain in the shared harness contract.
-Existing transport entry points and independent recovery runners are retained;
-consolidating descriptions must not silently remove assertions or equate graceful
-shutdown with crash recovery. Historical verification reports remain under their
-support folders rather than becoming top-level behavior tests.
+Profile-specific provisioning, senders, cleanup and activity wrappers live with
+their encrypted/plaintext or thread profiles and can be reused by the other tests.
+The plaintext profile currently also supplies reset and recovery runners; their
+matching support folders document those entry points. Historical reports remain
+in support folders, not top-level behavior tests.
+
+Do not equate graceful shutdown with crash recovery, or consolidate away the
+encrypted setup and security contract merely because prompt/response behavior overlaps.

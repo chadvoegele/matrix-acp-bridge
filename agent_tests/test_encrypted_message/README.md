@@ -13,10 +13,10 @@ manual operations; shell test entry points hold it automatically.
 
 ## Test setup
 
-The test-only harnesses in [`../encrypted-e2e/`](../encrypted-e2e/README.md) automate device provisioning, persistent sender crypto, real SAS comparison and confirmation, ACP/bridge process wiring, both exchanges, restart assertions, and cleanup. Generated identities and secrets remain in ignored private files. Prefer the repeatable entry point, which cleans up on success, failure, or an ordinary signal:
+The [test-only harnesses in this folder](harness.md) automate device provisioning, persistent sender crypto, real SAS comparison and confirmation, ACP/bridge process wiring, both exchanges, restart assertions, and cleanup. Generated identities and secrets remain in ignored private files. Prefer the repeatable entry point, which cleans up on success, failure, or an ordinary signal:
 
 ```sh
-agent_tests/encrypted-e2e/test.sh
+agent_tests/test_encrypted_message/test.sh
 ```
 
 ### Software
@@ -117,7 +117,7 @@ shutdown_grace_seconds = 30
 17. Clean up test-created state, preferably from an `EXIT` trap:
 
 ```sh
-node agent_tests/encrypted-e2e/cleanup.mjs
+node agent_tests/test_encrypted_message/cleanup.mjs
 ```
 
 Cleanup must:
