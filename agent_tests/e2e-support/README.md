@@ -102,8 +102,8 @@ Existing user/room/homeserver/ACP variables remain required. Helper is a distinc
 device on the test bridge account. Tokens are private regular files (0600), with
 private parent directories (0700); state directories are 0700, all owned by the
 current user and canonical absolute paths, without symlinks. Retrieve approved
-test tokens using `nopass_pass.sh` into a protected file, never console output.
-Do not silently add entries to pass or edit the private `.env`.
+test tokens from your secret manager into a protected file, never console output.
+Do not modify private credentials or `.env` without approval.
 
 Supply separate profiles/devices for plaintext/encrypted and room/thread modes.
 Each token gets an adjacent `*.e2e-device-binding.json` tying it to its user,

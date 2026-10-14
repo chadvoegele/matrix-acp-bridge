@@ -21,7 +21,7 @@ coverage is blocked by normal SAS verification failures; plaintext thread covera
 
 The canonical mode-0600 `.env` was inspected privately. Literal settings were
 parsed without sourcing its shell code. Both documented test account passwords
-were retrieved directly with `nopass_pass.sh`. An isolated scratch directory
+were retrieved privately from the local secret manager. An isolated scratch directory
 and the verified PR115 stdio build replaced the configured hosted ACP transport
 for these test processes. Test accounts and designated rooms were reused;
 bridge and sender devices were newly provisioned. The bridge used its production

@@ -1,58 +1,48 @@
-# Restart Persistence Matrix E2E Test
+# Restart and recovery runners
 
-Follow the shared [authentication, ownership and recovery contract](../e2e-support/README.md).
-Token mode uses designated reusable test devices and their original persistent
-state without `/login`; cleanup preserves tokens, devices, crypto and delivery
-ledgers while deleting owned ACP sessions. Fresh-device login/bootstrap steps
-below apply only to disposable password mode. Hold the shared live lock for
-manual operations; shell test entry points hold it automatically.
+Follow the shared [authentication, ownership and recovery contract](../e2e-support/README.md)
+and [plaintext environment setup](../unencrypted-e2e/README.md). Shell entry
+points hold the shared live lock and attempt cleanup on failure or signals.
+Cleanup deletes owned ACP sessions and disposable devices; reusable credentials,
+crypto and initialized delivery ledgers remain. Retain private state if remote
+cleanup fails.
 
-## Run
-
-Configure the live environment described in
-[`../unencrypted-e2e/README.md`](../unencrypted-e2e/README.md), then run:
+## Graceful session persistence
 
 ```sh
 agent_tests/unencrypted-e2e/restart-persistence-test.sh
 ```
 
-The entry point runs `npm run check`, validates reusable Matrix tokens and their original delivery state, or provisions
-fresh owned password-mode devices/state. It executes the test, deletes created
-ACP sessions, revokes only owned devices, and preserves reusable credentials/stores. Cleanup is
-also attempted after failures and ordinary signals. If remote cleanup fails,
-private state is retained so cleanup can be retried safely.
+Requires ACP `loadSession`. Complete a memory instruction, stop the bridge/ACP
+pair gracefully, and send an input referring to the remembered value while both
+are down. Restart with the same configuration and persistent state. Require:
 
-## Flow and assertions
+- `session/load` before the recovered prompt, both on the original session;
+- no replacement `session/new`, one recovered prompt and one matching plaintext
+  top-level response, with the exact remembered value;
+- zero replay of the first completed prompt and an unchanged room mapping.
 
-1. Start the ACP proxy and bridge and wait for `startup-ready`.
-2. Send a unique value in a memory instruction and require a deterministic
-   acknowledgement that does not echo the value.
-3. Assert exactly one `session/new`, one prompt, initialized schema-v13 state,
-   a bounded completed-ID ledger, and a room mapping to the created session.
-   Fail clearly unless ACP advertises `loadSession`.
-4. Gracefully stop the bridge and ACP proxy, waiting for state flush and lock
-   release.
-5. Send a plaintext Matrix prompt while both are stopped. The prompt refers to
-   the remembered value without containing it and is correlated by its unique
-   event ID and the sender's observation position.
-6. Restart with the same configuration and private state. The SDK performs a
-   normal initial sync; watch for the exact remembered value.
-7. Assert `session/load` precedes the recovered `session/prompt`, both use the
-   original session ID, no replacement `session/new` occurs, the offline event
-   reaches ACP exactly once, and the completed first event reaches ACP zero
-   times during restart.
-8. Assert Matrix receives exactly one matching response and both prompt and
-   response are top-level plaintext `m.room.message` events.
-9. Assert the room mapping remains unchanged, both event IDs are in bounded
-   completed-ID state, no legacy cursor or pending-batch fields exist, and
-   diagnostics contain normal ledger/startup-recovery events without state,
-   lock, or ACP protocol failures.
+This verifies retained agent context, not just duplicate suppression.
 
-The test uses graceful shutdown and makes no claim about ambiguous crash
-boundaries or durable recovery of an interrupted response.
+## Interrupted input recovery
 
-Repeated live runs default to the private persistent cache. Absent profiles use
-one-time designated test password bootstrap; existing profiles reuse their original
-tokens/device/crypto state. Plaintext/encrypted and room/thread profiles are isolated.
-Use the [shared lifecycle and aggregate runner](../e2e-support/README.md) for
-separate fresh crypto/SAS setup results and independent functional results.
+```sh
+agent_tests/unencrypted-e2e/completed-id-recovery-test.sh
+```
+
+Complete one prompt, stop the bridge, and send another input while it is down.
+Restart normally, hold that unseen input before ACP, and interrupt the bridge
+before completion. Restart again: the first completed input must not be
+submitted; the interrupted input must be submitted exactly once and completed
+before its Matrix response. Verify session restoration when supported.
+
+This deliberately tests interruption, unlike the graceful memory test. It does
+not establish durable recovery of a partially delivered response.
+
+## Shared state assertions
+
+Both runners start from an initialized retained ledger or an owned fresh-device
+baseline, use normal initial sync, and inspect bounded schema-v13 completed-ID
+state without legacy cursor or pending-batch fields. Sanitized diagnostics and
+ACP method counts must show no state, lock or protocol failures. Neither runner
+prints prompt bodies, tokens or raw service diagnostics.

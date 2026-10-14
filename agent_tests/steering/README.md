@@ -12,7 +12,7 @@ the shared live lock; manual sequences must hold it through cleanup.
 CLI and the environment's real ACP command through unchanged NDJSON taps. Use
 only the two documented test accounts and designated test rooms from the ignored
 root `.env`. Check that configuration privately before evaluating any credential
-lookups; retrieve approved test credentials with `nopass_pass.sh`. Never commit or print tokens,
+lookups; retrieve approved test credentials from your secret manager. Never commit or print tokens,
 private Matrix identifiers, or raw wire traces.
 
 Build with `npm ci && npm run build`. Supply an exact pi-acp PR115 build through

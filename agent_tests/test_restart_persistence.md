@@ -1,6 +1,11 @@
-# Purpose
+# Restart and recovery
 
-Prove that an unencrypted Matrix event sent while the complete bridge/ACP pair
-is stopped is admitted once by normal initial-sync completed-ID recovery and
-handled through the original persisted ACP session after restart, while a
-completed event is suppressed.
+Verify that restarting the bridge preserves conversation history and input progress:
+
+- An input sent while the bridge is stopped is handled once after restart,
+  using the original agent session when session restoration is supported.
+- Completed input is not submitted again.
+- Input interrupted before completion is retried after restart.
+
+This covers graceful restart and interrupted input, not guaranteed delivery of
+responses interrupted by a crash.

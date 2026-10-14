@@ -95,7 +95,7 @@ only structural event IDs:
 agent_tests/unencrypted-e2e/completed-id-recovery-test.sh
 ```
 
-See [`../test_completed_id_recovery/README.md`](../test_completed_id_recovery/README.md)
+See [`../test_restart_persistence/README.md#interrupted-input-recovery`](../test_restart_persistence/README.md#interrupted-input-recovery)
 for the full contract.
 
 ## Retained setup for debugging
