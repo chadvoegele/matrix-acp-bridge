@@ -1,6 +1,7 @@
 import { readMatrixRetryAfterMs } from "./matrix-retry.js";
 import { calculateRetryBackoff, createClient, MemoryStore } from "matrix-js-sdk";
 import { logger as matrixSdkRootLogger } from "matrix-js-sdk/lib/logger.js";
+import { EventStatus } from "matrix-js-sdk/lib/models/event-status.js";
 import { classifyCryptoFailure, SAS_VERIFICATION_METHOD } from "./crypto-runtime.js";
 import { systemClock } from "./clock.js";
 import type { Clock } from "./clock.js";
@@ -1033,6 +1034,7 @@ function matrixConfigFrom(config: MatrixConfig | BridgeConfig): MatrixConfig {
 
 function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClientLike {
   let client: MatrixSdkClientLike | undefined;
+  let sdkClient: ReturnType<typeof createClient> | undefined;
   let loading: Promise<MatrixSdkClientLike> | undefined;
   const subscriptions: SdkSubscription[] = [];
   const store = new MemoryStore();
@@ -1044,17 +1046,20 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
     if (loading === undefined) {
       loading = Promise.resolve().then(() => {
         silenceMatrixSdkRootLogger();
-        client = createClient({
+        sdkClient = createClient({
           baseUrl: options.baseUrl,
           accessToken: options.accessToken,
           userId: options.userId,
           deviceId: options.deviceId,
+          // Let stalled HTTP attempts reject so existing outbound retries can progress.
+          localTimeoutMs: 30_000,
           ...(options.verificationMethods === undefined
             ? {}
             : { verificationMethods: [...options.verificationMethods] }),
           store,
           logger: silentMatrixSdkLogger,
-        }) as unknown as MatrixSdkClientLike;
+        });
+        client = sdkClient as unknown as MatrixSdkClientLike;
         for (const subscription of subscriptions) {
           client.on(subscription.event, subscription.listener);
         }
@@ -1121,7 +1126,15 @@ function defaultClientFactory(options: MatrixClientCreateOptions): MatrixSdkClie
       }
     },
     async sendMessage(roomId, content, transactionId) {
-      return (await load()).sendMessage(roomId, content, transactionId);
+      const loaded = await load();
+      const room = sdkClient?.getRoom(roomId);
+      const pending = transactionId === undefined ? undefined : room?.getEventForTxnId(transactionId);
+      // The SDK retains rejected sends. Reuse their event and ciphertext instead
+      // of registering a second local echo with the same transaction ID.
+      if (sdkClient !== undefined && room !== undefined && room !== null && pending?.status === EventStatus.NOT_SENT) {
+        return sdkClient.resendEvent(pending, room);
+      }
+      return loaded.sendMessage(roomId, content, transactionId);
     },
   };
 }
