@@ -15,3 +15,10 @@ export const systemClock: Clock = {
     globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>);
   },
 };
+
+/** Normalize computed delays to the Node timer range. */
+export function clampTimerMilliseconds(value: number): number {
+  const maximumTimerMs = 2_147_483_647;
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(maximumTimerMs, Math.floor(value));
+}

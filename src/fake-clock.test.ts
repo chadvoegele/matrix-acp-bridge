@@ -1,3 +1,4 @@
+import { clampTimerMilliseconds } from "./clock.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -33,4 +34,12 @@ void test("fake clock supports cancellation and timers created by callbacks", ()
   clock.advanceBy(7);
 
   assert.deepEqual(calls, ["parent", "child"]);
+});
+
+void test("computed timer delays stay within the Node range", () => {
+  for (const value of [-1, 0, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(clampTimerMilliseconds(value), 0);
+  }
+  assert.equal(clampTimerMilliseconds(12.9), 12);
+  assert.equal(clampTimerMilliseconds(Number.MAX_SAFE_INTEGER), 2_147_483_647);
 });

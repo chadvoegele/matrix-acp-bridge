@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { installLiveDecryptionFailureHandler } from "../encrypted-e2e/decryption-failure-gate.mjs";
+import { installLiveDecryptionFailureHandler } from "../test_encrypted_message/decryption-failure-gate.mjs";
 
 test("ignores startup decryption failures and rejects live failures", () => {
   let onFailure;

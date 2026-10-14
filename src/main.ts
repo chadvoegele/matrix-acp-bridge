@@ -32,8 +32,6 @@ import type { OperatorTtyFactory } from "./operator-tty.js";
 import { isValidMatrixDeviceId } from "./matrix-validation.js";
 import type { InboundMatrixEvent, MatrixClientAdapter, MatrixIdentity } from "./matrix-client.js";
 
-const MAX_TIMER_MS = 2_147_483_647;
-
 export type DaemonSignal = "SIGINT" | "SIGTERM";
 
 export type DaemonExitCode = 0 | 1;
@@ -195,10 +193,11 @@ export interface DaemonRunResult {
 }
 
 function timerMilliseconds(seconds: number): number {
+  const maximumTimerMs = 2_147_483_647;
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return 0;
   }
-  return Math.min(MAX_TIMER_MS, Math.floor(seconds * 1000));
+  return Math.min(maximumTimerMs, Math.floor(seconds * 1000));
 }
 
 function defaultDiagnostics(): DiagnosticSink {

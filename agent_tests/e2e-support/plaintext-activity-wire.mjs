@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { startBridgePair, stopBridgePair } from "./acp.mjs";
+import { selectEventsSinceInput } from "./steering-observations.mjs";
 import { assertThreadResponse } from "./thread-sessions.mjs";
 
 export async function runActivityHarness({ readEnvironment, readToken, threadMode = false }) {
@@ -68,9 +69,13 @@ export async function runActivityHarness({ readEnvironment, readToken, threadMod
       }
     }
     assert(finalSeen, "scripted ACP final message did not arrive");
-    const raw = await Promise.all(
+    const observed = await Promise.all(
       [...seen.keys()].map((id) => request(`/rooms/${room}/event/${encodeURIComponent(id)}`)),
     );
+    const raw = selectEventsSinceInput(
+      observed.map((event) => ({ event, originServerTs: event.origin_server_ts })),
+      { originServerTs: promptEvent.origin_server_ts },
+    ).map(({ event }) => event);
     const originals = raw.filter((event) => event.content?.["m.relates_to"]?.rel_type !== "m.replace");
     const edits = raw.filter((event) => event.content?.["m.relates_to"]?.rel_type === "m.replace");
     const originalIds = new Set(originals.map((event) => event.event_id));

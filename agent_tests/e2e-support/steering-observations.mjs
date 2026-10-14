@@ -54,3 +54,11 @@ export function assertSteeringDeviceBaseline(previous, current) {
     );
   }
 }
+
+export function selectEventsSinceInput(events, input) {
+  assert.ok(Number.isFinite(input?.originServerTs), "controlled input requires a server timestamp");
+  for (const event of events) {
+    assert.ok(Number.isFinite(event.originServerTs), "observed event requires a server timestamp");
+  }
+  return events.filter((event) => event.originServerTs >= input.originServerTs);
+}
