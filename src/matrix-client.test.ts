@@ -638,6 +638,73 @@ void test("loads the pinned Matrix SDK through the default factory under strict 
   assert.equal(sdkLogCalls, 0);
 });
 
+void test("default SDK factory aborts a stalled send at 30 seconds and permits a same-transaction retry", async () => {
+  const harness = createRealSdkHttpHarness();
+  const attempts: string[] = [];
+  let timeoutDelay: number | undefined;
+  let expire: (() => void) | undefined;
+  let aborted = false;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (!url.pathname.includes("/send/")) return harness.fetch(input, init);
+    attempts.push(url.pathname);
+    if (attempts.length > 1) return jsonResponse({ event_id: "$sent:example.org" });
+    return new Promise<Response>((_resolve, reject) => {
+      assert.ok(init?.signal);
+      init.signal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+          reject(init.signal?.reason as Error);
+        },
+        { once: true },
+      );
+    });
+  };
+  await withFetch(fetch, async () => {
+    const adapter = createMatrixClientAdapter(CONFIG, "runtime-test-token");
+    await adapter.start();
+    const previousSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((callback: () => void, delay?: number) => {
+      if (delay === 30_000) {
+        timeoutDelay = delay;
+        expire = callback;
+      }
+      return previousSetTimeout(callback, delay);
+    }) as typeof globalThis.setTimeout;
+    try {
+      const part = renderMatrixResponse({
+        roomId: ROOM_ID,
+        inboundEventId: "$timeout:example.org",
+        outcome: { kind: "agent", text: "reply" },
+        maxOutputBytes: 4096,
+        maxMatrixMessageBytes: 4096,
+      })[0]!;
+      const first = adapter.sendMessage(part);
+      const rejected = assert.rejects(first, (error: unknown) => {
+        assert.ok(error instanceof MatrixAdapterError);
+        assert.equal(error.failure.retryable, true);
+        return true;
+      });
+      for (let index = 0; attempts.length === 0 && index < 100; index += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      assert.equal(attempts.length, 1);
+      assert.equal(timeoutDelay, 30_000);
+      assert.ok(expire, "SDK send must install its HTTP timeout");
+      expire();
+      await rejected;
+      assert.equal(aborted, true);
+      await adapter.sendMessage(part);
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0], attempts[1]);
+    } finally {
+      globalThis.setTimeout = previousSetTimeout;
+      await adapter.stop();
+    }
+  });
+});
+
 void test("real SDK initial startup omits since, applies the initial limit, and preserves history", async () => {
   const harness = createRealSdkHttpHarness();
   const batches: MatrixSyncBatch[] = [];
