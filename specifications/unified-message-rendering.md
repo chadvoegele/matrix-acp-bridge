@@ -67,7 +67,9 @@ Each dirty block must flush when any of these conditions occurs:
 2. Its quiet-period timer expires after the most recent chunk.
 3. A different message ID arrives in the same session: schedule the previous block's buffered text before publishing the new block.
 
-Continuous low-volume output must also flush within a configured maximum interval from the first unflushed chunk, so repeatedly resetting the quiet timer cannot postpone delivery indefinitely. Thresholds and intervals must be bounded and configurable; exact names and defaults remain an implementation decision.
+Continuous low-volume output must also flush within a configured maximum interval from the first unflushed chunk, so repeatedly resetting the quiet timer cannot postpone delivery indefinitely. Expose only three publication controls: new unpublished UTF-8 bytes, quiet period, and maximum interval. A message-ID transition is an unconditional flush trigger, not another configuration setting. Exact configuration names, defaults, and bounds remain open.
+
+Keep `max_output_bytes` and `max_matrix_message_bytes` as output/event-size limits, not publication triggers. Remove prompt-scoped text draining, including `QUIET_DRAIN_MS` and `STREAMING_DRAIN_CAP_MS`, from the identified-message path. The quiet-period setting replaces the former text-drain timing role; there is no post-prompt drain deadline. Complete prompt bookkeeping when its ACP response arrives, independently of buffered text publication. These changes must not introduce another equivalent drain configuration.
 
 A quiet timer must fire without another incoming update. Flushing does not finalize a block: later chunks with the same ID continue updating it. A message-ID transition starts another block, not an irreversible close of the previous block. Neither mechanism asserts that an unsolicited turn has ended.
 
@@ -79,7 +81,19 @@ Render accumulated Markdown through the existing safe converter on each publicat
 
 Apply existing encoded Matrix event-size and output limits. A logical block may span bounded continuation events; retain their association with the same message ID. Already-published parts must not be duplicated during splitting or edits. If content is truncated by an output limit, retain an explicit truncation marker.
 
-Bound retained blocks, accumulated text, timers, and pending Matrix operations. A quiet period alone must not evict a block's identity. If a block has been evicted, later chunks must not silently create a duplicate message or overwrite an unrelated block; report the retention limit through bounded diagnostics. Exact limits and the retention policy must be defined before implementation.
+Bound accumulated text, timers, and pending Matrix operations. Retain actively received message text in an in-memory cache. Evict clean cached text after an idle window or when a cache-size limit is reached, prioritizing least-recently-used entries. Never evict unpublished text or state needed by an in-flight publication. Cache expiry controls memory, not message completion or publication timing; it is separate from flush configuration.
+
+### Matrix-backed cache recovery
+
+Retain a lightweight index from `(sessionId, messageId)` to the original Matrix event IDs, latest successfully published replacement IDs, and continuation-part ordering. Evicting cached source text must not discard this identity mapping or mark the message permanently closed.
+
+If a later chunk targets an uncached block, fetch its latest successfully published content from Matrix, recover the original Markdown source, append buffered new chunks, and publish an edit to the original block. Use `m.new_content` for replacement events, not their human-readable edit fallback body. Fetching only the original event is insufficient when replacements exist. Matrix has no standard append API: every edit sends complete replacement content.
+
+Use the cache for normal streaming; fetch only on a cache miss, not for each flush. Serialize hydration, append, and publication for a block; chunks arriving during a fetch must be retained exactly once and in arrival order. Restore all required continuation parts without duplicating published text. Fetched encrypted content must pass through existing decryption and authorization handling; never substitute rendered HTML for source Markdown.
+
+If published content is redacted, unavailable, or cannot be decrypted, retain pending text within resource limits and follow the existing delivery-failure policy. Do not silently create a duplicate block or overwrite an unrelated event. Emit bounded structured diagnostics for hydration failures and cache/index capacity exhaustion, without private text or credentials. Cache eviction itself is not a reason to drop a late chunk.
+
+Define cache idle/size limits and index retention bounds before implementation. Once an identity mapping expires, recovery is no longer guaranteed; that boundary must be explicit and must not silently treat a known expired message as new.
 
 ### Failure and lifecycle handling
 
@@ -93,7 +107,7 @@ For messages with IDs, the new path is the sole owner of assistant-text publicat
 
 ACP permits missing message IDs. Preserve the existing prompt-scoped behavior for ID-less chunks during a solicited prompt. ID-less unsolicited text cannot be reliably grouped and is outside this feature's adapter contract; emit a bounded diagnostic instead of guessing an ID or a destination. Do not merge ID-less chunks into an identified block.
 
-No stored conversation schema change is required by this proposal. Any persistence added during implementation requires separate migration requirements.
+Cache recovery within a running bridge requires the message-to-Matrix index, not persistent source-text storage. Cross-restart index recovery is not required by this proposal. If the implementation persists the index, it must define migration, retention, and stale-session invalidation before changing the stored schema.
 
 ## Verification
 
@@ -104,7 +118,10 @@ No stored conversation schema change is required by this proposal. Any persisten
 - A message-ID transition flushes preceding text before the new block is published; a late chunk for the earlier ID still updates its original block.
 - Size and maximum-interval triggers deliver continuously streamed text; deterministic-clock tests verify bounded call counts and timer cleanup.
 - Slow Matrix requests coalesce edits, preserve ordering, and cannot overwrite newer content with stale snapshots.
-- Prompt completion produces neither duplicate text nor a spurious empty response after streamed publication.
+- Prompt completion produces neither duplicate text nor a spurious empty response after streamed publication. It does not wait for text-drain silence or a 30-second cap; later chunks remain displayable.
+- Idle and size-based cache eviction remove only clean source text, retaining message-to-event identity. A later chunk hydrates the latest published Markdown from Matrix and edits the original block.
+- Cache hits require no Matrix read. Hydration covers prior replacements, encrypted messages, continuation parts, chunks arriving during the fetch, and concurrent flush triggers without lost or duplicated text.
+- Redacted, unavailable, and undecryptable history produces bounded diagnostics and explicit delivery failure, not duplicate messages. Cache limits and flush settings control independent resources.
 - Markdown split across chunks renders safely throughout; long messages respect encoded size limits and preserve text up to explicit output caps.
 - Unknown/stale sessions and loading-history updates publish nothing. Reset, shutdown, retention limits, and delivery failures leave no orphan timers or cross-session sends.
 - ID-less prompted output retains existing behavior; ID-less unsolicited output produces bounded diagnostics, not guessed grouping.
@@ -112,7 +129,7 @@ No stored conversation schema change is required by this proposal. Any persisten
 ## Open questions
 
 - Choose configuration names, defaults, and bounds for size, quiet-period, and maximum-interval flushing.
-- Define retained-block limits and eviction policy, including how operators observe late chunks beyond retention.
+- Choose cache idle-window and size limits, plus message-index retention bounds. Clean text is evicted by idle age or cache pressure and rehydrated from Matrix; identity-expiration behavior must remain explicit.
 - Specify how existing thought/tool activity interleaves with buffered assistant blocks without changing its presentation contract.
 
 ## References
