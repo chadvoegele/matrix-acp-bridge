@@ -39,6 +39,10 @@ Assume pi-acp supplies ACP's optional `messageId` on every assistant text chunk,
 
 All chunks of one logical assistant message must share an ID; distinct messages must have distinct IDs within a session. Chunks are ordered text deltas, not replacement snapshots. IDs must remain unambiguous for as long as a session can continue delivering updates, including after restoration.
 
+Assume assistant messages are sequential and non-interleaved: once text for a different assistant message ID arrives, the previous message receives no further text. pi-acp must mirror Pi's message boundaries rather than inventing boundaries at thoughts or tool announcements. This assumption follows Pi's agent loop: it awaits `streamAssistantResponse()`, which emits `message_end`, before executing tools or starting another assistant response. `Agent.prompt()` and `continue()` reject concurrent runs; steering and follow-ups are queued. This is a Pi/adapter contract, not a guarantee implied by ACP's optional message ID alone.
+
+An ACP `tool_call` is not proof of assistant-message completion: pi-acp announces tools while their arguments are still streaming within that assistant message. More text for the same message may follow the announcement.
+
 `session/update` is a JSON-RPC notification: it carries `sessionId`, but no JSON-RPC request ID. The renderer must not require an outstanding `session/prompt` or its response to accept text.
 
 ### Session routing
@@ -52,7 +56,8 @@ Unknown, reset, deleted, or superseded sessions must not create conversations or
 Maintain logical blocks keyed by `(sessionId, messageId)`:
 
 - A new ID creates a block in first-seen order.
-- A chunk for an existing ID appends to that block, including after a flush, quiet period, or another message ID.
+- A chunk for the current ID appends to that block, including after a flush, quiet period, thought, or tool announcement.
+- A different assistant message ID retires the previous block: flush it, finish its queued publication, then release its text and Matrix-event mapping.
 - The first flush sends a Matrix message. Later flushes update the same block using Matrix replacement events.
 - An unchanged block must not produce another Matrix call. Do not send empty placeholder messages.
 - Repeated message IDs identify the destination block; they do not make repeated chunks duplicates. No chunk-level replay detection is implied.
@@ -79,7 +84,7 @@ Require integer values and `agent_text_quiet_ms <= agent_text_max_interval_ms`. 
 
 Keep `max_output_bytes` and `max_matrix_message_bytes` as output/event-size limits, not publication triggers. Remove prompt-scoped text draining, including `QUIET_DRAIN_MS` and `STREAMING_DRAIN_CAP_MS`, from the identified-message path. The quiet-period setting replaces the former text-drain timing role; there is no post-prompt drain deadline. Complete prompt bookkeeping when its ACP response arrives, independently of buffered text publication. These changes must not introduce another equivalent drain configuration.
 
-A quiet timer must fire without another incoming update. Flushing does not finalize a block: later chunks with the same ID continue updating it. A message-ID transition starts another block, not an irreversible close of the previous block. Neither mechanism asserts that an unsolicited turn has ended.
+A quiet timer must fire without another incoming update. A quiet-period, size, interval, or activity flush does not finalize or evict the current block: later chunks with the same ID continue updating it. A different assistant message ID closes the previous block under the non-interleaving contract. Neither silence nor a message-ID transition asserts that an unsolicited turn has ended.
 
 Serialize Matrix operations per conversation and coalesce pending updates to their latest accumulated text. A slow send must not cause concurrent edits or stale edits to overwrite newer text. Flush triggers request delivery; they must not bypass existing transport limits or retry ownership.
 
@@ -93,7 +98,7 @@ Use one ordered outbound queue per conversation for text and activity. Preserve 
 - The first nonempty assistant chunk collapses live activity batches as before.
 - A different assistant message ID schedules preceding buffered text before the new block is published.
 
-These are publication boundaries, not permanent message closure. A later chunk for an earlier ID edits its original block without moving it or creating another activity boundary. Existing activity batching, initial expanded publication, disclosure, and tool-status rules remain unchanged. Preserve ordering through the outbound queue rather than blocking ACP intake on a Matrix request.
+Thought/tool activity triggers publication, not eviction. Text for the current assistant ID may continue after that activity and must edit the same block. Only a different assistant message ID retires it. Existing activity batching, initial expanded publication, disclosure, and tool-status rules remain unchanged. Preserve ordering through the outbound queue rather than blocking ACP intake on a Matrix request.
 
 ### Rendering and resource limits
 
@@ -101,33 +106,17 @@ Render accumulated Markdown through the existing safe converter on each publicat
 
 Apply existing encoded Matrix event-size and output limits. A logical block may span bounded continuation events; retain their association with the same message ID. Already-published parts must not be duplicated during splitting or edits. If content is truncated by an output limit, retain an explicit truncation marker.
 
-Bound accumulated text, timers, and pending Matrix operations. Retain actively received message text in an in-memory cache with these limits:
+Retain only the current assistant block per session: its bounded accumulated source text, timers, and Matrix-event mappings, including continuation parts. Keep it across quiet periods, prompt completion, and tool/thought announcements until a different assistant message ID arrives or the session is retired. No historical text cache, historical identity index, idle-eviction timer, or Matrix-backed text recovery is needed.
 
-- 128 cached blocks per session.
-- 30 minutes without chunks before idle eviction.
-- 4 MiB of cached source text per session and 32 MiB globally, measured in UTF-8 bytes.
+On an assistant message-ID transition, schedule the previous block's final flush before the new block's publication. Release its source text and mappings only after queued publication succeeds or an explicit delivery failure is handled. Pending publication may temporarily retain retired blocks, so bound the outbound queue and apply backpressure; a session limit alone does not bound queued sends. Coalesce pending edits without losing message boundaries.
 
-Evict clean cached text after the idle window or when any cache limit is reached, prioritizing least-recently-used entries. Never evict unpublished text or state needed by an in-flight publication. Cache expiry controls memory, not message completion or publication timing; it is separate from flush configuration.
-
-### Matrix-backed cache recovery
-
-Retain a lightweight index from `(sessionId, messageId)` to the original Matrix event IDs, latest successfully published replacement IDs, and continuation-part ordering. Evicting cached source text must not discard this identity mapping or mark the message permanently closed.
-
-If a later chunk targets an uncached block, fetch its latest successfully published content from Matrix, recover the original Markdown source, append buffered new chunks, and publish an edit to the original block. Use `m.new_content` for replacement events, not their human-readable edit fallback body. Fetching only the original event is insufficient when replacements exist. Matrix has no standard append API: every edit sends complete replacement content.
-
-Use the cache for normal streaming; fetch only on a cache miss, not for each flush. Serialize hydration, append, and publication for a block; chunks arriving during a fetch must be retained exactly once and in arrival order. Restore all required continuation parts without duplicating published text. Fetched encrypted content must pass through existing decryption and authorization handling; never substitute rendered HTML for source Markdown.
-
-If published content is redacted, unavailable, or cannot be decrypted, retain pending text within resource limits and follow the existing delivery-failure policy. Do not silently create a duplicate block or overwrite an unrelated event. Emit bounded structured diagnostics for hydration failures and cache/index capacity exhaustion, without private text or credentials. Cache eviction itself is not a reason to drop a late chunk.
-
-Keep the identity index in memory for each loaded session, independently of source-text eviction. Cap it at 10,000 logical message mappings per session and 100,000 globally. At capacity, do not evict existing mappings to admit new IDs: reject new blocks through the existing delivery-failure policy with a rate-limited capacity diagnostic. Existing indexed blocks remain recoverable. Reset, deletion, session retirement, and bridge restart release the corresponding mappings.
-
-Operators must receive structured, rate-limited diagnostics for hydration failures, index capacity exhaustion, and updates to retired sessions, with suppressed-occurrence counts. Expose counters for text-cache evictions, hydration failures, and capacity rejections. Diagnostics may identify the session/message but must not include message text. Cache eviction alone must not warn or drop chunks.
+Existing session-count limits, a per-logical-message application of `max_output_bytes`, encoded event limits, and bounded outbound operations constrain retained state. Continue consuming excess deltas without accumulating them beyond the output cap; preserve an explicit truncation marker. Do not add independent historical block-count, cache-byte, or identity-index capacity settings. Do not reintroduce such storage to support interleaved IDs outside the adapter contract.
 
 ### Failure and lifecycle handling
 
 Keep existing Matrix delivery failure and backpressure policy. Diagnostics must not include private text or credentials. A timer or send callback from an obsolete session must not publish into its replacement.
 
-On reset, deletion, disconnect, or shutdown, cancel timers and retire rendering state according to the existing lifecycle policy. Previously sent Matrix messages remain. Persist neither cached source text nor message mappings across restart; persisted room/thread routing remains intact. If live chunks for a previously published agent message arrive after restart, create a new Matrix block from the newly received text. This continuation may use a new Matrix event even though the ACP message ID is unchanged; reconstructing its pre-restart prefix is not required. A restart must not replay session history as new unsolicited output. Any unrecoverable buffered delivery must be observable rather than reported as successful.
+On reset, deletion, disconnect, or shutdown, cancel timers and retire rendering state according to the existing lifecycle policy. Previously sent Matrix messages remain. Persist neither source text nor message mappings across restart; persisted room/thread routing remains intact. If live chunks for a previously published agent message arrive after restart, create a new Matrix block from the newly received text. This continuation may use a new Matrix event even though the ACP message ID is unchanged; reconstructing its pre-restart prefix is not required. A restart must not replay session history as new unsolicited output. Any unrecoverable buffered delivery must be observable rather than reported as successful.
 
 ### Compatibility
 
@@ -135,7 +124,7 @@ For messages with IDs, the new path is the sole owner of assistant-text publicat
 
 ACP permits missing message IDs. Preserve the existing prompt-scoped behavior for ID-less chunks during a solicited prompt. ID-less unsolicited text cannot be reliably grouped and is outside this feature's adapter contract; emit a bounded diagnostic instead of guessing an ID or a destination. Do not merge ID-less chunks into an identified block.
 
-Cache recovery within a running bridge requires only the in-memory message-to-Matrix index. Do not persist that index or change the stored conversation schema. A new Matrix block for a continuing agent message after restart is accepted behavior.
+Do not persist rendering state or change the stored conversation schema. A new Matrix block for a continuing agent message after restart is accepted behavior. Adapters that interleave assistant message IDs are outside this feature's contract; supporting them would require a separate design.
 
 ## Verification
 
@@ -143,18 +132,18 @@ Cache recovery within a running bridge requires only the in-memory message-to-Ma
 - Solicited and unsolicited chunks with the same identity follow identical append, buffering, send, and edit behavior.
 - Repeated IDs append to one block; distinct IDs create separate blocks. The same ID in two sessions remains isolated.
 - A quiet period flushes the last chunk without further input. A later chunk updates that block rather than duplicating it.
-- A message-ID transition flushes preceding text before the new block is published; a late chunk for the earlier ID still updates its original block.
+- A message-ID transition flushes preceding text before the new block is published, then releases the previous block's text and mappings after delivery. Interleaved assistant IDs are not supported.
 - Size and maximum-interval triggers deliver continuously streamed text; deterministic-clock tests verify bounded call counts and timer cleanup.
 - Slow Matrix requests coalesce edits, preserve ordering, and cannot overwrite newer content with stale snapshots.
 - Prompt completion produces neither duplicate text nor a spurious empty response after streamed publication. It does not wait for text-drain silence or a 30-second cap; later chunks remain displayable.
-- Idle and size-based cache eviction remove only clean source text, retaining message-to-event identity. A later chunk hydrates the latest published Markdown from Matrix and edits the original block.
-- Cache hits require no Matrix read. Hydration covers prior replacements, encrypted messages, continuation parts, chunks arriving during the fetch, and concurrent flush triggers without lost or duplicated text.
-- Cache eviction respects the block, idle, per-session byte, and global byte limits. Index capacity rejects new blocks observably without losing existing mappings; reset/retirement releases their capacity.
+- Only the current assistant block is retained per session, apart from bounded queued/in-flight publication. Quiet periods, prompt completion, thoughts, and early tool announcements do not evict it.
+- Text arriving after a streamed tool announcement with the same assistant ID edits the same block. Test this separately from an actual assistant message-ID transition.
+- Many sequential messages release prior blocks and mappings without historical growth, Matrix reads, or cache/index capacity settings. Slow and failed sends exercise bounded backpressure and observable delivery failure.
 - Restart discards mappings. New live chunks for an earlier ACP message create a new Matrix block from those chunks, without history replay or reconstruction of the previous prefix.
-- Text is queued before new tool/thought activity; whitespace-only thoughts and tool updates do not flush text. Existing activity expansion/collapse rules remain intact, including when chunks resume an earlier assistant block.
-- Redacted, unavailable, and undecryptable history produces bounded diagnostics and explicit delivery failure, not duplicate messages. Cache limits and flush settings control independent resources.
+- Text is queued before new tool/thought activity; whitespace-only thoughts and tool updates do not flush text. Existing activity expansion/collapse rules remain intact.
+- Verify the adapter prerequisite against Pi: each assistant response ends before the next starts, and pi-acp assigns one stable ID per response, including text surrounding tool announcements.
 - Markdown split across chunks renders safely throughout; long messages respect encoded size limits and preserve text up to explicit output caps.
-- Unknown/stale sessions and loading-history updates publish nothing. Reset, shutdown, retention limits, and delivery failures leave no orphan timers or cross-session sends.
+- Unknown/stale sessions and loading-history updates publish nothing. Reset, shutdown, output limits, and delivery failures leave no orphan timers or cross-session sends.
 - ID-less prompted output retains existing behavior; ID-less unsolicited output produces bounded diagnostics, not guessed grouping.
 
 ## References
