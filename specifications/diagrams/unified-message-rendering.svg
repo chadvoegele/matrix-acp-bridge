@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="920" viewBox="0 0 1120 920" role="img" aria-labelledby="title desc">
+  <title id="title">Unified solicited and unsolicited message rendering</title>
+  <desc id="desc">User-prompted and extension-triggered Pi output share one ACP session-update path. The bridge routes by session ID and retains the current assistant message by message ID. Buffered flushes create or edit Matrix messages. A new message ID retires the preceding block after publication. Prompt responses control bookkeeping, not text rendering.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
+    <style>
+      text { font-family: sans-serif; fill: #172033; font-size: 16px; }
+      .heading { font-size: 25px; font-weight: 700; }
+      .label { font-size: 18px; font-weight: 700; }
+      .small { font-size: 14px; }
+      .box { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; rx: 12; }
+      .blue { fill: #eff6ff; stroke: #3b82f6; }
+      .green { fill: #f0fdf4; stroke: #22c55e; }
+      .amber { fill: #fffbeb; stroke: #d97706; }
+      .line { fill: none; stroke: #475569; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1120" height="920" fill="white"/>
+  <text x="40" y="42" class="heading">One rendering path for every assistant message</text>
+
+  <rect x="40" y="70" width="340" height="85" class="box blue"/>
+  <text x="60" y="103" class="label">User-prompted Pi work</text>
+  <text x="60" y="130">Solicited output</text>
+  <rect x="440" y="70" width="340" height="85" class="box blue"/>
+  <text x="460" y="103" class="label">Extension-triggered Pi work</text>
+  <text x="460" y="130">Unsolicited output</text>
+  <path d="M 210 155 V 178 H 410 V 195" class="line"/>
+  <path d="M 610 155 V 178 H 410" fill="none" stroke="#475569" stroke-width="2"/>
+
+  <rect x="200" y="195" width="420" height="95" class="box blue"/>
+  <text x="220" y="228" class="label">pi-acp: mirror Pi message identity</text>
+  <text x="220" y="253">session/update: sessionId + messageId + delta</text>
+  <text x="220" y="277" class="small">Sequential assistant messages; adapter support required</text>
+  <path d="M 410 290 V 325" class="line"/>
+
+  <rect x="200" y="325" width="420" height="80" class="box"/>
+  <text x="220" y="356" class="label">Bridge: route by sessionId</text>
+  <text x="220" y="383">Existing authorized room or thread</text>
+  <path d="M 410 405 V 440" class="line"/>
+
+  <rect x="200" y="440" width="420" height="110" class="box blue"/>
+  <text x="220" y="471" class="label">Current assistant block per session</text>
+  <text x="220" y="497">Same messageId → append text</text>
+  <text x="220" y="523">Keep source text + Matrix event mappings</text>
+
+  <rect x="690" y="425" width="390" height="140" class="box amber"/>
+  <text x="710" y="457" class="label">Different assistant messageId?</text>
+  <text x="710" y="486">1. Queue previous block’s final flush</text>
+  <text x="710" y="512">2. Start a new block</text>
+  <text x="710" y="538">3. Release old state after delivery</text>
+  <path d="M 620 480 H 690" class="line"/>
+  <path d="M 885 565 V 605 H 620" class="line"/>
+  <path d="M 410 550 V 580" class="line"/>
+
+  <rect x="200" y="580" width="420" height="120" class="box"/>
+  <text x="220" y="611" class="label">Buffer, then schedule publication</text>
+  <text x="220" y="638">Size · quiet period · maximum interval</text>
+  <text x="220" y="665">Also flush before new tool/thought activity</text>
+  <text x="220" y="688" class="small">Quiet periods and tool announcements do not evict</text>
+  <path d="M 410 700 V 730" class="line"/>
+
+  <rect x="200" y="730" width="420" height="85" class="box"/>
+  <text x="220" y="762" class="label">Ordered outbound conversation queue</text>
+  <text x="220" y="790">Coalesce edits · safe Markdown · backpressure</text>
+  <path d="M 620 772 H 690" class="line"/>
+  <rect x="690" y="700" width="390" height="140" class="box green"/>
+  <text x="710" y="732" class="label">Matrix: quasi-streaming display</text>
+  <text x="710" y="762">First flush → send a message</text>
+  <text x="710" y="788">Later flushes → edit it in place</text>
+  <text x="710" y="814">Oversized blocks → continuation messages</text>
+
+  <rect x="690" y="195" width="390" height="165" class="box"/>
+  <text x="710" y="227" class="label">Separate control path</text>
+  <text x="710" y="256">session/prompt response → bookkeeping</text>
+  <text x="710" y="283">No active prompt required to render text</text>
+  <text x="710" y="310">No post-prompt text-drain timer</text>
+  <text x="710" y="337" class="small">Text grouping does not require a turn-end signal</text>
+
+  <text x="40" y="877" class="small">Memory: current bounded block per session + bounded queued publications; no historical cache or Matrix-fetch recovery.</text>
+  <text x="40" y="901" class="small">Restart: discard rendering state; continuing live chunks may create a new Matrix message. Never replay history as live output.</text>
+</svg>
