@@ -24,7 +24,7 @@ Both sources deliver the same identified text chunks. The bridge routes by sessi
 
 ## Goals
 
-- Display solicited and unsolicited assistant text through the same renderer.
+- Display solicited and unsolicited assistant text and tool activity through the same session-scoped renderer.
 - Group chunks by message identity rather than prompt lifetime.
 - Deliver trailing text without requiring a subsequent message or prompt response.
 - Bound buffering and Matrix traffic while preserving conversation isolation.
@@ -94,6 +94,18 @@ A quiet timer must fire without another incoming update. A quiet-period, size, i
 
 Serialize Matrix operations per conversation and coalesce pending updates to their latest accumulated text. A slow send must not cause concurrent edits or stale edits to overwrite newer text. Flush triggers request delivery; they must not bypass existing transport limits or retry ownership.
 
+### Session-scoped activity lifecycle
+
+Move the activity model and its Matrix batch mappings out of prompt collectors and into session-scoped rendering state. Accept thoughts, `tool_call`, and `tool_call_update` notifications for any live mapped session, whether prompted or unsolicited. Prompt completion must not discard activity or suppress subsequent updates. Keep existing thought grouping and activity presentation; this changes ownership and lifecycle, not appearance.
+
+Tool calls are keyed by `(sessionId, toolCallId)`, independently of assistant message IDs. pi-acp already maps Pi's `tool_execution_end` to a `session/update` containing `tool_call_update` with `status: completed` or `failed`, including when no ACP prompt is pending. No new adapter completion extension is required for tools.
+
+Pi can execute tools in parallel. A different tool call or assistant message ID is not a tool-retirement signal. Retain each active tool until its terminal update has been published. Retain a containing activity batch while any tool is active or any final publication/collapse edit is pending. Once the batch is closed, all contained tools are terminal, and its final updates and collapse have been published, release its source state and Matrix-event mappings. Completed tools may remain temporarily in the current bounded batch for its existing presentation lifecycle; do not retain a historical tool index.
+
+An assistant-message transition may retire the previous text block without discarding running tools or their batches. A background process outliving its start tool does not keep that tool active: the start tool completes normally; subsequent process notifications cause separate activity.
+
+Bound active activity and queued publication using existing activity/output limits and backpressure. Session termination, reset, deletion, or transport failure must clean up tools that cannot receive a normal terminal update, preserving existing failure reporting without treating missing completion as success. Diagnostics must not contain private tool arguments or results.
+
 ### Thought and tool interleaving
 
 Use one ordered outbound queue per conversation for text and activity. Preserve the existing activity presentation contract:
@@ -148,6 +160,10 @@ Do not persist rendering state or change the stored conversation schema. A new M
 - Restart discards mappings. New live chunks for an earlier ACP message create a new Matrix block from those chunks, without history replay or reconstruction of the previous prefix.
 - Text is queued before new tool/thought activity; whitespace-only thoughts and tool updates do not flush text. Existing activity expansion/collapse rules remain intact.
 - Verify the adapter prerequisite against Pi: each assistant response ends before the next starts, and pi-acp assigns one stable ID per response, including text surrounding tool announcements.
+- An unsolicited tool call receives the same batch rendering and status/result edits as a prompted call, including its forwarded `completed` or `failed` update without a pending prompt.
+- Parallel tools remain independently tracked; starting another tool, receiving a new assistant ID, or completing an ACP prompt does not retire a running tool.
+- A closed batch releases its tool state and Matrix mappings only after every tool is terminal and final updates/collapse are published. Sequential batches do not accumulate a historical index.
+- Reset, subprocess exit, and transport failure retire incomplete activity through explicit failure/cleanup behavior, without orphan mappings or false successful completion.
 - Markdown split across chunks renders safely throughout; long messages respect encoded size limits and preserve text up to explicit output caps.
 - Unknown/stale sessions and loading-history updates publish nothing. Reset, shutdown, output limits, and delivery failures leave no orphan timers or cross-session sends.
 - ID-less prompted output retains existing behavior; ID-less unsolicited output produces bounded diagnostics, not guessed grouping.
