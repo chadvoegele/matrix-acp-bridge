@@ -7,7 +7,7 @@ import { setTimeout as pause } from "node:timers/promises";
 
 import { startBridgePair, stopBridgePair, waitFor } from "./acp.mjs";
 import { ThreadSessionMonitor } from "./thread-sessions.mjs";
-import { assertUnifiedStream, effectiveContent } from "./unified-observations.mjs";
+import { assertUnifiedStream, getEffectiveContent } from "./unified-observations.mjs";
 import { warmProfile } from "./warm-profile.mjs";
 import { installLiveDecryptionFailureHandler } from "../test_encrypted_message/decryption-failure-gate.mjs";
 import { createAdapter as createEncryptedAdapter } from "../test_encrypted_message/lib.mjs";
@@ -102,7 +102,7 @@ async function runStream() {
     acknowledgeObservation(marker, stage);
   }
 
-  const hasBody = (body) => [...events.values()].some((event) => effectiveContent(event)?.body === body);
+  const hasBody = (body) => [...events.values()].some((event) => getEffectiveContent(event)?.body === body);
   await acknowledge(
     "prefix",
     () => completedSessions.has(monitor.promptSessions.get(prompt)) && hasBody(`UNIFIED_${marker} **prefix`),
@@ -111,14 +111,14 @@ async function runStream() {
   await acknowledge("tools", () =>
     ["first", "second"].every((tool) =>
       [...events.values()].some((event) => {
-        const content = effectiveContent(event);
+        const content = getEffectiveContent(event);
         return content?.body?.includes(`unified-${marker}-${tool}`) && content.body.includes("[running]");
       }),
     ),
   );
   await acknowledge("after-tool", () => hasBody(`UNIFIED_${marker} **prefix suffix** after tool`));
   await awaitCondition(
-    () => [...events.values()].some((event) => effectiveContent(event)?.body === `UNIFIED_DONE_${marker}`),
+    () => [...events.values()].some((event) => getEffectiveContent(event)?.body === `UNIFIED_DONE_${marker}`),
     "unified final text",
   );
   await pause(1500);
@@ -216,12 +216,12 @@ try {
   const resetPrompt = `UNIFIED_RESET_${resetMarker}`;
   await sendPrompt(resetPrompt);
   await awaitCondition(
-    () => [...events.values()].some((event) => effectiveContent(event)?.body === `RESET_READY_${resetMarker}`),
+    () => [...events.values()].some((event) => getEffectiveContent(event)?.body === `RESET_READY_${resetMarker}`),
     "reset probe ready",
   );
   await sendPrompt("/reset", threadMode ? roots.get(resetPrompt) : undefined);
   await awaitCondition(
-    () => [...events.values()].some((event) => effectiveContent(event)?.body === "Agent session reset."),
+    () => [...events.values()].some((event) => getEffectiveContent(event)?.body === "Agent session reset."),
     "reset completion",
   );
   acknowledgeObservation(resetMarker, "reset");
@@ -233,12 +233,12 @@ try {
   await pause(5000);
   if (fatal) throw fatal;
   assert(
-    ![...events.values()].some((event) => effectiveContent(event)?.body?.includes(`STALE_${resetMarker}`)),
+    ![...events.values()].some((event) => getEffectiveContent(event)?.body?.includes(`STALE_${resetMarker}`)),
     "retired session published late text",
   );
   assert(
     ![...events.values()].some((event) => {
-      const body = effectiveContent(event)?.body ?? "";
+      const body = getEffectiveContent(event)?.body ?? "";
       return body.includes(`unified-${resetMarker}-unfinished`) && body.includes("[completed]");
     }),
     "retired tool published a successful terminal update",
@@ -257,7 +257,9 @@ try {
   pair = undefined;
   await pause(1100);
   assert(
-    ![...events.values()].some((event) => effectiveContent(event)?.body?.includes(`SHUTDOWN_READY_${shutdownMarker}`)),
+    ![...events.values()].some((event) =>
+      getEffectiveContent(event)?.body?.includes(`SHUTDOWN_READY_${shutdownMarker}`),
+    ),
     "buffered shutdown callback published after retirement",
   );
   process.stdout.write(

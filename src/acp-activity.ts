@@ -256,7 +256,3 @@ export class AcpActivityModel {
     return event;
   }
 }
-
-export function isActiveTool(activity: AcpActivity): boolean {
-  return activity.type === "tool" && activity.status !== "completed" && activity.status !== "failed";
-}

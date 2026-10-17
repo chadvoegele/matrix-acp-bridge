@@ -34,7 +34,7 @@ function createFixture(
   return { clock, calls, failures, queue, buffer };
 }
 
-function gate() {
+function createGate() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
     release = resolve;
@@ -124,7 +124,7 @@ void test("transitions and activity preserve order; activity does not retire the
 
 void test("slow sends coalesce edits, including final text before an identity transition", async () => {
   const { buffer, queue, calls } = createFixture();
-  const blocked = gate();
+  const blocked = createGate();
   queue.enqueue({}, () => blocked.promise);
   buffer.append("a", "first");
   buffer.flush();
@@ -138,8 +138,8 @@ void test("slow sends coalesce edits, including final text before an identity tr
     ["first second"],
   );
 
-  const sending = gate();
-  const started = gate();
+  const sending = createGate();
+  const started = createGate();
   const slowCalls: AgentTextPublication[] = [];
   const slow = new AgentTextBuffer({
     settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
@@ -173,7 +173,7 @@ void test("slow sends coalesce edits, including final text before an identity tr
 
 void test("bounded pending work fails explicitly and cancels timers instead of retaining more identities", async () => {
   const { buffer, queue, clock, calls, failures } = createFixture({ capacity: 2 });
-  const blocked = gate();
+  const blocked = createGate();
   queue.enqueue({}, () => blocked.promise);
   await Promise.resolve();
   buffer.append("a", "a");
@@ -228,7 +228,7 @@ void test("safe Markdown is rerendered incrementally and continuation events reu
 void test("reset invalidates queued callbacks and independent sessions keep identical IDs separate", async () => {
   const first = createFixture();
   const second = createFixture();
-  const blocked = gate();
+  const blocked = createGate();
   first.queue.enqueue({}, () => blocked.promise);
   first.buffer.append("same", "discard");
   first.buffer.flush();

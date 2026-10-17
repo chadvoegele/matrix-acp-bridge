@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MatrixDelivery } from "./matrix-delivery.js";
+import { StderrDiagnosticSink, type DiagnosticRecord } from "./diagnostics.js";
 import type { MatrixBridgeAdapter, MatrixHtmlMessage } from "./matrix-client.js";
 import { matrixHtml } from "./matrix-html.js";
 import { renderMatrixResponse } from "./response-rendering.js";
@@ -34,6 +35,43 @@ function createAdapter(
 async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
+
+void test("live failure diagnostics retain safe HTTP context without raw error content", async () => {
+  for (const status of [403, undefined, Number.NaN, 99, 600, 403.5]) {
+    const records: DiagnosticRecord[] = [];
+    const delivery = new MatrixDelivery({
+      canSend: () => true,
+      diagnostics: new StderrDiagnosticSink({
+        writeLine: (line) => {
+          records.push(JSON.parse(line) as DiagnosticRecord);
+        },
+      }),
+      matrix: createAdapter(
+        async () => {},
+        async () => {
+          throw { httpStatus: status, message: "private credential", errcode: "private error code" };
+        },
+      ),
+    });
+    assert.equal(
+      await delivery.sendLive({
+        roomId: "!room:example.org",
+        transactionId: "test",
+        body: "private output",
+        formattedBody: matrixHtml`<p>private output</p>`,
+      }),
+      undefined,
+    );
+    assert.equal(records[0]?.event, "matrix-live-abandoned");
+    assert.deepEqual(records[0]?.fields, {
+      kind: "delivery",
+      roomId: "!room:example.org",
+      attempts: 1,
+      httpStatus: status === 403 ? 403 : null,
+    });
+    assert.doesNotMatch(JSON.stringify(records), /private/u);
+  }
+});
 
 void test("delivery serializes a whole multipart response with live edits while other rooms progress", async () => {
   let finishFirst!: () => void;

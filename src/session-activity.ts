@@ -1,4 +1,4 @@
-import { AcpActivityModel, isActiveTool } from "./acp-activity.js";
+import { AcpActivityModel, type AcpActivity } from "./acp-activity.js";
 import { AcpActivityBatches, type ActivityBatch, type ActivityBatchLimits } from "./acp-activity-batches.js";
 import type { AcpUpdate } from "./acp-activity-update.js";
 import type { RenderedAcpActivity } from "./acp-activity-rendering.js";
@@ -18,6 +18,10 @@ interface SessionActivityOptions {
   readonly onAbandoned: (reason: "capacity" | "delivery" | "lifecycle") => void;
 }
 
+function isActiveTool(activity: AcpActivity): boolean {
+  return activity.type === "tool" && activity.status !== "completed" && activity.status !== "failed";
+}
+
 /** Session ownership is independent of prompt completion and assistant text identity. */
 export class SessionActivity {
   readonly #model = new AcpActivityModel();
@@ -26,11 +30,19 @@ export class SessionActivity {
 
   readonly #deliveries = new Map<ActivityBatch, BatchDelivery>();
 
+  readonly #options: SessionActivityOptions;
+
   #closed = false;
 
-  constructor(readonly options: SessionActivityOptions) {
+  #unsubscribe: (() => void) | undefined;
+
+  constructor(options: SessionActivityOptions) {
+    if (!Number.isSafeInteger(options.maxRetainedEvents) || options.maxRetainedEvents < 1) {
+      throw new RangeError("maxRetainedEvents must be a positive integer");
+    }
+    this.#options = options;
     this.#batches = new AcpActivityBatches(options.limits);
-    options.queue.onStop(() => this.close());
+    this.#unsubscribe = options.queue.onStop(() => this.close());
   }
 
   get retainedEvents(): number {
@@ -48,9 +60,9 @@ export class SessionActivity {
       for (const batch of this.#batches.collapse()) this.#schedule(batch);
     }
     if (activity === undefined) return;
-    if (this.retainedEvents > this.options.maxRetainedEvents) {
-      this.options.onAbandoned("capacity");
-      this.options.queue.stop();
+    if (this.retainedEvents > this.#options.maxRetainedEvents) {
+      this.#options.onAbandoned("capacity");
+      this.#options.queue.stop();
       return;
     }
     for (const batch of this.#batches.accept(activity)) this.#schedule(batch);
@@ -63,7 +75,9 @@ export class SessionActivity {
       this.#model.events.some((event) => isActiveTool(event)) ||
       [...this.#deliveries.values()].some((delivery) => delivery.pending)
     )
-      this.options.onAbandoned("lifecycle");
+      this.#options.onAbandoned("lifecycle");
+    this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
     this.#model.close();
     this.#batches.clear();
     this.#deliveries.clear();
@@ -81,45 +95,47 @@ export class SessionActivity {
     const delivery = state;
     // The original must show the expanded view even if text collapses it before delivery.
     const initial = delivery.eventId === undefined ? this.#batches.render(batch) : undefined;
-    this.options.queue.enqueue(batch, async () => {
-      let published = false;
+    this.#options.queue.enqueue(batch, async () => {
       try {
-        let first = initial;
-        while (delivery.dirty && !this.#closed) {
-          delivery.dirty = false;
-          const rendered = first ?? this.#batches.render(batch);
-          first = undefined;
-          const id = await this.options.publish(rendered, delivery.eventId);
-          if (this.#closed) return;
-          if (id === undefined) {
-            this.options.onAbandoned("delivery");
-            this.options.queue.stop();
-            return;
-          }
-          delivery.eventId = id;
-          if (rendered === initial) {
-            const current = this.#batches.render(batch);
-            delivery.dirty ||= current.body !== rendered.body || current.formattedBody !== rendered.formattedBody;
-          }
-        }
-        published = true;
+        await this.#publishBatch(batch, delivery, initial);
+        this.#releaseCompletedBatch(batch, delivery);
       } catch (error) {
-        this.options.onAbandoned("delivery");
+        this.#options.onAbandoned("delivery");
         throw error;
       } finally {
         delivery.pending = false;
-        if (
-          published &&
-          !this.#closed &&
-          !delivery.dirty &&
-          batch.collapsed &&
-          !batch.events.some((event) => isActiveTool(event))
-        ) {
-          this.#model.release(batch.events);
-          this.#batches.release(batch);
-          this.#deliveries.delete(batch);
-        }
       }
     });
+  }
+
+  async #publishBatch(
+    batch: ActivityBatch,
+    delivery: BatchDelivery,
+    initial: RenderedAcpActivity | undefined,
+  ): Promise<void> {
+    let first = initial;
+    while (delivery.dirty && !this.#closed) {
+      delivery.dirty = false;
+      const rendered = first ?? this.#batches.render(batch);
+      first = undefined;
+      const id = await this.#options.publish(rendered, delivery.eventId);
+      if (this.#closed) return;
+      if (id === undefined) {
+        this.#options.onAbandoned("delivery");
+        this.#options.queue.stop();
+        return;
+      }
+      delivery.eventId = id;
+      if (rendered !== initial) continue;
+      const current = this.#batches.render(batch);
+      delivery.dirty ||= current.body !== rendered.body || current.formattedBody !== rendered.formattedBody;
+    }
+  }
+
+  #releaseCompletedBatch(batch: ActivityBatch, delivery: BatchDelivery): void {
+    if (this.#closed || delivery.dirty || !batch.collapsed || batch.events.some((event) => isActiveTool(event))) return;
+    this.#model.release(batch.events);
+    this.#batches.release(batch);
+    this.#deliveries.delete(batch);
   }
 }

@@ -163,6 +163,11 @@ Pi adapter validation remains an external prerequisite.
 
 ## CODE.md audit
 
+The table below records the original implementation audit. The subsequent
+[PR #28 guideline-by-guideline review](pr-28-code-review.md) checks every bullet
+and sub-bullet, records remediation, and distinguishes its validation from the
+historical live results above.
+
 | Guideline group  | Assessment                                                                                                                                                                                                                                        |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Architecture     | Flow fits eight components: ACP wire, authorized session routing, text buffer, activity model, conversation publication queue, delivery policy, Matrix SDK, durable routing store. Buffer/activity share queue ownership and lifecycle.           |

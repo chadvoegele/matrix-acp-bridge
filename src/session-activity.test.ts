@@ -5,13 +5,12 @@ import { SessionActivity } from "./session-activity.js";
 import { ConversationPublication } from "./conversation-publication.js";
 import { matrixHtmlEditContentBytes } from "./matrix-message-content.js";
 
-const immediate = () => Promise.resolve();
-
-function fixture(maxRetainedEvents = 20) {
+function createFixture(maxRetainedEvents = 20) {
   const publications: { body: string; formattedBody: string; targetEventId?: string }[] = [];
   const failures: string[] = [];
   const queue = new ConversationPublication(20, (reason) => failures.push(reason));
-  let send: () => Promise<void> = immediate;
+  // eslint-disable-next-line unicorn/consistent-function-scoping -- This default belongs only to this fixture.
+  let send: () => Promise<void> = () => Promise.resolve();
   const activity = new SessionActivity({
     queue,
     limits: { maxEvents: 2, maxMessageBytes: 4096, measure: matrixHtmlEditContentBytes },
@@ -41,8 +40,42 @@ function fixture(maxRetainedEvents = 20) {
   };
 }
 
+void test("activity retention requires a positive safe integer", () => {
+  for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => createFixture(limit), /maxRetainedEvents/u);
+  }
+});
+
+void test("direct close retires activity once and ignores later intake and queue shutdown", async () => {
+  const f = createFixture();
+  f.tool("tool");
+  await f.queue.waitForIdle();
+  f.activity.close();
+  f.activity.close();
+  f.terminal("tool");
+  f.queue.stop();
+  assert.deepEqual(f.failures, ["lifecycle"]);
+  assert.equal(f.activity.retainedEvents, 0);
+  assert.equal(f.activity.retainedBatches, 0);
+  assert.equal(f.publications.length, 1);
+});
+
+void test("construction on a stopped queue leaves activity closed", () => {
+  const queue = new ConversationPublication(1, () => assert.fail("unexpected failure"));
+  queue.stop();
+  const activity = new SessionActivity({
+    queue,
+    limits: { maxEvents: 1, maxMessageBytes: 4096, measure: matrixHtmlEditContentBytes },
+    maxRetainedEvents: 1,
+    onAbandoned: () => assert.fail("empty closed activity was abandoned"),
+    publish: async () => assert.fail("closed activity published"),
+  });
+  activity.accept({ sessionId: "session", kind: "tool_call", toolCallId: "tool", title: "tool", status: "pending" });
+  assert.equal(activity.retainedEvents, 0);
+});
+
 void test("parallel tools retain independent batches until terminal edits and collapse finish", async () => {
-  const f = fixture();
+  const f = createFixture();
   f.tool("first");
   f.text();
   f.tool("second");
@@ -74,7 +107,7 @@ void test("parallel tools retain independent batches until terminal edits and co
 });
 
 void test("completed current batch stays bounded until its presentation closes", async () => {
-  const f = fixture();
+  const f = createFixture();
   f.tool("tool");
   f.terminal("tool");
   await f.queue.waitForIdle();
@@ -87,7 +120,7 @@ void test("completed current batch stays bounded until its presentation closes",
 });
 
 void test("slow terminal publication retains state through the final collapse edit", async () => {
-  const f = fixture();
+  const f = createFixture();
   f.tool("tool");
   await f.queue.waitForIdle();
   let release!: () => void;
@@ -109,7 +142,7 @@ void test("slow terminal publication retains state through the final collapse ed
 });
 
 void test("sequential closed batches release source and event mappings without history growth", async () => {
-  const f = fixture();
+  const f = createFixture();
   for (let index = 0; index < 100; index += 1) {
     f.tool(`tool-${index}`);
     f.terminal(`tool-${index}`);
@@ -122,7 +155,7 @@ void test("sequential closed batches release source and event mappings without h
 });
 
 void test("unbounded parallel intake fails explicitly and releases incomplete activity", async () => {
-  const f = fixture(2);
+  const f = createFixture(2);
   f.tool("first");
   f.tool("second");
   f.tool("third");
@@ -136,7 +169,7 @@ void test("unbounded parallel intake fails explicitly and releases incomplete ac
 
 void test("transport failure and lifecycle stop release incomplete tools without success edits", async () => {
   for (const failure of [false, true]) {
-    const f = fixture();
+    const f = createFixture();
     f.tool("tool");
     await f.queue.waitForIdle();
     if (failure) {

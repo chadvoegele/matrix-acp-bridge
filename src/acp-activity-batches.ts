@@ -2,7 +2,6 @@ import type { AcpActivity } from "./acp-activity.js";
 import { renderAcpActivity, type RenderedAcpActivity } from "./acp-activity-rendering.js";
 
 export interface ActivityBatch {
-  readonly index: number;
   readonly events: readonly AcpActivity[];
   readonly collapsed: boolean;
 }
@@ -26,22 +25,24 @@ export class AcpActivityBatches {
 
   #current: MutableActivityBatch | undefined;
 
-  #nextIndex = 0;
+  readonly #limits: ActivityBatchLimits;
 
-  constructor(readonly limits: ActivityBatchLimits) {}
+  constructor(limits: ActivityBatchLimits) {
+    this.#limits = limits;
+  }
 
   accept(activity: AcpActivity): readonly ActivityBatch[] {
     const existing = this.#eventBatches.get(activity);
     if (existing !== undefined) return [existing];
     const changed: ActivityBatch[] = [];
     let batch = this.#current;
-    if (batch !== undefined && batch.events.length >= this.limits.maxEvents) {
+    if (batch !== undefined && batch.events.length >= this.#limits.maxEvents) {
       this.#collapse(batch, changed);
       batch = undefined;
     }
     batch ??= this.#start(changed);
     batch.events.push(activity);
-    if (batch.events.length > 1 && this.limits.measure(this.render(batch)) > this.limits.maxMessageBytes) {
+    if (batch.events.length > 1 && this.#limits.measure(this.render(batch)) > this.#limits.maxMessageBytes) {
       batch.events.pop();
       this.#collapse(batch, changed);
       batch = this.#start(changed);
@@ -84,13 +85,13 @@ export class AcpActivityBatches {
       ? `<details><summary>Past agent events (${batch.events.length})</summary>`
       : "";
     const wrapperEnd = batch.collapsed ? "</details>" : "";
-    let budget = Math.max(64, Math.floor(this.limits.maxMessageBytes / batch.events.length));
+    let budget = Math.max(64, Math.floor(this.#limits.maxMessageBytes / batch.events.length));
     for (;;) {
       const entries = batch.events.map((event) => renderAcpActivity(event, budget));
       const body = entries.map((entry) => entry.body).join("\n");
       const formattedBody = `${wrapperStart}${entries.map((entry) => entry.formattedBody).join("\n")}${wrapperEnd}`;
       const rendered = { body, formattedBody };
-      if (this.limits.measure(rendered) <= this.limits.maxMessageBytes || budget <= 16) return rendered;
+      if (this.#limits.measure(rendered) <= this.#limits.maxMessageBytes || budget <= 16) return rendered;
       budget = Math.max(16, Math.floor(budget * 0.7));
     }
   }
@@ -105,7 +106,6 @@ export class AcpActivityBatches {
     const previous = this.#batches.at(-1);
     if (previous !== undefined) this.#collapse(previous, changed);
     const batch: MutableActivityBatch = {
-      index: this.#nextIndex++,
       events: [],
       collapsed: false,
     };

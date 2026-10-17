@@ -1228,7 +1228,7 @@ export class BridgeCoordinator {
         return;
       }
 
-      const rendering = this.#sessionRendering(run.conversation, session.sessionId, run.entry.event);
+      const rendering = this.#ensureSessionRendering(run.conversation, session.sessionId, run.entry.event);
       const releasePermit = await this.#semaphore.acquire();
       if (releasePermit === undefined || this.#stopping || this.#fatal !== undefined) {
         releasePermit?.();
@@ -1376,7 +1376,7 @@ export class BridgeCoordinator {
     }
   }
 
-  #sessionRendering(
+  #ensureSessionRendering(
     conversation: ConversationState,
     sessionId: AcpSessionId,
     event: NormalizedInboundEvent,
@@ -1389,13 +1389,35 @@ export class BridgeCoordinator {
     let revision = 0;
     const queue = new ConversationPublication(
       this.#config.limits.maxActivityEventsPerMessage + this.#config.limits.maxQueuedTurnsPerConversation,
-      (reason) => {
-        this.#diagnostic("warn", "agent-text-abandoned", { kind: reason });
-        if (reason === "capacity") {
-          this.#triggerFatal({ code: "matrix_transport", message: "Agent output publication capacity exceeded" });
-        }
-      },
+      (reason) => this.#reportRenderingAbandoned("text", reason),
     );
+    const publish = async (
+      kind: "text" | "activity",
+      rendered: MatrixHtmlBody,
+      targetEventId?: MatrixEventId,
+    ): Promise<MatrixEventId | undefined> => {
+      if (this.#renderingBySession.get(sessionId)?.queue !== queue || conversation.sessionId !== sessionId) return;
+      if (
+        matrixHtmlContentBytes({ ...rendered, ...routing }, targetEventId) > this.#config.limits.maxMatrixMessageBytes
+      ) {
+        throw new RangeError("Agent publication exceeds limits.max_matrix_message_bytes; increase the event budget");
+      }
+      this.#outboundOperations += 1;
+      try {
+        return await this.#delivery.sendLive({
+          ...routing,
+          roomId: conversation.identity.roomId,
+          transactionId: `matrix-acp-${kind}-${generation}-${revision++}`,
+          body: rendered.body,
+          formattedBody: rendered.formattedBody as MatrixSafeHtml,
+          ...(targetEventId === undefined ? {} : { targetEventId }),
+        });
+      } finally {
+        this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
+        this.#resolveIdleWaiters();
+        this.#maybeFinalizeStop();
+      }
+    };
     const buffer = new AgentTextBuffer({
       settings: this.#config.matrix,
       maxOutputBytes: this.#config.limits.maxOutputBytes,
@@ -1403,24 +1425,7 @@ export class BridgeCoordinator {
       queue,
       routing,
       clock: this.#clock,
-      publish: async (publication) => {
-        if (this.#renderingBySession.get(sessionId)?.buffer !== buffer || conversation.sessionId !== sessionId) return;
-        this.#outboundOperations += 1;
-        try {
-          return await this.#delivery.sendLive({
-            ...routing,
-            roomId: conversation.identity.roomId,
-            transactionId: `matrix-acp-text-${generation}-${revision++}`,
-            body: publication.body,
-            formattedBody: publication.formattedBody as MatrixSafeHtml,
-            ...(publication.targetEventId === undefined ? {} : { targetEventId: publication.targetEventId }),
-          });
-        } finally {
-          this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
-          this.#resolveIdleWaiters();
-          this.#maybeFinalizeStop();
-        }
-      },
+      publish: (publication) => publish("text", publication, publication.targetEventId),
     });
     const activity = new SessionActivity({
       queue,
@@ -1431,38 +1436,31 @@ export class BridgeCoordinator {
       },
       maxRetainedEvents:
         this.#config.limits.maxActivityEventsPerMessage * (this.#config.limits.maxQueuedTurnsPerConversation + 1),
-      onAbandoned: (reason) => {
-        this.#diagnostic("warn", "agent-activity-abandoned", { kind: reason });
-        if (reason === "capacity") {
-          this.#triggerFatal({ code: "matrix_transport", message: "Agent activity capacity exceeded" });
-        }
-      },
-      publish: async (rendered, targetEventId) => {
-        if (this.#renderingBySession.get(sessionId)?.buffer !== buffer || conversation.sessionId !== sessionId) return;
-        if (
-          matrixHtmlContentBytes({ ...rendered, ...routing }, targetEventId) > this.#config.limits.maxMatrixMessageBytes
-        )
-          return;
-        this.#outboundOperations += 1;
-        try {
-          return await this.#delivery.sendLive({
-            ...routing,
-            roomId: conversation.identity.roomId,
-            transactionId: `matrix-acp-activity-${generation}-${revision++}`,
-            body: rendered.body,
-            formattedBody: rendered.formattedBody as MatrixSafeHtml,
-            ...(targetEventId === undefined ? {} : { targetEventId }),
-          });
-        } finally {
-          this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
-          this.#resolveIdleWaiters();
-          this.#maybeFinalizeStop();
-        }
-      },
+      onAbandoned: (reason) => this.#reportRenderingAbandoned("activity", reason),
+      publish: (rendered, targetEventId) => publish("activity", rendered, targetEventId),
     });
     const rendering = { buffer, activity, queue, warnedIdless: false };
     this.#renderingBySession.set(sessionId, rendering);
     return rendering;
+  }
+
+  #reportRenderingAbandoned(component: "text" | "activity", reason: "capacity" | "delivery" | "lifecycle"): void {
+    this.#diagnostic("warn", `agent-${component}-abandoned`, {
+      kind: reason,
+      ...(reason === "capacity"
+        ? {
+            maxActivityEventsPerMessage: this.#config.limits.maxActivityEventsPerMessage,
+            maxQueuedTurnsPerConversation: this.#config.limits.maxQueuedTurnsPerConversation,
+          }
+        : {}),
+    });
+    if (reason !== "capacity") return;
+    this.#triggerFatal({
+      code: "matrix_transport",
+      message:
+        `Agent ${component} capacity exceeded. Reduce concurrent agent output or increase ` +
+        "limits.max_activity_events_per_message and limits.max_queued_turns_per_conversation, then restart the bridge.",
+    });
   }
 
   #retireSessionRendering(sessionId: AcpSessionId): void {

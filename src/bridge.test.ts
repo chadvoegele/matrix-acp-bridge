@@ -4766,7 +4766,7 @@ void test("shutdown abandons response backoff immediately without spending the g
   assert.equal(acp.closed, true);
 });
 
-async function identifiedFixture(bridgeConfig = config(), matrix = new FakeLiveMatrix()) {
+async function createIdentifiedFixture(bridgeConfig = config(), matrix = new FakeLiveMatrix()) {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   let resolvePrompt!: (outcome: AcpOutcome) => void;
@@ -4801,7 +4801,7 @@ async function identifiedFixture(bridgeConfig = config(), matrix = new FakeLiveM
 }
 
 void test("identified prompt completion is independent of quiet publication and later unsolicited continuation", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("hello");
   f.finish({ kind: "turn", stopReason: "end_turn", text: "hello" });
   await f.completion;
@@ -4826,7 +4826,7 @@ void test("identified prompt completion is independent of quiet publication and 
 });
 
 void test("an empty identified transition flushes prior text without publishing an empty placeholder", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("preceding");
   f.text("", "next");
   await waitFor(() => f.matrix.html.length === 1);
@@ -4846,7 +4846,7 @@ void test("an empty identified transition flushes prior text without publishing 
 });
 
 void test("early tool announcement flushes identified text without retiring its event mapping", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("before ");
   f.acp.emit({ sessionId: f.sessionId, kind: "tool_call", toolCallId: "tool", title: "read", status: "pending" });
   await waitFor(() => f.matrix.html.length === 2);
@@ -4872,7 +4872,7 @@ void test("identified publication in flight coalesces continuation without delay
     matrix.html.push(message);
     return message.targetEventId ?? "$slow";
   };
-  const f = await identifiedFixture(config(), matrix);
+  const f = await createIdentifiedFixture(config(), matrix);
   f.text("one");
   f.clock.advanceBy(750);
   await waitFor(() => matrix.attempts.length === 1);
@@ -4894,7 +4894,7 @@ void test("identified publication in flight coalesces continuation without delay
 });
 
 void test("sequential assistant IDs use bounded current state without suppressing repeated deltas", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("message 0", "id-0");
   f.finish();
   await f.completion;
@@ -4916,7 +4916,7 @@ void test("sequential assistant IDs use bounded current state without suppressin
 });
 
 void test("reset drops buffered identified output and rejects unknown and retired sessions", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("published");
   f.clock.advanceBy(750);
   await waitFor(() => f.matrix.html.length === 1);
@@ -4977,7 +4977,7 @@ void test("restored sessions ignore replay and start continuing IDs from newly r
 });
 
 void test("identified text keeps prompt errors separate without duplicating the response text", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("partial");
   f.finish({ kind: "method_error", operation: "session_prompt", fatal: false });
   await f.completion;
@@ -4998,7 +4998,7 @@ void test("identified publication failures are observable and a new prompt can r
   matrix.htmlSend = async () => {
     throw { httpStatus: 403 };
   };
-  const f = await identifiedFixture(config(), matrix);
+  const f = await createIdentifiedFixture(config(), matrix);
   f.text("lost");
   f.finish();
   await f.completion;
@@ -5029,7 +5029,7 @@ void test("identified publication failures are observable and a new prompt can r
 });
 
 void test("ID-less unsolicited chunks emit one bounded diagnostic and never attach to an identified block", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("identified");
   f.finish();
   await f.completion;
@@ -5053,7 +5053,7 @@ void test("identified queue capacity failure stops intake observably and cancels
     });
     return "$in-flight";
   };
-  const f = await identifiedFixture(config({ maxActivityEventsPerMessage: 1 }), matrix);
+  const f = await createIdentifiedFixture(config({ maxActivityEventsPerMessage: 1 }), matrix);
   f.text("first");
   f.clock.advanceBy(750);
   await waitFor(() => matrix.attempts.length === 1);
@@ -5063,17 +5063,50 @@ void test("identified queue capacity failure stops intake observably and cancels
   f.text("third", "third");
   f.text("fourth", "fourth");
   assert.equal(f.bridge.fatalError?.code, "matrix_transport");
-  assert.ok(
-    f.diagnostics.some((record) => record.event === "agent-text-abandoned" && record.fields.kind === "capacity"),
+  assert.match(
+    f.bridge.fatalError?.message ?? "",
+    /Reduce concurrent agent output.*limits\.max_activity_events_per_message.*restart/u,
   );
+  const failure = f.diagnostics.find(
+    (record) => record.event === "agent-text-abandoned" && record.fields.kind === "capacity",
+  );
+  assert.equal(failure?.fields.maxActivityEventsPerMessage, 1);
+  assert.equal(failure?.fields.maxQueuedTurnsPerConversation, 1);
   release();
   await f.bridge.stop();
   assert.equal(f.clock.pendingTimerCount, 0);
   assert.equal(matrix.attempts.length, 1);
 });
 
+void test("activity capacity failure reports configuration and recovery steps without retaining tools", async () => {
+  const f = await createIdentifiedFixture(config({ maxActivityEventsPerMessage: 1 }));
+  f.text("answer");
+  f.finish();
+  await f.completion;
+  for (let index = 0; index < 3; index++) {
+    f.acp.emit({
+      sessionId: f.sessionId,
+      kind: "tool_call",
+      toolCallId: `tool-${index}`,
+      title: "private tool",
+      status: "in_progress",
+    });
+    await flush();
+  }
+  assert.equal(f.bridge.fatalError?.code, "matrix_transport");
+  assert.match(f.bridge.fatalError?.message ?? "", /Agent activity capacity exceeded.*restart/u);
+  const failure = f.diagnostics.find(
+    (record) => record.event === "agent-activity-abandoned" && record.fields.kind === "capacity",
+  );
+  assert.equal(failure?.fields.maxActivityEventsPerMessage, 1);
+  assert.equal(failure?.fields.maxQueuedTurnsPerConversation, 1);
+  assert.doesNotMatch(JSON.stringify(f.diagnostics), /private tool/u);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
 void test("thought grouping resumes after identified text without whitespace or tool updates flushing text", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "first thought" });
   await waitFor(() => f.matrix.html.length === 1);
   f.text("answer");
@@ -5096,7 +5129,7 @@ void test("thought grouping resumes after identified text without whitespace or 
 });
 
 void test("unsolicited thoughts and parallel tools survive prompt completion and assistant ID transitions", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("prompt answer");
   f.finish();
   await f.completion;
@@ -5159,7 +5192,7 @@ void test("unsolicited thoughts and parallel tools survive prompt completion and
 });
 
 void test("reset retires unsolicited running tools and drops stale terminal updates", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("answer");
   f.finish();
   await f.completion;
@@ -5187,7 +5220,7 @@ void test("reset retires unsolicited running tools and drops stale terminal upda
 });
 
 void test("ACP subprocess failure abandons unsolicited running tools and ignores subsequent updates", async () => {
-  const f = await identifiedFixture();
+  const f = await createIdentifiedFixture();
   f.text("answer");
   f.finish();
   await f.completion;
