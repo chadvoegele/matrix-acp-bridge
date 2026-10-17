@@ -36,6 +36,8 @@ const roots = new Map();
 const pendingPrompts = new Map();
 const completedSessions = new Set();
 const unsolicitedSessions = new Set();
+const staleTextSessions = new Set();
+const staleToolSessions = new Set();
 const messageIds = new Map();
 let fatal;
 let pair;
@@ -78,6 +80,12 @@ async function sendPrompt(prompt, rootEventId) {
   return id;
 }
 
+function acknowledgeObservation(marker, stage) {
+  pair.acp.stdin.write(
+    `${JSON.stringify({ jsonrpc: "2.0", method: "test/unifiedObserved", params: { marker, stage } })}\n`,
+  );
+}
+
 async function runStream() {
   const marker = randomBytes(6).toString("hex").toUpperCase();
   const prompt = `UNIFIED_STREAM_${marker}`;
@@ -86,6 +94,27 @@ async function runStream() {
   const input = await readWireEvent(promptId);
   assert(Number.isFinite(input.origin_server_ts), "prompt server timestamp missing");
   assert.equal(input.type, encrypted ? "m.room.encrypted" : "m.room.message", "wrong prompt wire transport");
+
+  async function acknowledge(stage, predicate) {
+    await awaitCondition(predicate, `unified ${stage} delivery`);
+    acknowledgeObservation(marker, stage);
+  }
+
+  const hasBody = (body) => [...events.values()].some((event) => effectiveContent(event)?.body === body);
+  await acknowledge(
+    "prefix",
+    () => completedSessions.has(monitor.promptSessions.get(prompt)) && hasBody(`UNIFIED_${marker} **prefix`),
+  );
+  await acknowledge("suffix", () => hasBody(`UNIFIED_${marker} **prefix suffix**`));
+  await acknowledge("tools", () =>
+    ["first", "second"].every((tool) =>
+      [...events.values()].some((event) => {
+        const content = effectiveContent(event);
+        return content?.body?.includes(`unified-${marker}-${tool}`) && content.body.includes("[running]");
+      }),
+    ),
+  );
+  await acknowledge("after-tool", () => hasBody(`UNIFIED_${marker} **prefix suffix** after tool`));
   await awaitCondition(
     () => [...events.values()].some((event) => effectiveContent(event)?.body === `UNIFIED_DONE_${marker}`),
     "unified final text",
@@ -143,6 +172,15 @@ try {
       }
       if (frame.method === "session/update" && completedSessions.has(frame.params?.sessionId))
         unsolicitedSessions.add(frame.params.sessionId);
+      const update = frame.params?.update;
+      if (update?.sessionUpdate === "agent_message_chunk" && update.messageId === "stale")
+        staleTextSessions.add(frame.params.sessionId);
+      if (
+        update?.sessionUpdate === "tool_call_update" &&
+        update.toolCallId?.startsWith("unfinished-") &&
+        update.status === "completed"
+      )
+        staleToolSessions.add(frame.params.sessionId);
       if (frame.params?.update?.sessionUpdate === "agent_message_chunk") {
         const { sessionId, update } = frame.params;
         const previous = messageIds.get(sessionId) ?? { current: undefined, seen: new Set() };
@@ -175,6 +213,12 @@ try {
   await awaitCondition(
     () => [...events.values()].some((event) => effectiveContent(event)?.body === "Agent session reset."),
     "reset completion",
+  );
+  acknowledgeObservation(resetMarker, "reset");
+  const resetSessionId = monitor.promptSessions.get(resetPrompt);
+  await awaitCondition(
+    () => staleTextSessions.has(resetSessionId) && staleToolSessions.has(resetSessionId),
+    "retired ACP text and terminal tool frames",
   );
   await pause(5000);
   if (fatal) throw fatal;

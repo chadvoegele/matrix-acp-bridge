@@ -32,6 +32,12 @@ stream sends a prefix before its prompt response, then without another prompt:
 - publishes completed/failed tool statuses after assistant ID transitions, retaining
   initial expanded activity and final collapsed batches.
 
+The scripted peer advances each stream only after the sender has observed its
+exact prefix, Markdown suffix edit, both running tools, and same-ID continuation.
+These harness-only ACP notifications do not submit prompts or alter production
+buffering. Slow homeserver delivery can therefore coalesce freely without skipping
+an intermediate snapshot required by this scenario.
+
 Originals and replacement targets, exact text counts, thread roots/fallbacks,
 HTML, event-size bounds and raw wire types are asserted. Observations require
 server timestamps at/after the input. Encrypted runs require authenticated
@@ -39,7 +45,9 @@ decryption and `m.room.encrypted` originals/edits, with the normal fatal
 decryption gate and real SAS setup; there is no plaintext or trust bypass.
 
 A third prompt leaves a tool running. Reset must reject deliberately late text
-and terminal updates from that retired session. A fourth prompt leaves buffered
+and terminal updates, gated on observed reset completion, from that retired
+session. The ACP monitor requires both stale frames to arrive before checking
+that neither was published. A fourth prompt leaves buffered
 text; immediate graceful shutdown must diagnose abandonment and cancel its timer.
 The ACP monitor verifies prompt responses precede background output and retains
 all created session IDs for cleanup. No transcript or token is written by the
@@ -57,7 +65,9 @@ node --test --test-name-pattern='post-prompt parallel' dist-test/integration.tes
 
 The first scoped command runs the same plaintext runner in room and thread modes
 against a loopback HTTPS Matrix **protocol fixture**, with actual bridge, ACP and
-sender subprocesses and the real Matrix SDK. It creates an ephemeral one-day
+sender subprocesses and the real Matrix SDK. It delays progressive HTTP publications by three
+seconds, exceeding the former 1.1-second scripted pacing, to regress intermediate
+snapshot coalescing. It creates an ephemeral one-day
 certificate using `openssl`, trusts only that certificate through
 `NODE_EXTRA_CA_CERTS`, and removes its temporary config/state/certificate and
 process group. TLS validation remains enabled. It has no real accounts/devices,

@@ -10,6 +10,7 @@ export function assertUnifiedStream(events, marker, rootEventId, threadMode) {
   const edits = events.filter((event) => event.content?.["m.relates_to"]?.rel_type === "m.replace");
   const text = originals.filter((event) => event.content.body.startsWith(`UNIFIED_${marker} `));
   assert.equal(text.length, 1, "progressive text must have exactly one original");
+  assert.equal(text[0].content.body, `UNIFIED_${marker} **prefix`, "initial prefix was coalesced");
   const progressive = edits.filter((event) => event.content["m.relates_to"].event_id === text[0].eventId);
   assert(progressive.some((event) => effectiveContent(event).body === `UNIFIED_${marker} **prefix suffix**`));
   assert(

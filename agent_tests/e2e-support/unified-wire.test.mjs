@@ -95,13 +95,16 @@ async function startMatrixFixture(root) {
         if (!transactions.has(key)) {
           let input = "";
           for await (const chunk of request) input += chunk;
+          const content = JSON.parse(input);
+          const text = content["m.new_content"]?.body ?? content.body;
+          if (/^UNIFIED_[A-F0-9]+ \*\*prefix(?: suffix\*\*)?$/u.test(text)) await pause(3000);
           const event = {
             event_id: `$event-${events.length}`,
             room_id: roomId,
             type: "m.room.message",
             sender,
             origin_server_ts: Date.now(),
-            content: JSON.parse(input),
+            content,
           };
           events.push(event);
           transactions.set(key, event.event_id);
@@ -133,6 +136,7 @@ async function startMatrixFixture(root) {
     bridgeUser,
     senderUser,
     unexpected,
+    events,
     certificatePath,
     homeserver: `https://127.0.0.1:${server.address().port}`,
   };
@@ -140,8 +144,8 @@ async function startMatrixFixture(root) {
 
 for (const mode of ["room", "thread"]) {
   test(
-    `scripted ACP and real bridge/SDK subprocesses deliver identified ${mode} streams over isolated HTTPS`,
-    { timeout: 60_000 },
+    `scripted ACP and real bridge/SDK subprocesses deliver identified ${mode} streams over slow isolated HTTPS`,
+    { timeout: 90_000 },
     async () => {
       const root = await mkdtemp(join(tmpdir(), "matrix-acp-unified-http-"));
       let fixture;
@@ -181,7 +185,7 @@ for (const mode of ["room", "thread"]) {
           },
           stdio: ["ignore", "pipe", "pipe"],
           detached: true,
-          timeout: 55_000,
+          timeout: 85_000,
         });
         child.stdout.on("data", (chunk) => {
           output += chunk;
@@ -190,7 +194,11 @@ for (const mode of ["room", "thread"]) {
           output += chunk;
         });
         await childExit(child, "unified harness").catch((error) => {
-          throw new Error(`${error.message}\n${output}`);
+          const snapshots = fixture.events
+            .filter((event) => event.sender === fixture.bridgeUser)
+            .map((event) => event.content["m.new_content"]?.body ?? event.content.body)
+            .filter((body) => body.startsWith("UNIFIED_"));
+          throw new Error(`${error.message}\n${output}\nFixture text snapshots: ${JSON.stringify(snapshots)}`);
         });
         assert.match(output, /2 streams, stale-session reset and buffered shutdown passed/u);
         assert.deepEqual(fixture.unexpected, []);

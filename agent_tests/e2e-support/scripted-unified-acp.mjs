@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import { setTimeout as pause } from "node:timers/promises";
 
 const sessions = new Map();
+const observations = new Map();
+
+function waitForObservation(marker, stage) {
+  return new Promise((resolve) => observations.set(`${marker}/${stage}`, resolve));
+}
+
 const send = (frame) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...frame })}\n`);
 
 async function runScenario(sessionId, marker, reset, sequence) {
@@ -20,19 +25,22 @@ async function runScenario(sessionId, marker, reset, sequence) {
   if (reset) {
     tool("unfinished");
     // Intentionally deliver late frames even after session/delete to test stale routing.
-    await pause(4000);
+    await waitForObservation(marker, "reset");
     text(`STALE_${marker}`, "stale");
     update({ sessionUpdate: "tool_call_update", toolCallId: `unfinished-${sequence}`, status: "completed" });
     return;
   }
-  await pause(1100);
+  await waitForObservation(marker, "prefix");
+  const suffixObserved = waitForObservation(marker, "suffix");
   text(" suffix**");
-  await pause(1100);
+  await suffixObserved;
+  const toolsObserved = waitForObservation(marker, "tools");
   tool("first");
   tool("second");
-  await pause(1100);
+  await toolsObserved;
+  const continuationObserved = waitForObservation(marker, "after-tool");
   text(" after tool");
-  await pause(1100);
+  await continuationObserved;
   for (let index = 0; index < 12; index++) {
     text(`SEQUENTIAL_${marker}_${index}`, `sequential-${sequence}-${index}`);
   }
@@ -45,6 +53,13 @@ async function runScenario(sessionId, marker, reset, sequence) {
 for await (const line of createInterface({ input: process.stdin })) {
   const frame = JSON.parse(line);
   switch (frame.method) {
+    case "test/unifiedObserved": {
+      const key = `${frame.params?.marker}/${frame.params?.stage}`;
+      const resolve = observations.get(key);
+      observations.delete(key);
+      resolve?.();
+      break;
+    }
     case "initialize": {
       send({
         id: frame.id,
