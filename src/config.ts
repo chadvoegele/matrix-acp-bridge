@@ -28,6 +28,9 @@ export interface MatrixConfig {
   readonly encryption: EncryptionMode;
   readonly responseMode: ResponseMode;
   readonly defaultMessageDelivery: MessageDelivery;
+  readonly agentTextFlushBytes: number;
+  readonly agentTextQuietMs: number;
+  readonly agentTextMaxIntervalMs: number;
 }
 
 export interface AcpConfig {
@@ -107,6 +110,9 @@ const TABLE_KEYS: Readonly<Record<TomlTable, ReadonlySet<string>>> = {
     "encryption",
     "response_mode",
     "default_message_delivery",
+    "agent_text_flush_bytes",
+    "agent_text_quiet_ms",
+    "agent_text_max_interval_ms",
   ]),
   acp: new Set(["cwd"]),
   limits: new Set([...LIMIT_KEYS, "max_queued_turns_per_room"]),
@@ -214,6 +220,9 @@ export function parseConfigText(source: string): BridgeConfig {
     encryption: requiredEncryption(entries),
     responseMode: optionalResponseMode(entries),
     defaultMessageDelivery: optionalDefaultMessageDelivery(entries),
+    agentTextFlushBytes: parseFlushSetting(entries, "agent_text_flush_bytes", 2048, 256, 16_384),
+    agentTextQuietMs: parseFlushSetting(entries, "agent_text_quiet_ms", 750, 100, 5000),
+    agentTextMaxIntervalMs: parseFlushSetting(entries, "agent_text_max_interval_ms", 2000, 250, 10_000),
   };
   const acp: AcpConfig = {
     cwd: requiredString(entries, "acp", "cwd"),
@@ -437,7 +446,40 @@ function validateShape(stateDir: string, matrix: MatrixConfig, acp: AcpConfig, l
   if (matrix.defaultMessageDelivery !== "prompt" && matrix.defaultMessageDelivery !== "steer") {
     throw new ConfigurationError('matrix.default_message_delivery must be either "prompt" or "steer"');
   }
+  validateAgentTextSettings(matrix);
   validateLimits(limits);
+}
+
+export type AgentTextSettings = Pick<
+  MatrixConfig,
+  "agentTextFlushBytes" | "agentTextQuietMs" | "agentTextMaxIntervalMs"
+>;
+
+export function validateAgentTextSettings(settings: AgentTextSettings): void {
+  requireFlushSetting(settings.agentTextFlushBytes, "agent_text_flush_bytes", 256, 16_384);
+  requireFlushSetting(settings.agentTextQuietMs, "agent_text_quiet_ms", 100, 5000);
+  requireFlushSetting(settings.agentTextMaxIntervalMs, "agent_text_max_interval_ms", 250, 10_000);
+  if (settings.agentTextQuietMs > settings.agentTextMaxIntervalMs) {
+    throw new ConfigurationError("matrix.agent_text_quiet_ms must not exceed matrix.agent_text_max_interval_ms");
+  }
+}
+
+function parseFlushSetting(
+  entries: ReadonlyMap<string, TomlValue>,
+  key: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const value = entries.get(entryName("matrix", key)) ?? fallback;
+  return requireFlushSetting(value, key, minimum, maximum);
+}
+
+function requireFlushSetting(value: unknown, key: string, minimum: number, maximum: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new ConfigurationError(`matrix.${key} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return value;
 }
 
 function validateLimits(limits: BridgeLimits): void {

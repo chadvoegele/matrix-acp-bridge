@@ -55,7 +55,14 @@ export class MatrixDelivery {
         } catch (error) {
           const failure = classifyDeliveryFailure(error, this.#clock.now());
           if (!failure.retryable) {
-            this.#diagnostic("matrix-live-abandoned", { kind: "delivery" });
+            const status = failure.httpStatus;
+            this.#diagnostic("matrix-live-abandoned", {
+              kind: "delivery",
+              roomId: message.roomId,
+              attempts: attempt + 1,
+              httpStatus:
+                status !== undefined && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,
+            });
             return;
           }
           if (!(await this.#waitForRetry(calculateRetryDelay(failure, attempt++, this.#random)))) return;

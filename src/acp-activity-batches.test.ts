@@ -24,7 +24,6 @@ void test("event limits collapse the previous batch and preserve event order", (
   const third = thought("third");
   const [initial] = presentation.accept(first);
   assert.ok(initial);
-  assert.equal(initial.index, 0);
   assert.equal(initial.collapsed, false);
   assert.deepEqual(presentation.accept(second), [initial]);
   const changed = presentation.accept(third);
@@ -33,7 +32,7 @@ void test("event limits collapse the previous batch and preserve event order", (
   assert.equal(initial.collapsed, true);
   assert.deepEqual(initial.events, [first, second]);
   assert.deepEqual(changed[1]?.events, [third]);
-  assert.equal(changed[1]?.index, 1);
+  assert.notEqual(changed[1], initial);
   assert.equal(changed[1]?.collapsed, false);
 });
 
@@ -53,7 +52,7 @@ void test("text boundaries collapse once and later tool updates retain their ori
   assert.match(collapsed.formattedBody, /<details><summary>Past agent events \(1\)<\/summary>/);
   assert.match(collapsed.formattedBody, /updated &lt;text&gt;/);
   const [next] = presentation.accept(thought("next"));
-  assert.equal(next?.index, 1);
+  assert.notEqual(next, initial);
   assert.equal(next?.collapsed, false);
 });
 

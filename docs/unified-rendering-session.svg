@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1290" viewBox="0 0 1280 1290" role="img" aria-labelledby="title description">
+  <title id="title">PR 28: session renderer interfaces, publication and retirement</title>
+  <desc id="description">AgentTextBuffer accepts identified deltas, holds one bounded text block and reuses Markdown packing. SessionActivity accepts thoughts, tools and text boundaries and reuses the activity model and batches. Both enqueue keyed operations in ConversationPublication. Those operations invoke owner publication logic and the coordinator's guarded publisher callback, which calls MatrixDelivery.sendLive. Event IDs return to the owners for future replacements. Prompt completion does not stop these owners; session retirement stops the queue and both owners.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#334155"/></marker>
+    <style>
+      text { font-family: DejaVu Sans, sans-serif; fill: #172033; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 20px; fill: #475569; }
+      .name { font-size: 24px; font-weight: 700; }
+      .body { font-size: 19px; }
+      .small { font-size: 17px; }
+      .code { font-family: DejaVu Sans Mono, monospace; font-size: 17px; }
+      .tag { font-size: 15px; font-weight: 700; letter-spacing: 1px; }
+      .new { fill: #e8f2ff; stroke: #2563eb; stroke-width: 2; }
+      .changed { fill: #fff4d6; stroke: #a16207; stroke-width: 2; }
+      .existing { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; }
+      .flow { fill: none; stroke: #334155; stroke-width: 2.5; marker-end: url(#arrow); }
+      .returned { fill: none; stroke: #64748b; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1280" height="1290" fill="#ffffff"/>
+  <text x="40" y="50" class="title">Inside one session: two owners, one publication queue</text>
+  <text x="40" y="84" class="subtitle">Solid arrows: calls / publication work. Dashed arrows: event IDs returned for later edits.</text>
+  <rect x="40" y="107" width="20" height="20" rx="4" class="new"/><text x="70" y="123" class="small">New</text>
+  <rect x="160" y="107" width="20" height="20" rx="4" class="changed"/><text x="190" y="123" class="small">Existing, changed</text>
+  <rect x="405" y="107" width="20" height="20" rx="4" class="existing"/><text x="435" y="123" class="small">Existing, reused</text>
+  <text x="700" y="123" class="small">Coordinator flushes text before early activity.</text>
+  <text x="315" y="172" text-anchor="middle" class="code">append(messageId, delta) / flush()</text>
+  <path d="M 315 179 V 201" class="flow"/>
+  <text x="965" y="172" text-anchor="middle" class="code">accept(AcpUpdate)</text>
+  <path d="M 965 179 V 201" class="flow"/>
+
+  <rect x="40" y="201" width="550" height="329" rx="12" class="new"/>
+  <text x="65" y="234" class="tag">NEW · IDENTIFIED ASSISTANT TEXT</text>
+  <text x="65" y="269" class="name">AgentTextBuffer</text>
+  <text x="65" y="305" class="body">One bounded current message + continuation event IDs.</text>
+  <text x="65" y="334" class="body">Flush by bytes, quiet period or maximum interval.</text>
+  <text x="65" y="363" class="body">Same ID → append / edit. New ID → final flush / retire.</text>
+  <text x="65" y="399" class="code">publish(AgentTextPublication)</text>
+  <rect x="65" y="422" width="500" height="86" rx="8" class="existing"/>
+  <text x="85" y="449" class="tag">EXISTING RENDERING · REUSED</text>
+  <text x="85" y="475" class="code">renderMatrixTextChunks()</text>
+  <text x="85" y="498" class="small">Safe Markdown + encoded event / edit size budgets.</text>
+
+  <rect x="690" y="201" width="550" height="329" rx="12" class="new"/>
+  <text x="715" y="234" class="tag">NEW · SESSION-OWNED ACTIVITY</text>
+  <text x="715" y="269" class="name">SessionActivity</text>
+  <text x="715" y="305" class="body">Thoughts + independently tracked parallel tools.</text>
+  <text x="715" y="334" class="body">Text collapses batches; active tools remain tracked.</text>
+  <text x="715" y="363" class="body">Release after terminal publication + batch collapse.</text>
+  <text x="715" y="399" class="code">publish(rendered, targetEventId?)</text>
+  <rect x="715" y="422" width="500" height="86" rx="8" class="changed"/>
+  <text x="735" y="449" class="tag">EXISTING ACTIVITY MODULES · CHANGED</text>
+  <text x="735" y="475" class="code">AcpActivityModel + AcpActivityBatches</text>
+  <text x="735" y="498" class="small">Same presentation; add explicit release / clear.</text>
+
+  <path d="M 315 530 V 610 H 500 V 650" class="flow"/>
+  <rect x="110" y="545" width="410" height="51" fill="#ffffff"/>
+  <text x="315" y="565" text-anchor="middle" class="code">enqueue(block, operation)</text>
+  <text x="315" y="590" text-anchor="middle" class="small">operation publishes latest text / edits</text>
+  <path d="M 965 530 V 610 H 780 V 650" class="flow"/>
+  <rect x="745" y="545" width="440" height="51" fill="#ffffff"/>
+  <text x="965" y="565" text-anchor="middle" class="code">enqueue(batch, operation)</text>
+  <text x="965" y="590" text-anchor="middle" class="small">operation publishes dirty batch revisions</text>
+
+  <rect x="340" y="650" width="600" height="130" rx="12" class="new"/>
+  <text x="640" y="686" text-anchor="middle" class="name">ConversationPublication</text>
+  <text x="640" y="718" text-anchor="middle" class="code">enqueue(key, operation): boolean</text>
+  <text x="640" y="751" text-anchor="middle" class="body">Bounded FIFO · coalesce pending keys · one running task</text>
+  <path d="M 640 780 V 870" class="flow"/>
+  <rect x="380" y="790" width="520" height="55" fill="#ffffff"/>
+  <text x="640" y="811" text-anchor="middle" class="code">await operation()</text>
+  <text x="640" y="839" text-anchor="middle" class="small">Owner renders, then invokes its injected publish callback.</text>
+
+  <rect x="340" y="870" width="600" height="150" rx="12" class="changed"/>
+  <text x="365" y="901" class="tag">BRIDGECOORDINATOR · NEW SHARED CALLBACK</text>
+  <text x="365" y="935" class="name">Guarded session publisher</text>
+  <text x="365" y="967" class="body">Current-session guard + room/thread route + transaction ID.</text>
+  <text x="365" y="995" class="code">Promise&lt;MatrixEventId | undefined&gt;</text>
+  <path d="M 340 950 H 20 V 365 H 40" class="returned"/>
+  <text transform="translate(14 810) rotate(-90)" class="small">Returned event ID → text-part mapping</text>
+  <path d="M 940 950 H 1260 V 365 H 1240" class="returned"/>
+  <text transform="translate(1276 810) rotate(-90)" class="small">Returned event ID → batch mapping</text>
+
+  <path d="M 640 1020 V 1100" class="flow"/>
+  <rect x="380" y="1032" width="520" height="53" fill="#ffffff"/>
+  <text x="640" y="1053" text-anchor="middle" class="code">sendLive(MatrixHtmlMessage)</text>
+  <text x="640" y="1079" text-anchor="middle" class="small">body + formattedBody + route + optional targetEventId</text>
+  <rect x="340" y="1100" width="600" height="80" rx="12" class="existing"/>
+  <text x="640" y="1134" text-anchor="middle" class="name">Existing MatrixDelivery → Matrix adapter / SDK</text>
+  <text x="640" y="1163" text-anchor="middle" class="body">No target → original event. Target → m.replace edit.</text>
+
+  <text x="40" y="1223" class="body">Prompt completion does not stop these owners. Reset / shutdown: queue.stop() → buffer.stop() + activity.close().</text>
+  <text x="40" y="1255" class="small">Queue failure stops both owners and reports abandonment; capacity is fatal. No new retry loop, history cache or persistent event mappings.</text>
+</svg>

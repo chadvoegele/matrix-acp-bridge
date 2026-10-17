@@ -555,3 +555,55 @@ void test("rejects the removed thread queue key", async () => {
   const error = await expectConfigurationError(() => parseConfigText(`${valid}max_queued_turns_per_thread = 16\n`));
   assert.equal(error.message, "Unknown configuration key");
 });
+
+void test("validates matrix text flush defaults, inclusive bounds and timer ordering", async () => {
+  const valid = validConfigText("/tmp/matrix-acp-config-state");
+  const defaults = parseConfigText(valid).matrix;
+  assert.equal(defaults.agentTextFlushBytes, 2048);
+  assert.equal(defaults.agentTextQuietMs, 750);
+  assert.equal(defaults.agentTextMaxIntervalMs, 2000);
+  for (const [key, property, minimum, maximum] of [
+    ["agent_text_flush_bytes", "agentTextFlushBytes", 256, 16_384],
+    ["agent_text_quiet_ms", "agentTextQuietMs", 100, 5000],
+    ["agent_text_max_interval_ms", "agentTextMaxIntervalMs", 250, 10_000],
+  ] as const) {
+    for (const value of [minimum, maximum]) {
+      const source = valid
+        .replace("[matrix]", `[matrix]\nagent_text_quiet_ms = 100\n${key} = ${value}`)
+        .replace("agent_text_quiet_ms = 100\nagent_text_quiet_ms", "agent_text_quiet_ms");
+      const adjusted =
+        key === "agent_text_quiet_ms"
+          ? source.replace("[matrix]", "[matrix]\nagent_text_max_interval_ms = 10000")
+          : source;
+      assert.equal(parseConfigText(adjusted).matrix[property], value);
+    }
+    for (const value of [
+      String(minimum - 1),
+      String(maximum + 1),
+      "1.5",
+      '"secret-value"',
+      "true",
+      "[]",
+      "nan",
+      "inf",
+    ]) {
+      const error = await expectConfigurationError(() =>
+        parseConfigText(valid.replace("[matrix]", `[matrix]\n${key} = ${value}`)),
+      );
+      assert.match(error.message, new RegExp(`matrix.${key}`, "u"));
+      assert.doesNotMatch(error.message, /secret-value/u);
+    }
+    for (const value of [undefined, minimum - 1, maximum + 1, 1.5, Number.NaN]) {
+      await expectConfigurationError(() =>
+        validateConfiguration({
+          ...parseConfigText(valid),
+          matrix: { ...defaults, [property]: value },
+        }),
+      );
+    }
+  }
+  const error = await expectConfigurationError(() =>
+    parseConfigText(valid.replace("[matrix]", "[matrix]\nagent_text_quiet_ms = 751\nagent_text_max_interval_ms = 750")),
+  );
+  assert.match(error.message, /must not exceed/u);
+});
