@@ -7,8 +7,8 @@ Current evidence for the collector refactor in PR #28. The
 [earlier CODE.md review](pr-28-code-review.md) are historical and describe their
 named pre-refactor revisions. The developer's original rendering and actual
 functional revision:
-`9cbf1c70e874211f410e0e43c6d058f0ac1d2c0d`. Cleanup remediation/regression and final
-automated revision: `cc708d4019949ecc71e9a4b9417320e7a487c5e8`. That second commit
+`9cbf1c70e874211f410e0e43c6d058f0ac1d2c0d`. Cleanup remediation/regression and the
+developer's earlier automated revision: `cc708d4019949ecc71e9a4b9417320e7a487c5e8`. That second commit
 changes only the encrypted test cleanup entry point and its regression; production
 rendering is identical. Subsequent report-only changes do not alter code/tests.
 Automated fixtures, actual Matrix outcomes and coordinator follow-up are recorded
@@ -22,9 +22,15 @@ full PR base diff, with the four bibliography entries separate. It records tool
 ID isolation, rejected-model cleanup, constructor guards, card rollover/cleanup
 and cleaned-empty legacy thought fixes, regression evidence and explicit qualifications. Its validation
 applies to those audit changes; earlier automated/live results below retain their
-original revisions. No new complete live Matrix or real Pi pass is claimed.
+original revisions. The audit remediation/code-test revision is
+`d553581be53b53f68ccfce78e8ab61442f48383b`. Independent coordinator review verified
+the exact 56-row source mapping (32 passes, 10 fixed, 14 qualified) and reran
+`timeout --kill-after=10s 240s npm run check`: **595 tests passed**, zero failures,
+cancellations or skips; about 103 seconds wall / 89.372261403 seconds tests.
+Both slow HTTPS subprocess cases passed. Later report-only edits do not change
+those tested sources. No new complete live Matrix or real Pi pass is claimed.
 
-## Coordinator review
+## Earlier coordinator review
 
 Independent review reproduced a whitespace-only thought regression: an identified
 blank thought reserved a card entry and timer, reducing tool capacity even though

@@ -15,9 +15,10 @@ that report and its verification results remain historical.
 - Reviewed feature revision: `e3d6626df064c90a6721cca369fbb57d826f438a`.
 - PR base and merge base: `93ba97150f43a14539f910dab09a3d099a0dd40c`
   (`origin/main` as locally recorded for this audit).
-- Remediation/review revision: `__AUDIT_COMMIT__` on
-  `aa-developer-itemized-code-audit-pr-28-collectors`; coordinator will pin the
-  final published commit after independent review/integration.
+- Audited remediation/code-test revision:
+  `d553581be53b53f68ccfce78e8ab61442f48383b`, integrated into
+  `feat/unified-message-rendering`. Subsequent report-only edits pin revisions
+  and record independent coordinator validation; they do not change code/tests.
 - Read all 58 PR-changed paths against that base, including removed batch code
   and tests; inspected surrounding normalization, Markdown, size/envelope,
   routing, delivery and lifecycle interfaces. Source/tests cover ACP forwarding,
@@ -281,4 +282,26 @@ live pass at this audit revision, a live alternating thought/text case, or real 
 adapter support. Earlier four-case results describe earlier pre-refactor code.
 Automated encrypted integration uses modeled crypto; slow HTTPS uses real SDK
 subprocesses against a local protocol fixture. No credentials/devices/production
-services were changed, and this agent did not integrate, push or publish PR content.
+services were changed, and the audit developer did not integrate, push or publish
+PR content.
+
+## Independent coordinator validation
+
+The coordinator reviewed the production/test diff and integrated the agent's
+`d553581be53b53f68ccfce78e8ab61442f48383b` into the feature branch only. Independent
+reconciliation against the blob-matched CODE.md confirmed all **56 rows**, exact
+wording/order/hierarchy and four separate bibliography entries. The validation
+script also checked **47 local links across 12 changed Markdown files**, supported
+specification metadata and links from both current guides. The SVGs are unchanged
+from the previously validated/rendered implementation diagrams.
+
+An independent `timeout --kill-after=10s 240s npm run check` on the integrated code
+passed formatting, lint, typecheck/build and **595 tests**, zero failures,
+cancellations or skips. Wall time was about **103 seconds**; test duration was
+**89.372261403 seconds**. Included real-SDK slow HTTPS room/thread cases passed
+in **59.838845155 / 29.438042449 seconds**. No code/test changes were needed after
+review; subsequent edits only pin this report's revision and record results.
+
+No new live Matrix or real Pi pass is claimed. The 14 qualified assessments remain
+explicit limitations/preferences, not converted into unconditional passes. The PR
+is updated for review; no default-branch merge or deployment is authorized.
