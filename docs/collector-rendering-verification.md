@@ -5,12 +5,43 @@ Chad's Agent
 Current evidence for the collector refactor in PR #28. The
 [earlier report](unified-message-rendering-verification.md) and
 [earlier CODE.md review](pr-28-code-review.md) are historical and describe their
-named pre-refactor revisions. Rendering and actual functional revision:
+named pre-refactor revisions. The developer's original rendering and actual
+functional revision:
 `9cbf1c70e874211f410e0e43c6d058f0ac1d2c0d`. Cleanup remediation/regression and final
 automated revision: `cc708d4019949ecc71e9a4b9417320e7a487c5e8`. That second commit
 changes only the encrypted test cleanup entry point and its regression; production
 rendering is identical. Subsequent report-only changes do not alter code/tests.
-Automated fixtures and actual Matrix outcomes are recorded separately.
+Automated fixtures, actual Matrix outcomes and coordinator follow-up are recorded
+separately.
+
+## Coordinator review
+
+Independent review reproduced a whitespace-only thought regression: an identified
+blank thought reserved a card entry and timer, reducing tool capacity even though
+the previous renderer ignored that initial blank thought. Production/test revision
+`5559a6dde6b78000767389a9a8c5df791a9c6f99` restores filtering before reservation;
+spacing after a meaningful thought still goes through the shared collector.
+A regression checks retained entries/cards/timers, two-tool capacity and reset of
+the identified-thought flag on the next response.
+
+The coordinator independently repeated the developer's complete 589-test suite
+before that correction. Afterward, the scoped session-output/text/card suites
+passed **16 tests**, zero failures/skips (77.723291 ms test duration), with a
+seven-second per-test and 30-second process timeout.
+
+The final independent `timeout --kill-after=10s 240s npm run check` at `5559a6d`
+passed formatting, lint, typecheck/build and **590 tests**, zero failures,
+cancellations or skips. It completed in about **104 seconds** wall time
+(89.484130229 seconds test duration). Included real-SDK slow HTTPS cases passed
+in 59.918441609 seconds (room) and 29.469779043 seconds (thread). Subsequent edits
+only record evidence and normalize specification metadata; code/tests stay fixed.
+
+The actual Matrix passes below remain tied to `9cbf1c7`, before this small
+production correction; they are not claimed as fresh live results for `5559a6d`.
+The correction restores prior whitespace-only filtering, but was not rerun on a
+real Matrix homeserver. Four SVGs were independently XML-validated, rendered and
+visually reviewed. Specification front matter uses the supported `final` status;
+no additional implementation behavior is introduced by those documentation edits.
 
 ## Acceptance coverage
 
@@ -57,7 +88,7 @@ is deliberate bounded streaming state; publication records are readonly. No know
 CODE.md issue remains. Existing bridge prompt/ID-less compatibility remains outside
 the identified collector path.
 
-## Automated evidence
+## Developer automated evidence
 
 Linux, Node 26.11.1, npm 12.2.1, pinned Matrix SDK 42.2.0 and ACP SDK 1.3.0.
 The bounded complete command was:
