@@ -90,11 +90,12 @@ A dirty collector must request publication on:
 - New unpublished text reaching the byte threshold, subject to existing pacing.
 - The quiet period expiring after its latest delta, even if no further input arrives.
 - The maximum interval expiring from its first unpublished delta, even during continuous output.
-- An explicit `flush()` or `finish(id)`, including an ID transition.
+- An explicit `flush(id)` or `finish(id)`, including an ID transition.
 
 Here the timeout means the maximum publication interval, not a turn deadline or
-proof that the text ended. `flush()` publishes progress; `finish(id)` publishes
-any remainder and closes that identity. Neither quiet periods, prompt completion
+proof that the text ended. A collector's `flush(id)` emits that ID's cumulative
+content and keeps the identity open. Its `finish(id)` first flushes any remainder,
+then emits the finish indication and closes that identity. Neither quiet periods, prompt completion
 nor switching between thought and message output may finish an identified response.
 Whitespace within an existing thought must remain part of its accumulated text.
 
@@ -181,9 +182,16 @@ Each rendered-output emitter must expose an ordered stream with these conceptual
 records; concrete type/function names are implementation choices:
 
 ```text
-snapshot(id, renderedParts)  # cumulative latest content for this logical output
-finish(id)                 # no further snapshots for this ID on this emitter
+flush(id, renderedParts)  # cumulative latest content; keep this identity open
+finish(id)               # no further content for this ID on this emitter
 ```
+
+These are the only two downstream operations. A snapshot describes the cumulative
+payload of `flush`, not an additional method. Collectors attach their accumulated
+content when emitting a flush; renderers preserve the operation and ID while
+converting its payload. The sender receives rendered content, not a bare request
+to flush state it does not own. On receiving finish, it drains prior flushes and
+releases the mapping; it does not reconstruct or accumulate content.
 
 The Matrix sender must scope mappings to each emitter subscription, not a global
 raw-ID map or a required message/thought discriminator. The subscription binds the

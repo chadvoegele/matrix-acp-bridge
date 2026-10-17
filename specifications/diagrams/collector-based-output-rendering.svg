@@ -98,7 +98,7 @@
 
   <path d="M 220 715 V 975 H 500 V 1030" class="flow"/>
   <rect x="60" y="847" width="320" height="58" fill="#ffffff"/>
-  <text x="220" y="870" text-anchor="middle" class="code">snapshot(id, parts)</text>
+  <text x="220" y="870" text-anchor="middle" class="code">flush(id, parts)</text>
   <text x="220" y="895" text-anchor="middle" class="code">finish(id)</text>
   <path d="M 870 930 V 975 H 780 V 1030" class="flow"/>
   <text x="1015" y="962" text-anchor="middle" class="small">Same protocol; separate emitter</text>
@@ -114,6 +114,6 @@
   <text x="640" y="1254" text-anchor="middle" class="name">MatrixDelivery + Matrix adapter / SDK</text>
   <text x="640" y="1283" text-anchor="middle" class="body">Existing retries, room/thread routes and encryption.</text>
 
-  <text x="40" y="1340" class="body">snapshot = replace with the latest complete content. finish = deliver the remainder, then retire this ID.</text>
+  <text x="40" y="1340" class="body">flush(id, content) = publish cumulative content. finish(id) = no more content; retire after pending delivery.</text>
   <text x="40" y="1373" class="small">No collector owns Matrix event IDs. A new card does not finish old cards; a thought/text type change does not end the response.</text>
 </svg>
