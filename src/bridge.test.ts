@@ -1821,6 +1821,7 @@ void test("streamed thought paragraphs stay separate and unbolded through Matrix
     kind: "agent_thought_chunk",
     text: "**Second heading**",
   });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Second heading")));
   const current = matrix.html.at(-1);
   assert.equal(current?.body, "💭 First heading\n\n💭 Second heading");
@@ -1838,7 +1839,7 @@ void test("streamed thought paragraphs stay separate and unbolded through Matrix
   await bridge.stop();
 });
 
-void test("agent text renders complete Markdown once when its message closes", async () => {
+void test("agent text renders complete Markdown at its own quiet flush", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -1874,6 +1875,7 @@ void test("agent text renders complete Markdown once when its message closes", a
   await flush();
   assert.equal(matrix.html.length, 0);
   acp.emit({ sessionId, kind: "agent_thought_chunk", text: "A new thought" });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body === `**Wild${continuation}`));
   const latest = matrix.html.find((message) => message.body === `**Wild${continuation}`);
   assert.equal(latest?.targetEventId, undefined);
@@ -1893,7 +1895,7 @@ void test("agent text renders complete Markdown once when its message closes", a
   await bridge.stop();
 });
 
-void test("tool and thought flush text before activity while distinct IDs retire blocks", async () => {
+void test("ID-less boundaries retain compatibility while identified text and thoughts flush independently", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -1951,6 +1953,7 @@ void test("tool and thought flush text before activity while distinct IDs retire
   await flush();
   assert.equal(matrix.html.filter((message) => message.body === "After tool").length, 0);
   acp.emit({ sessionId, kind: "agent_thought_chunk", text: "Thinking" });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body === "After tool"));
   const thoughtIndex = matrix.html.findIndex((message) => message.body.includes("Thinking"));
   const textIndex = matrix.html.findIndex((message) => message.body === "After tool");
@@ -2026,9 +2029,10 @@ void test("live mcpScript activity includes its ACP code input on send and resul
     sessionId,
     kind: "tool_call_update",
     toolCallId: "script",
-    status: "completed",
+    status: "in_progress",
     content: [{ type: "content", text: '{"probe":"done"}' }],
   });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body.includes("done")));
   assert.match(matrix.html.at(-1)?.formattedBody ?? "", /<pre><code>return \{ probe: &#39;&lt;sample&gt;&#39;/);
   assert.match(
@@ -2226,6 +2230,7 @@ void test("agent text collapses the latest activity after its first expanded sen
     messageId: "next",
     text: "newest",
   });
+  clock.advanceBy(750);
   await waitFor(
     () =>
       matrix.html.some((message) => message.body.includes("newest")) &&
@@ -2277,6 +2282,7 @@ void test("rapid rollover and agent text never send a new batch already collapse
     messageId: "next",
     text: "newest",
   });
+  clock.advanceBy(750);
   await waitFor(
     () =>
       matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")) &&
@@ -2434,6 +2440,7 @@ void test("oversized activity truncates detail and rolls over before the encoded
     messageId: "two",
     text: "second thought",
   });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body.includes("second thought")));
   assert.equal(
     matrix.html.some((message) => message.body.includes("(truncated)")),
@@ -4526,6 +4533,7 @@ void test("steering retains original text/activity collector and typing while in
     status: "pending",
     rawInput: { path: "/tmp/original" },
   });
+  clock.advanceBy(750);
   await flush();
   assert.ok(matrix.html.some((message) => message.body === "before after"));
   assert.ok(matrix.html.some((message) => message.body.includes("Read(/tmp/original)")));
@@ -4845,17 +4853,23 @@ void test("an empty identified transition flushes prior text without publishing 
   assert.equal(f.clock.pendingTimerCount, 0);
 });
 
-void test("early tool announcement flushes identified text without retiring its event mapping", async () => {
+void test("early tool publishes independently and later text keeps its original mapping", async () => {
   const f = await createIdentifiedFixture();
   f.text("before ");
   f.acp.emit({ sessionId: f.sessionId, kind: "tool_call", toolCallId: "tool", title: "read", status: "pending" });
-  await waitFor(() => f.matrix.html.length === 2);
-  assert.equal(f.matrix.html[0]?.body, "before ");
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.match(f.matrix.html[0]?.body ?? "", /read/u);
+  assert.equal(
+    f.matrix.html.some((message) => message.body === "before "),
+    false,
+  );
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.some((message) => message.body === "before "));
   f.text("after");
   f.clock.advanceBy(750);
   await waitFor(() => f.matrix.html.some((message) => message.body === "before after"));
   const edit = f.matrix.html.find((message) => message.body === "before after");
-  assert.equal(edit?.targetEventId, "$live-1:example.org");
+  assert.equal(edit?.targetEventId, "$live-2:example.org");
   f.finish();
   await f.completion;
   await f.bridge.stop();
@@ -5108,6 +5122,7 @@ void test("activity capacity failure reports configuration and recovery steps wi
 void test("thought grouping resumes after identified text without whitespace or tool updates flushing text", async () => {
   const f = await createIdentifiedFixture();
   f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "first thought" });
+  f.clock.advanceBy(750);
   await waitFor(() => f.matrix.html.length === 1);
   f.text("answer");
   f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "  " });
@@ -5118,10 +5133,11 @@ void test("thought grouping resumes after identified text without whitespace or 
     false,
   );
   f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "second thought" });
+  f.clock.advanceBy(750);
   await waitFor(() => f.matrix.html.some((message) => message.body.includes("second thought")));
   const textIndex = f.matrix.html.findIndex((message) => message.body === "answer");
   const thoughtIndex = f.matrix.html.findIndex((message) => message.body.includes("second thought"));
-  assert.ok(textIndex !== -1 && thoughtIndex > textIndex);
+  assert.ok(textIndex !== -1 && thoughtIndex !== -1);
   assert.equal(f.matrix.html[thoughtIndex]?.body.includes("first thought"), false);
   f.finish();
   await f.completion;

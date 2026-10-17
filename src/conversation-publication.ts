@@ -45,7 +45,7 @@ export class ConversationPublication {
       return true;
     }
     if (this.#pending.length >= this.#maximumPending) {
-      this.#fail("capacity");
+      this.fail("capacity");
       return false;
     }
     this.#pending.push({ key, operation });
@@ -83,14 +83,15 @@ export class ConversationPublication {
           await publication.operation();
         }
       } catch {
-        this.#fail("delivery");
+        this.fail("delivery");
       } finally {
         this.#running = undefined;
       }
     });
   }
 
-  #fail(reason: PublicationFailure): void {
+  fail(reason: PublicationFailure): void {
+    if (this.#stopped) return;
     this.stop();
     this.#onFailure(reason);
   }

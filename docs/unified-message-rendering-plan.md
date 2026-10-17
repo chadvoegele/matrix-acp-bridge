@@ -1,4 +1,6 @@
-# Unified message rendering implementation plan
+# Historical unified message rendering implementation plan
+
+This completed initial plan predates the collector refactor. See the [current collector evidence](collector-rendering-verification.md).
 
 Implement `specifications/unified-message-rendering.md` on `feat/unified-message-rendering`, leaving main unchanged until review.
 

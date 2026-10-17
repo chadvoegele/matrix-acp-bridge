@@ -1,5 +1,5 @@
 +++
-status = "draft"
+status = "implemented"
 created = 2026-10-17
 last_update = 2026-10-17
 +++
@@ -10,8 +10,8 @@ last_update = 2026-10-17
 
 Give streamed messages and thoughts the same accumulation and flush behavior,
 keep tool/card state separate from presentation, and make the Matrix sender the
-sole owner of logical-ID-to-Matrix-event mappings. This design is for the next
-rendering refactor in PR #28; adding this document does not implement it.
+sole owner of logical-ID-to-Matrix-event mappings. This design is implemented on the PR #28 feature branch. See the
+[current verification evidence](../docs/collector-rendering-verification.md) for tested revisions and limits.
 
 Chad's Agent
 
@@ -48,9 +48,9 @@ remain sequential under the existing adapter contract.
 
 ## Design overview
 
-![Proposed collectors, shared Markdown rendering, activity composition and sender-owned identity](diagrams/collector-based-output-rendering.svg)
+![Implemented collectors, shared Markdown rendering, activity composition and sender-owned identity](diagrams/collector-based-output-rendering.svg)
 
-The diagram describes the proposal, not the current implementation. Collectors
+The diagram describes the implementation. Collectors
 hold domain state, renderers produce safe plain-text/HTML payloads, and the sender
 owns publication identity. Each emitter subscription has its own ID namespace.
 

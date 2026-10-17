@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { AcpToolCallUpdate } from "./acp-client.js";
-import { AcpActivityModel } from "./acp-activity.js";
+import { AcpToolModel } from "./acp-activity.js";
 import { renderAcpActivity } from "./acp-activity-rendering.js";
 
 function tool(overrides: Partial<AcpToolCallUpdate> = {}): AcpToolCallUpdate {
@@ -26,104 +26,24 @@ function update(overrides: Partial<AcpToolCallUpdate> = {}): AcpToolCallUpdate {
   };
 }
 
-function firstTool(model: AcpActivityModel) {
+function firstTool(model: AcpToolModel) {
   const event = model.events[0];
   assert.ok(event && event.type === "tool");
   return event;
 }
 
-void test("thought runs ignore spacing, use IDs, and close at agent-message and tool boundaries", () => {
-  const model = new AcpActivityModel();
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "**Plan**",
-  });
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "\n\n",
-  });
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: " next",
-  });
-  assert.equal(model.events.length, 1);
-  assert.equal(renderAcpActivity(model.events[0]!).formattedBody, "<p>💭 Plan</p>\n<p>💭 next</p>");
-  model.accept({
-    sessionId: "session",
-    kind: "agent_message_chunk",
-    text: "Hi",
-  });
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "second",
-    messageId: "a",
-  });
-  model.accept(tool());
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "third",
-    messageId: "b",
-  });
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "!",
-    messageId: "a",
-  });
-  assert.equal(model.events.length, 4);
-  assert.equal(renderAcpActivity(model.events[1]!).body, "💭 second!");
-  model.close();
-  assert.equal(
-    model.accept({
-      sessionId: "session",
-      kind: "agent_thought_chunk",
-      text: "late",
-    }),
-    undefined,
-  );
-  assert.equal(model.events.length, 0);
-});
-
-void test("one streamed thought retains paragraph breaks and unbolds heading-like paragraphs", () => {
-  const model = new AcpActivityModel();
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "**First heading**",
-  });
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "\n\n",
-  });
-  model.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
-    text: "**Second heading**",
-  });
-  assert.equal(model.events.length, 1);
-  const rendered = renderAcpActivity(model.events[0]!);
-  assert.equal(rendered.body, "💭 First heading\n\n💭 Second heading");
-  assert.equal(rendered.formattedBody, "<p>💭 First heading</p>\n<p>💭 Second heading</p>");
-  const single = new AcpActivityModel();
-  single.accept({
-    sessionId: "session",
-    kind: "agent_thought_chunk",
+void test("thought rendering preserves markers, spacing and heading normalization", () => {
+  const rendered = renderAcpActivity({
+    type: "thought",
     text: "**First heading**\n\n**Second <heading>**",
+    cut: false,
   });
-  assert.equal(
-    renderAcpActivity(single.events[0]!).formattedBody,
-    "<p>💭 First heading</p>\n<p>💭 Second &lt;heading&gt;</p>",
-  );
+  assert.equal(rendered.body, "💭 First heading\n\n💭 Second <heading>");
+  assert.equal(rendered.formattedBody, "<p>💭 First heading</p>\n<p>💭 Second &lt;heading&gt;</p>");
 });
 
 void test("mcpScript shows bounded source like an Execute command alongside its result", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   const source = "const tag = '<sample>';\nreturn { answer: 5 };";
   model.accept(tool({ title: "mcpScript", toolKind: "other", rawInput: { code: source } }));
   const pending = renderAcpActivity(firstTool(model));
@@ -147,7 +67,7 @@ void test("mcpScript shows bounded source like an Execute command alongside its 
   );
   assert.match(completed.body, /Script:\nconst tag = '<sample>';\nreturn \{ answer: 5 \};\n\{"answer":5\}/);
 
-  const long = new AcpActivityModel();
+  const long = new AcpToolModel();
   long.accept(
     tool({
       title: "mcpScript",
@@ -161,7 +81,7 @@ void test("mcpScript shows bounded source like an Execute command alongside its 
 });
 
 void test("multiline tool results indent the entire result outside escaped code", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(tool({ rawInput: { path: "/tmp/example" } }));
   model.accept(
     update({
@@ -192,7 +112,7 @@ void test("multiline tool results indent the entire result outside escaped code"
 });
 
 void test("mcpScript keeps source disclosure separate from an indented result", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(
     tool({
       title: "mcpScript",
@@ -222,7 +142,7 @@ void test("mcpScript keeps source disclosure separate from an indented result", 
 });
 
 void test("read status progresses with one rail, content takes priority over rawOutput", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(tool({ rawInput: { path: "/tmp/a" } }));
   const event = firstTool(model);
   assert.match(renderAcpActivity(event).formattedBody, /#808080.*Read\(\/tmp\/a\)/);
@@ -251,7 +171,7 @@ void test("read status progresses with one rail, content takes priority over raw
 });
 
 void test("write and edit show returned full-file text with colored absolute line gutters", () => {
-  const write = new AcpActivityModel();
+  const write = new AcpToolModel();
   write.accept(
     tool({
       title: "write",
@@ -277,7 +197,7 @@ void test("write and edit show returned full-file text with colored absolute lin
   assert.doesNotMatch(renderedWrite.body, /ignored/);
   assert.match(renderedWrite.formattedBody, /#008000">\+<\/span><span data-mx-color="#000000">1 <\/span>/);
 
-  const edit = new AcpActivityModel();
+  const edit = new AcpToolModel();
   edit.accept(
     tool({
       title: "edit",
@@ -314,7 +234,7 @@ void test("write and edit show returned full-file text with colored absolute lin
 });
 
 void test("MCP search and named calls use ACP input rather than inventing a tool from result text", () => {
-  const search = new AcpActivityModel();
+  const search = new AcpToolModel();
   search.accept(
     tool({
       title: "mcp",
@@ -332,7 +252,7 @@ void test("MCP search and named calls use ACP input rather than inventing a tool
   assert.match(renderedSearch.body, /MCP\(search\)/);
   assert.doesNotMatch(renderedSearch.body, /MCP\(example_store\)/);
 
-  const invocation = new AcpActivityModel();
+  const invocation = new AcpToolModel();
   invocation.accept(
     tool({
       title: "mcp",
@@ -351,7 +271,7 @@ void test("MCP search and named calls use ACP input rather than inventing a tool
   assert.doesNotMatch(renderedCall.body, /private/);
   assert.match(renderedCall.formattedBody, /MCP\(example_recall\)/);
 
-  const description = new AcpActivityModel();
+  const description = new AcpToolModel();
   description.accept(
     tool({
       title: "mcp",
@@ -361,7 +281,7 @@ void test("MCP search and named calls use ACP input rather than inventing a tool
   );
   assert.match(renderAcpActivity(firstTool(description)).body, /MCP\(example_recall\)/);
 
-  const server = new AcpActivityModel();
+  const server = new AcpToolModel();
   server.accept(
     tool({
       title: "mcp__example",
@@ -371,7 +291,7 @@ void test("MCP search and named calls use ACP input rather than inventing a tool
   );
   assert.match(renderAcpActivity(firstTool(server)).body, /MCP\(example\/list\)/);
 
-  const unknown = new AcpActivityModel();
+  const unknown = new AcpToolModel();
   unknown.accept(
     tool({
       title: "mcp",
@@ -383,7 +303,7 @@ void test("MCP search and named calls use ACP input rather than inventing a tool
 });
 
 void test("terminal output streams a bounded recent tail and keeps status", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(
     tool({
       title: "cat -- file",
@@ -404,7 +324,7 @@ void test("terminal output streams a bounded recent tail and keeps status", () =
 });
 
 void test("long command and output have separate clickable summaries, exact caps, and escaped fallback", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(tool({ title: `echo ${"<&😀".repeat(600)}`, toolKind: "execute" }));
   model.accept(
     update({
@@ -425,7 +345,7 @@ void test("long command and output have separate clickable summaries, exact caps
   assert.match(rendered.formattedBody, /TAIL<\/code><\/pre>/);
   assert.equal(firstTool(model).terminalSmall, "");
 
-  const exact = new AcpActivityModel();
+  const exact = new AcpToolModel();
   exact.accept(tool({ rawInput: { path: "file" } }));
   exact.accept(update({ content: [{ type: "content", text: "a".repeat(256) }] }));
   assert.doesNotMatch(renderAcpActivity(firstTool(exact)).formattedBody, /<details>/);
@@ -437,14 +357,14 @@ void test("long command and output have separate clickable summaries, exact caps
 });
 
 void test("short multiline results need no disclosure", () => {
-  const read = new AcpActivityModel();
+  const read = new AcpToolModel();
   read.accept(tool());
   read.accept(update({ content: [{ type: "content", text: "one\ntwo\nthree\nfour" }] }));
   const renderedRead = renderAcpActivity(firstTool(read));
   assert.match(renderedRead.body, /one\ntwo\nthree\nfour$/);
   assert.doesNotMatch(renderedRead.formattedBody, /<details>/);
 
-  const terminal = new AcpActivityModel();
+  const terminal = new AcpToolModel();
   terminal.accept(tool({ title: "run", toolKind: "execute" }));
   terminal.accept(update({ terminalOutput: { data: "one\ntwo\nthree\nfour\nfive\n" } }));
   const renderedTerminal = renderAcpActivity(firstTool(terminal));
@@ -454,14 +374,14 @@ void test("short multiline results need no disclosure", () => {
 
 void test("result previews use a byte cap and retain the newest terminal bytes", () => {
   const text = `${"😀\n".repeat(60)}LATEST\n`;
-  const read = new AcpActivityModel();
+  const read = new AcpToolModel();
   read.accept(tool());
   read.accept(update({ content: [{ type: "content", text }] }));
   const readPreview = renderAcpActivity(firstTool(read)).body.split("\n").slice(1).join("\n");
   assert.equal(readPreview, "😀\n".repeat(51));
   assert.equal(Buffer.byteLength(readPreview, "utf8"), 255);
 
-  const terminal = new AcpActivityModel();
+  const terminal = new AcpToolModel();
   terminal.accept(tool({ title: "run", toolKind: "execute" }));
   terminal.accept(update({ terminalOutput: { data: text } }));
   const rendered = renderAcpActivity(firstTool(terminal));
@@ -473,7 +393,7 @@ void test("result previews use a byte cap and retain the newest terminal bytes",
 });
 
 void test("unknown shapes and malformed updates keep a safe readable fallback", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   assert.equal(model.accept(update({ toolCallId: "missing", status: "completed" })), undefined);
   model.accept(
     tool({
@@ -491,7 +411,7 @@ void test("unknown shapes and malformed updates keep a safe readable fallback", 
 });
 
 void test("Unicode command cutoffs and UTF-8 output boundaries are exact", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(tool({ title: "😀".repeat(40), toolKind: "execute" }));
   const event = firstTool(model);
   assert.doesNotMatch(renderAcpActivity(event).formattedBody, /<details>/);
@@ -507,7 +427,7 @@ void test("Unicode command cutoffs and UTF-8 output boundaries are exact", () =>
   model.accept(update({ title: "😀".repeat(513) }));
   assert.match(renderAcpActivity(event).body, /truncated/);
 
-  const read = new AcpActivityModel();
+  const read = new AcpToolModel();
   read.accept(tool());
   read.accept(update({ content: [{ type: "content", text: `${"a".repeat(255)}😀` }] }));
   const rendered = renderAcpActivity(firstTool(read));
@@ -517,7 +437,7 @@ void test("Unicode command cutoffs and UTF-8 output boundaries are exact", () =>
 });
 
 void test("streamed short lines and a large first chunk remain bounded", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(tool({ title: "run", toolKind: "execute" }));
   const event = firstTool(model);
   model.accept(update({ terminalOutput: { data: "x\n".repeat(50_000) } }));
@@ -530,7 +450,7 @@ void test("streamed short lines and a large first chunk remain bounded", () => {
 });
 
 void test("terminal head and tail fit together without clipping the final bytes", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(tool({ title: "run", toolKind: "execute" }));
   model.accept(
     update({
@@ -548,7 +468,7 @@ void test("terminal head and tail fit together without clipping the final bytes"
 });
 
 void test("pathological short diff lines fit the HTML message limit by shrinking detail first", () => {
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(
     tool({
       title: "write",

@@ -1,10 +1,17 @@
 +++
-status = "draft"
+status = "implemented"
 created = 2026-10-16
-last_update = 2026-10-16
+last_update = 2026-10-17
 +++
 
 # Unified solicited and unsolicited message rendering
+
+This records the first PR #28 design. Its collection, mapping ownership, thought
+formatting/timing and strict text-before-activity rules are superseded by
+[Collector-based output rendering](collector-based-output-rendering.md).
+The diagram below illustrates that original design; use the
+[current component map](../docs/unified-rendering-architecture.md) for implementation.
+Routing, compatibility, delivery and resource requirements still apply.
 
 ## Purpose
 
@@ -12,7 +19,7 @@ Display agent messages in Matrix through one session-scoped rendering path, whet
 
 ## Context
 
-The bridge currently collects output within an active prompt. An extension can trigger an unsolicited turn after that prompt completes; its text still arrives through ACP `session/update`, but no active prompt collector exists to display it.
+Before PR #28, the bridge collected output within an active prompt. An extension can trigger an unsolicited turn after that prompt completes; its text still arrives through ACP `session/update`, but no active prompt collector exists to display it.
 
 This specification replaces the agent-text portion of **Eager Message Rendering** in [Verbose ACP output](verbose-acp-output.md): identified messages may be sent incrementally and edited rather than sent only once at inferred completion. Existing thought/tool presentation remains unchanged unless needed to preserve routing and ordering.
 

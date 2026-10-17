@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1400" viewBox="0 0 1280 1400" role="img" aria-labelledby="title description">
-  <title id="title">Proposed collector-based rendering: collection, rendering and Matrix identity</title>
+  <title id="title">Implemented collector-based rendering: collection, rendering and Matrix identity</title>
   <desc id="description">One ACP dispatcher feeds separate message and thought instances of a shared text collector, plus a multi-ID tool collector. Thoughts and tools feed the activity-card collector, which retains older cards for late updates and emits stable card IDs. Message text uses a shared safe Markdown renderer; an activity renderer uses that same converter for thought bodies and composes tool formatting and trusted collapsible HTML. Rendered snapshots and finish signals reach a Matrix sender with emitter-local ID mappings and the existing bounded publication queue. The sender reuses MatrixDelivery and releases mappings after final delivery.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#334155"/></marker>
@@ -19,15 +19,15 @@
     </style>
   </defs>
   <rect width="1280" height="1400" fill="#ffffff"/>
-  <text x="40" y="48" class="title">Proposed: collect state, render snapshots, send by logical ID</text>
-  <text x="40" y="82" class="subtitle">Draft design — not implemented here. First publication fixes placement; later updates edit in place.</text>
-  <rect x="40" y="108" width="21" height="21" rx="4" class="proposed"/><text x="71" y="125" class="small">Proposed component / responsibility</text>
+  <text x="40" y="48" class="title">Collect state, render snapshots, send by logical ID</text>
+  <text x="40" y="82" class="subtitle">Implemented in PR #28. First publication fixes placement; later updates edit in place.</text>
+  <rect x="40" y="108" width="21" height="21" rx="4" class="proposed"/><text x="71" y="125" class="small">Collector / renderer / sender</text>
   <rect x="450" y="108" width="21" height="21" rx="4" class="reused"/><text x="481" y="125" class="small">Existing boundary reused</text>
   <path d="M 790 119 H 835" class="flow"/><text x="850" y="125" class="small">Data / lifecycle</text>
   <path d="M 1040 119 H 1085" class="uses"/><text x="1100" y="125" class="small">Uses helper</text>
 
   <rect x="40" y="165" width="1200" height="100" rx="12" class="proposed"/>
-  <text x="640" y="199" text-anchor="middle" class="name">One ACP listener / dispatcher</text>
+  <text x="640" y="199" text-anchor="middle" class="name">SessionOutput.accept(update)</text>
   <text x="640" y="233" text-anchor="middle" class="body">Dispatch by update type into session-scoped collectors; keep authorization, replay and lifecycle guards.</text>
   <path d="M 220 265 V 340" class="flow"/>
   <rect x="75" y="284" width="290" height="30" fill="#ffffff"/>
@@ -42,52 +42,52 @@
 
   <rect x="50" y="340" width="340" height="155" rx="12" class="proposed"/>
   <text x="70" y="370" class="tag">SHARED TEXTCOLLECTOR · 1</text>
-  <text x="70" y="402" class="name">Message collector</text>
+  <text x="70" y="402" class="name">TextCollector: messages</text>
   <text x="70" y="434" class="body">Append text by response ID.</text>
-  <text x="70" y="461" class="body">Bytes / quiet / max interval.</text>
+  <text x="70" y="461" class="body">PublicationScheduler pacing.</text>
   <text x="70" y="484" class="small">Flush ≠ finish. New ID finishes old.</text>
 
   <rect x="470" y="340" width="340" height="155" rx="12" class="proposed"/>
   <text x="490" y="370" class="tag">SHARED TEXTCOLLECTOR · 2</text>
-  <text x="490" y="402" class="name">Thought collector</text>
+  <text x="490" y="402" class="name">TextCollector: thoughts</text>
   <text x="490" y="434" class="body">Same accumulation / flush rules.</text>
   <text x="490" y="461" class="body">Keep thought ID on snapshots.</text>
   <text x="490" y="484" class="small">Thought/text switches do not finish.</text>
 
   <rect x="890" y="340" width="340" height="155" rx="12" class="proposed"/>
   <text x="910" y="370" class="tag">MULTIPLE CONCURRENT IDS</text>
-  <text x="910" y="402" class="name">Tool collector</text>
+  <text x="910" y="402" class="name">ToolCollector</text>
   <text x="910" y="434" class="body">Apply patches / result updates.</text>
-  <text x="910" y="461" class="body">Share scheduling, not text append.</text>
-  <text x="910" y="484" class="small">Terminal → final snapshot, then end.</text>
+  <text x="910" y="461" class="body">PublicationScheduler pacing.</text>
+  <text x="910" y="484" class="small">Terminal → final flush, then finish.</text>
 
   <path d="M 220 495 V 585" class="flow"/>
   <rect x="65" y="518" width="310" height="36" fill="#ffffff"/>
-  <text x="220" y="543" text-anchor="middle" class="code">id + text snapshot / finish</text>
+  <text x="220" y="543" text-anchor="middle" class="code">flush(id, text) / finish(id)</text>
   <path d="M 640 495 V 552 H 760 V 585" class="flow"/>
   <rect x="470" y="510" width="290" height="30" fill="#ffffff"/>
-  <text x="610" y="532" text-anchor="middle" class="small">thoughtId + snapshot / finish</text>
+  <text x="610" y="532" text-anchor="middle" class="small">thoughtId + flush / finish</text>
   <path d="M 1060 495 V 552 H 980 V 585" class="flow"/>
   <rect x="915" y="510" width="310" height="30" fill="#ffffff"/>
-  <text x="1070" y="532" text-anchor="middle" class="small">toolCallId + snapshot / end</text>
+  <text x="1070" y="532" text-anchor="middle" class="small">toolCallId + flush / finish</text>
 
   <rect x="50" y="585" width="340" height="130" rx="12" class="reused"/>
   <text x="70" y="615" class="tag">SHARED SAFE CONVERTER</text>
-  <text x="70" y="647" class="name">Markdown renderer</text>
-  <text x="70" y="679" class="body">Preserve ID; produce text + HTML.</text>
-  <text x="70" y="703" class="small">Messages + thought bodies.</text>
+  <text x="70" y="647" class="name">Safe Markdown rendering</text>
+  <text x="70" y="679" class="small">renderMatrixTextChunks: messages</text>
+  <text x="70" y="703" class="small">renderMatrixText: shared converter</text>
 
   <rect x="650" y="585" width="440" height="130" rx="12" class="proposed"/>
-  <text x="675" y="617" class="name">Activity-card collector</text>
+  <text x="675" y="617" class="name">ActivityCardCollector</text>
   <text x="675" y="648" class="body">Stable card IDs; thought/tool → card lookup.</text>
   <text x="675" y="677" class="body">Retain old cards for late entry updates.</text>
   <text x="675" y="703" class="small">Finish only when closed + all entries finished.</text>
   <path d="M 870 715 V 800" class="flow"/>
   <rect x="665" y="738" width="410" height="35" fill="#ffffff"/>
-  <text x="870" y="762" text-anchor="middle" class="code">cardId + snapshot / finish</text>
+  <text x="870" y="762" text-anchor="middle" class="code">cardId + flush / finish</text>
 
   <rect x="650" y="800" width="440" height="130" rx="12" class="proposed"/>
-  <text x="675" y="833" class="name">Activity renderer</text>
+  <text x="675" y="833" class="name">renderActivityCard</text>
   <text x="675" y="865" class="body">Thought Markdown + escaped tool output.</text>
   <text x="675" y="893" class="body">Compose trusted collapsible HTML.</text>
   <text x="675" y="917" class="small">Plain-text fallback; preserve ID and finish.</text>
@@ -104,9 +104,9 @@
   <text x="1015" y="962" text-anchor="middle" class="small">Same protocol; separate emitter</text>
 
   <rect x="380" y="1030" width="520" height="120" rx="12" class="proposed"/>
-  <text x="640" y="1063" text-anchor="middle" class="name">Matrix sender</text>
+  <text x="640" y="1063" text-anchor="middle" class="name">MatrixOutputSender × 2</text>
   <text x="640" y="1095" text-anchor="middle" class="body">Per-emitter: live logical IDs → original event IDs.</text>
-  <text x="640" y="1123" text-anchor="middle" class="body">Bounded ordered queue; final delivery → release ID.</text>
+  <text x="640" y="1123" text-anchor="middle" class="body">ConversationPublication → delivery → release ID.</text>
   <path d="M 640 1150 V 1220" class="flow"/>
   <rect x="450" y="1168" width="380" height="30" fill="#ffffff"/>
   <text x="640" y="1189" text-anchor="middle" class="code">sendLive(MatrixHtmlMessage)</text>

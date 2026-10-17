@@ -2748,13 +2748,21 @@ void test("post-prompt parallel tools and same-ID text stay isolated across SDK 
         const calls = rig.peer.prompts;
         assert.notEqual(calls[0]!.sessionId, calls[1]!.sessionId);
         for (const [index, call] of calls.entries()) {
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "agent_thought_chunk",
+            messageId: "shared-answer",
+            content: { type: "text", text: `plan-${index}` },
+          });
           call.update(`prefix-${index}`, "shared-answer");
           call.respond();
         }
         await waitFor(() => rig!.bridge.unresolvedPromptCount === 0, "both prompt responses");
         await flushMany();
         rig.clock.advanceBy(750);
-        await waitFor(() => rig!.matrixSdk.sent.length === 2, "two text originals");
+        await waitFor(
+          () => rig!.matrixSdk.sent.filter((sent) => String(sent.content.body).startsWith("prefix-")).length === 2,
+          "two text originals",
+        );
         for (const [index, call] of calls.entries()) {
           for (const toolCallId of ["shared-first", "shared-second"]) {
             rig.peer.notify(call.sessionId, {
@@ -2764,6 +2772,11 @@ void test("post-prompt parallel tools and same-ID text stay isolated across SDK 
               status: "in_progress",
             });
           }
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "agent_thought_chunk",
+            messageId: "shared-answer",
+            content: { type: "text", text: " **resumed**" },
+          });
           call.update(" after tools", "shared-answer");
           call.update(`next-${index}`, "shared-next");
         }
@@ -2799,10 +2812,25 @@ void test("post-prompt parallel tools and same-ID text stay isolated across SDK 
               (sent.content["m.new_content"] as { body?: string } | undefined)?.body === `prefix-${index} after tools`,
           );
           assert.equal((continuation?.content["m.relates_to"] as { event_id: string }).event_id, target);
+          const thoughtOriginal = rig.matrixSdk.sent.findIndex((sent) => sent.content.body === `💭 plan-${index}`);
+          assert.ok(thoughtOriginal !== -1);
+          const thoughtEdit: MatrixSendAttempt | undefined = rig.matrixSdk.sent.find(
+            (sent) =>
+              (sent.content["m.new_content"] as { body?: string } | undefined)?.body === `💭 plan-${index} **resumed**`,
+          );
+          assert.equal(
+            (thoughtEdit?.content["m.relates_to"] as { event_id?: string } | undefined)?.event_id,
+            `$sent-${thoughtOriginal + 1}:example.org`,
+          );
+          assert.match(
+            String((thoughtEdit?.content["m.new_content"] as { formatted_body?: string } | undefined)?.formatted_body),
+            /Past agent events.*<strong>resumed<\/strong>/su,
+          );
           const own: MatrixSendAttempt[] = rig.matrixSdk.sent.filter((sent) => {
             const content = (sent.content["m.new_content"] ?? sent.content) as { body: string };
             return (
               content.body.includes(`prefix-${index}`) ||
+              content.body.includes(`plan-${index}`) ||
               content.body === `next-${index}` ||
               content.body.includes(`tool-${index}-`)
             );

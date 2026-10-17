@@ -2,9 +2,8 @@ import { MatrixDelivery, type DeliveryOptions } from "./matrix-delivery.js";
 import { PromptPermits } from "./prompt-permits.js";
 import { createCancellationController } from "./cancellation.js";
 import { createHash, randomUUID } from "node:crypto";
-import { AgentTextBuffer } from "./agent-text-buffer.js";
+import { SessionOutput } from "./session-output.js";
 import { ConversationPublication } from "./conversation-publication.js";
-import { SessionActivity } from "./session-activity.js";
 import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
 import type { MatrixSafeHtml } from "./matrix-html.js";
 import { systemClock, clampTimerMilliseconds } from "./clock.js";
@@ -25,12 +24,7 @@ import {
 } from "./authorization.js";
 import { conversationIdentityForEvent, conversationKey, type ConversationIdentity } from "./conversation-identity.js";
 import { InMemorySessionStore } from "./session-store.js";
-import {
-  matrixHtmlContentBytes,
-  matrixHtmlEditContentBytes,
-  type MatrixHtmlBody,
-  type MatrixOutputRouting,
-} from "./matrix-message-content.js";
+import { matrixHtmlContentBytes, type MatrixHtmlBody, type MatrixOutputRouting } from "./matrix-message-content.js";
 import type { SessionStore } from "./session-store.js";
 import type { AcpClient, AcpOutcome, AcpSession, AcpSessionId, AcpUpdate } from "./acp-client.js";
 import {
@@ -161,8 +155,7 @@ interface ActiveRun {
 }
 
 interface SessionRendering {
-  readonly buffer: AgentTextBuffer;
-  readonly activity: SessionActivity;
+  readonly output: SessionOutput;
   readonly queue: ConversationPublication;
   warnedIdless: boolean;
 }
@@ -1418,28 +1411,23 @@ export class BridgeCoordinator {
         this.#maybeFinalizeStop();
       }
     };
-    const buffer = new AgentTextBuffer({
+    const output = new SessionOutput({
       settings: this.#config.matrix,
       maxOutputBytes: this.#config.limits.maxOutputBytes,
       maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
+      maxEventsPerCard: this.#config.limits.maxActivityEventsPerMessage,
+      maxRetainedEvents:
+        this.#config.limits.maxActivityEventsPerMessage * (this.#config.limits.maxQueuedTurnsPerConversation + 1),
       queue,
       routing,
       clock: this.#clock,
-      publish: (publication) => publish("text", publication, publication.targetEventId),
-    });
-    const activity = new SessionActivity({
-      queue,
-      limits: {
-        maxEvents: this.#config.limits.maxActivityEventsPerMessage,
-        maxMessageBytes: this.#config.limits.maxMatrixMessageBytes,
-        measure: (rendered) => matrixHtmlEditContentBytes({ ...rendered, ...routing }),
+      publish: (kind, publication) => publish(kind, publication, publication.targetEventId),
+      onAbandoned: (reason) => {
+        this.#reportRenderingAbandoned("activity", reason);
+        if (reason === "capacity") queue.stop();
       },
-      maxRetainedEvents:
-        this.#config.limits.maxActivityEventsPerMessage * (this.#config.limits.maxQueuedTurnsPerConversation + 1),
-      onAbandoned: (reason) => this.#reportRenderingAbandoned("activity", reason),
-      publish: (rendered, targetEventId) => publish("activity", rendered, targetEventId),
     });
-    const rendering = { buffer, activity, queue, warnedIdless: false };
+    const rendering = { output, queue, warnedIdless: false };
     this.#renderingBySession.set(sessionId, rendering);
     return rendering;
   }
@@ -1466,7 +1454,7 @@ export class BridgeCoordinator {
   #retireSessionRendering(sessionId: AcpSessionId): void {
     const rendering = this.#renderingBySession.get(sessionId);
     if (rendering === undefined) return;
-    if (rendering.buffer.hasPendingText) this.#diagnostic("warn", "agent-text-abandoned", { kind: "lifecycle" });
+    if (rendering.output.hasPendingText) this.#diagnostic("warn", "agent-text-abandoned", { kind: "lifecycle" });
     rendering.queue.stop();
     this.#renderingBySession.delete(sessionId);
   }
@@ -1978,8 +1966,7 @@ export class BridgeCoordinator {
         if (turn.resolveDrain !== undefined) this.#finishDrain(turn, { text: joinedGroups(turn.groups), fatal: false });
         this.#closeTextGroup(turn);
       }
-      rendering.activity.accept(update);
-      rendering.buffer.append(update.messageId, update.text);
+      rendering.output.accept(update);
       return;
     }
     if (rendering !== undefined && update.kind === "agent_message_chunk" && (turn === undefined || turn.closed)) {
@@ -1993,11 +1980,13 @@ export class BridgeCoordinator {
       rendering !== undefined &&
       (update.kind === "agent_thought_chunk" || update.kind === "tool_call" || update.kind === "tool_call_update")
     ) {
-      if (update.kind === "tool_call" || (update.kind === "agent_thought_chunk" && update.text.trim())) {
-        rendering.buffer.flush();
-        if (turn !== undefined && !turn.closed) this.#closeTextGroup(turn);
-      }
-      rendering.activity.accept(update);
+      if (
+        (update.kind === "tool_call" || (update.kind === "agent_thought_chunk" && update.text.trim())) &&
+        turn !== undefined &&
+        !turn.closed
+      )
+        this.#closeTextGroup(turn);
+      rendering.output.accept(update);
       return;
     }
     if (turn === undefined || turn.closed || turn.drainComplete || update.kind !== "agent_message_chunk") return;
@@ -2016,7 +2005,7 @@ export class BridgeCoordinator {
     ) {
       return;
     }
-    rendering?.activity.accept(update);
+    rendering?.output.accept(update);
     this.#appendText(turn, messageId, update.text);
     if (update.text.length > 0) {
       turn.hasText = true;

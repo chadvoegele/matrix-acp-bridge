@@ -1,6 +1,9 @@
 import type { AcpActivity, AcpToolActivity } from "./acp-activity.js";
 import { ACTIVITY_RESULT_DETAIL_BYTES, ACTIVITY_TITLE_DETAIL_BYTES, cleanActivityText } from "./acp-activity.js";
+import { OUTPUT_TRUNCATION_MARKER } from "./response-rendering.js";
 import { takeBytes } from "./bounded-text.js";
+import type { ActivityCard } from "./activity-card-collector.js";
+import { renderMatrixText } from "./matrix-text-rendering.js";
 import { escapeHtml } from "./html.js";
 
 export const ACTIVITY_RESULT_PREVIEW_BYTES = 256;
@@ -204,7 +207,11 @@ function resultFromContent(tool: AcpToolActivity): Output | undefined {
 /** Presents retained activity as Matrix plain text and HTML within the message budget. */
 export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): RenderedAcpActivity {
   if (event.type === "thought") {
-    const source = cleanActivityText(event.text);
+    const source = cleanActivityText(
+      event.cut && event.text.endsWith(OUTPUT_TRUNCATION_MARKER)
+        ? event.text.slice(0, -OUTPUT_TRUNCATION_MARKER.length)
+        : event.text,
+    );
     let budget = Math.min(ACTIVITY_RESULT_DETAIL_BYTES, maxHtmlBytes);
     for (;;) {
       const bounded = takeBytes(source, budget);
@@ -217,9 +224,8 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
       const formattedBody =
         paragraphs.length > 0
           ? paragraphs
-              .map(
-                (paragraph, index) =>
-                  `<p>💭 ${html(paragraph).replaceAll("&#10;", "<br>")}${index === paragraphs.length - 1 ? suffix : ""}</p>`,
+              .map((paragraph, index) =>
+                renderThoughtParagraph(paragraph + (index === paragraphs.length - 1 ? suffix : "")),
               )
               .join("\n")
           : `<p>💭${suffix}</p>`;
@@ -291,5 +297,30 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     else if (previewBytes > 16) previewBytes = Math.floor(previewBytes / 2);
     else if (detailBytes > 16) detailBytes = Math.floor(detailBytes / 2);
     else return compactTool(titleSummary, palette.label, maxHtmlBytes);
+  }
+}
+
+function renderThoughtParagraph(paragraph: string): string {
+  const safe = renderMatrixText(paragraph).formattedBody;
+  return safe.startsWith("<p>") ? safe.replace(/^<p>/u, "<p>💭 ") : `<p>💭</p>\n${safe}`;
+}
+
+/** Measure the complete card, including trusted wrappers and the caller's edit envelope. */
+export function renderActivityCard(
+  card: ActivityCard,
+  maxMessageBytes: number,
+  measure: (rendered: RenderedAcpActivity) => number,
+): RenderedAcpActivity {
+  const wrapperStart = card.collapsed ? `<details><summary>Past agent events (${card.events.length})</summary>` : "";
+  const wrapperEnd = card.collapsed ? "</details>" : "";
+  let budget = Math.max(64, Math.floor(maxMessageBytes / card.events.length));
+  for (;;) {
+    const entries = card.events.map((event) => renderAcpActivity(event, budget));
+    const body = entries.map((entry) => entry.body).join("\n");
+    const formattedBody = `${wrapperStart}${entries.map((entry) => entry.formattedBody).join("\n")}${wrapperEnd}`;
+    const rendered = { body, formattedBody };
+    if (measure(rendered) <= maxMessageBytes) return rendered;
+    if (budget <= 16) throw new RangeError("activity card exceeds Matrix event size");
+    budget = Math.max(16, Math.floor(budget * 0.7));
   }
 }

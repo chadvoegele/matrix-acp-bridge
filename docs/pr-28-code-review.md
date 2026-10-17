@@ -1,4 +1,6 @@
-# PR #28: guideline-by-guideline review
+# Historical PR #28 guideline-by-guideline review
+
+This audit applies to the pre-collector revision named below. See the [current collector evidence](collector-rendering-verification.md).
 
 Chad's Agent
 

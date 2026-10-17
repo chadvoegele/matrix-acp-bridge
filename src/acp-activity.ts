@@ -1,4 +1,4 @@
-import type { AcpToolCallUpdate, AcpToolContent, AcpUpdate } from "./acp-activity-update.js";
+import type { AcpToolCallUpdate, AcpToolContent } from "./acp-activity-update.js";
 import { isRecord, stringProperty } from "./object-validation.js";
 import { takeBytes } from "./bounded-text.js";
 
@@ -129,15 +129,11 @@ function rawFallback(value: AcpToolCallUpdate["rawOutput"]): BoundedText | undef
   return found ? { text, cut } : undefined;
 }
 
-/** Holds retained session activity. Tool updates change the original event object. */
-export class AcpActivityModel {
-  readonly events: AcpActivity[] = [];
+/** Applies bounded field-specific tool patches, independently of scheduling and cards. */
+export class AcpToolModel {
+  readonly events: AcpToolActivity[] = [];
 
   readonly #tools = new Map<string, AcpToolActivity>();
-
-  readonly #thoughts = new Map<string, AcpThoughtActivity>();
-
-  #lastThought: AcpThoughtActivity | undefined;
 
   #closed = false;
 
@@ -145,48 +141,18 @@ export class AcpActivityModel {
     this.#closed = true;
     this.events.length = 0;
     this.#tools.clear();
-    this.#thoughts.clear();
-    this.#lastThought = undefined;
   }
 
-  release(events: readonly AcpActivity[]): void {
+  release(events: readonly AcpToolActivity[]): void {
     for (const event of events) {
       const index = this.events.indexOf(event);
       if (index !== -1) this.events.splice(index, 1);
-      if (event.type === "tool" && event.toolCallId) this.#tools.delete(event.toolCallId);
-      if (event.type === "thought" && event.messageId) this.#thoughts.delete(event.messageId);
-      if (this.#lastThought === event) this.#lastThought = undefined;
+      if (event.toolCallId) this.#tools.delete(event.toolCallId);
     }
   }
 
-  accept(update: AcpUpdate): AcpActivity | undefined {
+  accept(update: AcpToolCallUpdate): AcpToolActivity | undefined {
     if (this.#closed) return undefined;
-    if (update.kind === "agent_message_chunk") {
-      if (update.text.trim()) this.#lastThought = undefined;
-      return undefined;
-    }
-    if (update.kind === "agent_thought_chunk") {
-      let event = update.messageId ? this.#thoughts.get(update.messageId) : this.#lastThought;
-      if (!update.text.trim() && !event) return undefined;
-      if (!event) {
-        event = {
-          type: "thought",
-          text: "",
-          cut: false,
-          ...(update.messageId ? { messageId: update.messageId } : {}),
-        };
-        this.events.push(event);
-        if (update.messageId) this.#thoughts.set(update.messageId, event);
-      }
-      const capacity = ACTIVITY_RESULT_DETAIL_BYTES - Buffer.byteLength(event.text, "utf8");
-      const bounded = takeBytes(cleanActivityText(update.text), Math.max(0, capacity));
-      event.text += bounded.text;
-      event.cut ||= bounded.cut || update.textCut === true;
-      this.#lastThought = event;
-      return event;
-    }
-    if (update.kind !== "tool_call" && update.kind !== "tool_call_update") return undefined;
-    this.#lastThought = undefined;
     let event = update.toolCallId ? this.#tools.get(update.toolCallId) : undefined;
     if (!event) {
       if (update.kind !== "tool_call") return undefined;

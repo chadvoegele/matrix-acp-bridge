@@ -1,11 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { AgentTextBuffer, type AgentTextPublication } from "./agent-text-buffer.js";
+import { TextCollector } from "./text-collector.js";
+import { MatrixOutputSender, type MatrixOutputPublication as AgentTextPublication } from "./matrix-output-sender.js";
+import { renderOutput } from "./output-sink.js";
+import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
+import { matrixHtmlEditContentBytes } from "./matrix-message-content.js";
+import type { AgentTextSettings } from "./config.js";
+import type { Clock } from "./clock.js";
+
 import { ConversationPublication, type PublicationFailure } from "./conversation-publication.js";
 import { matrixHtmlContentBytes, type MatrixOutputRouting } from "./matrix-message-content.js";
 import { OUTPUT_TRUNCATION_MARKER } from "./response-rendering.js";
 import { FakeClock } from "./test-support/fake-clock.js";
+
+function createTextPublication(options: {
+  settings: AgentTextSettings;
+  maxOutputBytes: number;
+  maxMatrixMessageBytes: number;
+  queue: ConversationPublication;
+  routing?: MatrixOutputRouting;
+  clock?: Clock;
+  publish: (publication: AgentTextPublication) => Promise<string | undefined>;
+}) {
+  const sender = new MatrixOutputSender(options);
+  const collector = new TextCollector({
+    ...options,
+    sink: renderOutput(
+      sender,
+      (content) =>
+        renderMatrixTextChunks(content.text, options.maxMatrixMessageBytes, (rendered) =>
+          matrixHtmlEditContentBytes({ ...rendered, ...options.routing }),
+        ),
+      () => options.queue.fail("delivery"),
+    ),
+  });
+  options.queue.onStop(() => collector.stop());
+  return collector;
+}
 
 function createFixture(
   options: {
@@ -19,7 +51,7 @@ function createFixture(
   const calls: AgentTextPublication[] = [];
   const failures: PublicationFailure[] = [];
   const queue = new ConversationPublication(options.capacity ?? 4, (reason) => failures.push(reason));
-  const buffer = new AgentTextBuffer({
+  const buffer = createTextPublication({
     settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
     maxOutputBytes: options.maxOutputBytes ?? 16_384,
     maxMatrixMessageBytes: options.maxMatrixMessageBytes ?? 2048,
@@ -111,7 +143,7 @@ void test("transitions and activity preserve order; activity does not retire the
   buffer.flush();
   await queue.waitForIdle();
   assert.deepEqual(
-    calls.map(({ messageId, body }) => [messageId, body]),
+    calls.map(({ id, body }) => [id, body]),
     [
       ["a", "before"],
       ["a", "before after tool"],
@@ -141,7 +173,7 @@ void test("slow sends coalesce edits, including final text before an identity tr
   const sending = createGate();
   const started = createGate();
   const slowCalls: AgentTextPublication[] = [];
-  const slow = new AgentTextBuffer({
+  const slow = createTextPublication({
     settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
     maxOutputBytes: 4096,
     maxMatrixMessageBytes: 2048,
@@ -233,7 +265,7 @@ void test("reset invalidates queued callbacks and independent sessions keep iden
   first.buffer.append("same", "discard");
   first.buffer.flush();
   first.buffer.append("same", " timer");
-  first.buffer.stop();
+  first.queue.stop();
   second.buffer.append("same", "deliver");
   second.clock.advanceBy(100);
   blocked.release();
@@ -247,7 +279,7 @@ void test("unrecoverable publication is observable and clears subsequent queued 
   const failures: PublicationFailure[] = [];
   const queue = new ConversationPublication(4, (reason) => failures.push(reason));
   const clock = new FakeClock();
-  const buffer = new AgentTextBuffer({
+  const buffer = createTextPublication({
     settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
     maxOutputBytes: 1024,
     maxMatrixMessageBytes: 2048,
@@ -273,7 +305,7 @@ void test("retired identities leave no historical mapping and repeated deltas al
     await queue.waitForIdle();
     assert.equal(queue.pendingCount, 0);
   }
-  buffer.append("0", "new live text");
+  buffer.append("final", "new live text");
   buffer.flush();
   await queue.waitForIdle();
   assert.equal(calls.length, 101);
@@ -325,14 +357,14 @@ void test("a new identity with an empty delta flushes preceding text without sen
   buffer.append("b", "");
   await queue.waitForIdle();
   assert.deepEqual(
-    calls.map(({ messageId, body }) => [messageId, body]),
+    calls.map(({ id, body }) => [id, body]),
     [["a", "preceding"]],
   );
   assert.equal(clock.pendingTimerCount, 0);
   buffer.append("b", "later");
   clock.advanceBy(100);
   await queue.waitForIdle();
-  assert.equal(calls[1]?.messageId, "b");
+  assert.equal(calls[1]?.id, "b");
   assert.equal(calls[1]?.body, "later");
   assert.equal(calls[1]?.targetEventId, undefined);
 });

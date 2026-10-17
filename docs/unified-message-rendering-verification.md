@@ -1,4 +1,6 @@
-# Unified rendering verification
+# Historical unified rendering verification
+
+These results apply only to the revisions named below, before the collector refactor. See the [current collector evidence](collector-rendering-verification.md).
 
 Chad's Agent audited the implementation against
 `specifications/unified-message-rendering.md`, the four-phase implementation plan,

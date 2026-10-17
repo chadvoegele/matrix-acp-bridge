@@ -2,74 +2,84 @@
 
 Chad's Agent
 
-PR #28 moves identified assistant output and tool activity from **prompt lifetime**
-to **session lifetime**. Prompt completion no longer ends rendering: the same
-session owners handle both solicited and unsolicited updates. Existing routing,
-Markdown rendering, Matrix delivery/retries and encryption remain the boundaries.
+Identified assistant messages, thoughts and tools share session lifetime, including
+output received after prompt completion. The collector refactor in PR #28 implements
+[collector-based output rendering](../specifications/collector-based-output-rendering.md).
 
 ## Overview
 
-![New session owners and their relationship to existing components](unified-rendering-overview.svg)
+![Session routing, collectors, renderers and sender subscriptions](unified-rendering-overview.svg)
 
-Blue components are new. Amber components already existed and change in this PR;
-slate components are reused. The session stores preserve room/thread routing,
-not rendered text or Matrix event mappings.
+One normalized ACP listener in `BridgeCoordinator` applies authorization, live
+session, loading/replay and lifecycle guards. It dispatches through
+`SessionOutput.accept(update)` without requiring an active prompt. Session stores
+preserve room/thread routes; rendered output and Matrix event mappings are ephemeral.
 
 ## Interfaces and data flow
 
-![Session renderer interfaces, queued work, publication callbacks and returned event IDs](unified-rendering-session.svg)
+![Cumulative flush and explicit finish through collection, rendering and delivery](unified-rendering-session.svg)
 
-1. Existing `AcpClient.onUpdate(listener)` forwards normalized `AcpUpdate` values
-   even when no prompt is pending. The coordinator filters loading/replay,
-   stopped and unknown/retired sessions before dispatching to their owners.
-2. New `AgentTextBuffer.append(messageId, delta): boolean` accumulates the current
-   identified message. Byte, quiet and maximum-interval triggers queue a flush;
-   a new ID finalizes the previous message. `flush()` preserves identity.
-3. New `SessionActivity.accept(update): void` uses the existing activity model
-   and batches, now with explicit release/clear operations. The coordinator
-   flushes preceding text before tool announcements or nonempty thoughts; it
-   also forwards assistant text to activity so existing batches can collapse.
-   Neither action retires active parallel tools or the current text identity.
-4. Both owners call new `ConversationPublication.enqueue(key, operation): boolean`.
-   This queues **operations, not rendered messages**. Pending work with the same
-   block/batch key coalesces in place. The bounded FIFO runs one operation at a
-   time; that operation executes the owner's rendering/publication logic.
-5. Owners call injected publishers:
-   - Text: `publish(AgentTextPublication)` carries `messageId`, `partIndex`, `body`,
-     `formattedBody` and optional `targetEventId`.
-   - Activity: `publish(RenderedAcpActivity, targetEventId?)` carries rendered
-     `body`/`formattedBody` and the optional original event ID.
-   - Both resolve to a Matrix event ID or `undefined` on failure. Each owner keeps
-     the original event ID for later replacements; activity/text mappings are
-     not shared with other sessions.
-6. The coordinator's shared publisher adds routing, a transaction ID, current
-   session/size guards and outbound accounting, then calls existing
-   `MatrixDelivery.sendLive(MatrixHtmlMessage)`. Existing transport serialization,
-   retry behavior and the SDK encryption path remain in place.
+1. `SessionOutput` dispatches to separate message/thought `TextCollector` instances
+   and a concurrent `ToolCollector`. A genuinely new text response ID finishes both
+   prior text owners. Switching text kind or receiving tool metadata does not.
+2. `TextCollector.append(id, delta)` accumulates bounded UTF-8 text. Both instances
+   use `PublicationScheduler`: byte threshold, quiet period and maximum interval
+   share the existing configuration. `flush(id)` keeps an identity open;
+   `finish(id)` flushes its remainder before forwarding finish. Repeated deltas append.
+3. `ToolCollector` applies `AcpToolModel` field patches, result replacement and
+   incremental terminal output. Starts/terminal changes flush immediately;
+   intermediate changes, including status-only patches, share scheduler pacing.
+   Terminal content precedes finish; active tools are independent of response IDs.
+4. `ActivityCardCollector` replaces cumulative thought/tool entries, assigns stable
+   card IDs and retains entry-to-card associations across rollover and collapse.
+   The dispatcher reserves a thought entry before its first timed flush. This
+   prevents premature retirement when text or tool completion arrives first.
+   New cards first flush expanded. Collapse closes presentation to new entries;
+   every contained entry must finish before the card emits finish.
+5. `renderOutput` adapts exactly two operations: `flush(id, cumulativeContent)` and
+   `finish(id)`. Messages use `renderMatrixTextChunks`. Pure `renderActivityCard`
+   combines thought Markdown via `renderMatrixText`, escaped tool/code/diff output
+   via `renderAcpActivity`, and application-authored disclosure wrappers. Full
+   card wrappers and edit/thread envelopes are measured within event limits.
+   Renderers preserve IDs and finish; they own no timers, mappings or retries.
+6. Two `MatrixOutputSender` subscriptions bind independent emitter namespaces to
+   the same authorized conversation/generation. Each alone retains live logical
+   IDs and original Matrix IDs for continuation parts. New IDs do not evict other
+   live IDs. Unchanged payloads skip edits; repacking clears surplus published
+   parts without empty originals. The card subscription preserves the first flush
+   as a separate queue barrier so collapse cannot erase the initial expanded view.
+7. `ConversationPublication` bounds and serializes work. Pending snapshots coalesce
+   by subscription/ID; finish stays behind final payload delivery and releases
+   mappings afterwards. Each operation delivers one bounded snapshot, then yields
+   to the queue. There is no content-drain loop bypassing collector pacing.
+8. The bridge's generation-guarded callback adds routes, transaction IDs and
+   accounting and calls `MatrixDelivery.sendLive`. Existing retries, SDK encryption
+   and Matrix replacement envelopes remain the transport boundary.
 
 ## Lifetime and compatibility
 
-- Prompt completion does **not** stop the renderer. Reset/shutdown stop the
-  publication queue, which stops the buffer and closes activity. Failure also
-  stops publication and diagnoses abandonment; capacity failure is fatal.
-- Retired text mappings are released after final queued publication. Activity
-  releases batches only after tools are terminal and final updates/collapse have
-  been published. Retention is bounded, not a historical cache.
-- ID-less solicited text retains its compatibility path outside these diagrams.
-  ID-less unsolicited text is diagnosed and omitted. Identified text is no longer
-  copied into prompt-final outcomes.
-- The adapter must provide stable, sequential assistant message IDs. The separate
-  pi-acp prerequisite is unchanged; these diagrams do not imply adapter support
-  or a deployment.
+Prompt completion does not flush or finish identified text. Nonempty assistant
+text requests activity collapse independently of its own publication. Matrix
+placement follows first publication; later snapshots edit those originals.
 
-Sources: [coordinator](../src/bridge.ts), [text buffer](../src/agent-text-buffer.ts),
-[session activity](../src/session-activity.ts),
-[publication queue](../src/conversation-publication.ts).
-The SVGs are self-contained, editable source files with no external assets.
+Final structured/rendered snapshots transfer into the bounded sender queue before
+collectors release source state. Sender mappings survive queued/in-flight originals,
+final edits and collapse. Reset, deletion, failure and shutdown stop the queue,
+cancel timers, clear subscriptions and reject obsolete callbacks under the existing
+abandonment policy. No historical/tombstone map or Matrix history reconstruction
+is added. Restart preserves only durable routing and delivery bookkeeping.
 
-## Proposed next design
+Solicited ID-less assistant text keeps the legacy prompt path. Unsolicited ID-less
+text emits one bounded diagnostic. A compatibility text collector groups ID-less
+thoughts at message/tool boundaries without inventing ACP response identity.
 
-The [collector-based output rendering draft](../specifications/collector-based-output-rendering.md)
-proposes shared text collection/flush rules, separate activity composition and
-emitter-local Matrix mappings with explicit finish signals. It includes a new
-component/data-flow SVG. That draft is not implemented by the code mapped above.
+The Pi adapter must supply stable sequential response IDs shared by thoughts and
+text, including unsolicited output. Adapter implementation/validation remains a
+separate prerequisite; scripted ACP and hermetic crypto results are distinguished
+in the [current evidence](collector-rendering-verification.md).
+
+Sources: [dispatcher](../src/session-output.ts), [text collector](../src/text-collector.ts),
+[scheduler](../src/publication-scheduler.ts), [tool collector](../src/tool-collector.ts),
+[cards](../src/activity-card-collector.ts), [renderers](../src/acp-activity-rendering.ts),
+[sender](../src/matrix-output-sender.ts), [queue](../src/conversation-publication.ts).
+SVGs are self-contained editable sources without external assets.

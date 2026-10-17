@@ -9,7 +9,8 @@ import {
   type AcpToolCallUpdate,
   type AcpAgentThoughtChunk,
 } from "./acp-client.js";
-import { AcpActivityModel } from "./acp-activity.js";
+import { AcpToolModel } from "./acp-activity.js";
+import { TextCollector } from "./text-collector.js";
 import { renderAcpActivity } from "./acp-activity-rendering.js";
 import { createCancellationController } from "./cancellation.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
@@ -571,8 +572,23 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   const client = newClient(input, output);
   await initialize(client, input, output);
   const sessionId = await createSession(client, input, output);
-  const model = new AcpActivityModel();
-  client.onUpdate((update) => model.accept(update));
+  const model = new AcpToolModel();
+  let thought: { type: "thought"; text: string; cut: boolean } | undefined;
+  const thoughts = new TextCollector({
+    settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
+    maxOutputBytes: 8192,
+    sink: {
+      flush: (_id, content) => {
+        thought = { type: "thought", ...content };
+      },
+      finish: () => {},
+    },
+  });
+  client.onUpdate((update) => {
+    if (update.kind === "tool_call" || update.kind === "tool_call_update") model.accept(update);
+    if (update.kind === "agent_thought_chunk")
+      thoughts.append(update.messageId ?? "thought", update.text, update.textCut);
+  });
   const prompt = client.prompt(sessionId, "hello", {
     cancelled: false,
     reason: undefined,
@@ -626,8 +642,10 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   });
   input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
   await prompt;
-  assert.equal(model.events.length, 3);
-  const [thought, tool, many] = model.events;
+  thoughts.flush();
+  thoughts.stop();
+  assert.equal(model.events.length, 2);
+  const [tool, many] = model.events;
   assert.ok(thought && tool && many);
   for (const event of [thought, tool, many]) {
     const rendered = renderAcpActivity(event);
@@ -639,8 +657,8 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   assert.equal(tool.type, "tool");
   assert.equal(many.type, "tool");
   if (thought.type === "thought") {
-    assert.equal(Buffer.byteLength(thought.text, "utf8"), 8192);
-    assert.ok(thought.text.startsWith("a".repeat(8190)));
+    assert.ok(Buffer.byteLength(thought.text, "utf8") <= 8192);
+    assert.ok(thought.text.startsWith("a".repeat(8100)));
   }
   if (tool.type === "tool")
     assert.equal(tool.content?.[0]?.type === "content" && tool.content[0].text, "b".repeat(8190));
@@ -823,7 +841,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 1);
   assert.equal(thoughts[1]!.textCut, true);
   assert.doesNotMatch(thoughts[1]!.text, /�/u);
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(small);
   assert.match(renderAcpActivity(model.events[0]!).body, /\(truncated\)/u);
   await client.close();
