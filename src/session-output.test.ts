@@ -61,6 +61,28 @@ function fixture(maxRetainedEvents = 20) {
   };
 }
 
+void test("leading blank identified thoughts reserve no card entry or timer and do not reduce tool capacity", async () => {
+  const f = fixture(2);
+  f.thought("a", "\n\n");
+  assert.equal(f.output.retainedEvents, 0);
+  assert.equal(f.output.retainedCards, 0);
+  assert.equal(f.clock.pendingTimerCount, 0);
+  f.tool("first");
+  f.tool("second");
+  await f.queue.waitForIdle();
+  assert.deepEqual(f.failures, []);
+  assert.equal(f.output.retainedEvents, 2);
+  f.terminal("first");
+  f.terminal("second");
+  f.text("a", "answer");
+  f.thought("b", "  ");
+  await f.queue.waitForIdle();
+  assert.equal(f.output.retainedEvents, 0);
+  assert.equal(f.output.retainedCards, 0);
+  assert.equal(f.clock.pendingTimerCount, 0);
+  f.queue.stop();
+});
+
 void test("alternating same-response thoughts and text retain both destinations across collapse", async () => {
   const f = fixture();
   f.thought("a", "First");

@@ -39,6 +39,8 @@ export class SessionOutput {
 
   #responseId: string | undefined;
 
+  #hasIdentifiedThought = false;
+
   #legacyId: string | undefined;
 
   #sequence = 0;
@@ -133,6 +135,7 @@ export class SessionOutput {
     if (update.messageId && update.messageId !== this.#responseId) {
       this.#messages.finish();
       this.#thoughts.finish();
+      this.#hasIdentifiedThought = false;
       this.#responseId = update.messageId;
     }
     if (update.kind === "agent_message_chunk") {
@@ -144,9 +147,14 @@ export class SessionOutput {
       return;
     }
     if (update.messageId) {
+      const text = cleanActivityText(update.text);
+      if (!this.#hasIdentifiedThought && !text.trim()) return;
       this.#finishLegacyThought();
-      this.#cards.openThought(`identified:${update.messageId}`);
-      this.#thoughts.append(update.messageId, cleanActivityText(update.text), update.textCut);
+      if (!this.#hasIdentifiedThought) {
+        this.#cards.openThought(`identified:${update.messageId}`);
+        this.#hasIdentifiedThought = true;
+      }
+      this.#thoughts.append(update.messageId, text, update.textCut);
       return;
     }
     if (this.#legacyId === undefined) {
