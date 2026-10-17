@@ -69,6 +69,9 @@ const MATRIX_CONFIG: MatrixConfig = {
   encryption: "disabled",
   responseMode: "room",
   defaultMessageDelivery: "prompt",
+  agentTextFlushBytes: 2048,
+  agentTextQuietMs: 750,
+  agentTextMaxIntervalMs: 2000,
 };
 
 const CONFIG: BridgeConfig = {
