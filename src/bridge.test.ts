@@ -4825,6 +4825,26 @@ void test("identified prompt completion is independent of quiet publication and 
   assert.equal(f.clock.pendingTimerCount, 0);
 });
 
+void test("an empty identified transition flushes prior text without publishing an empty placeholder", async () => {
+  const f = await identifiedFixture();
+  f.text("preceding");
+  f.text("", "next");
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.equal(f.matrix.html[0]?.body, "preceding");
+  f.finish();
+  await f.completion;
+  f.clock.advanceBy(2000);
+  await flush();
+  assert.equal(f.matrix.html.length, 1);
+  f.text("new text", "next");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 2);
+  assert.equal(f.matrix.html[1]?.body, "new text");
+  assert.equal(f.matrix.html[1]?.targetEventId, undefined);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
 void test("early tool announcement flushes identified text without retiring its event mapping", async () => {
   const f = await identifiedFixture();
   f.text("before ");

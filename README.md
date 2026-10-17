@@ -98,6 +98,26 @@ max_catchup_age_seconds = 900
 max_catchup_events_per_room = 4
 ```
 
+## Streamed and background output
+
+Identified ACP assistant messages share one session-scoped renderer, including
+updates received after a prompt response. Chunks with the same `messageId` append
+and edit the same Matrix message; a new ID starts a new message. Quiet, size and
+maximum-interval controls above buffer publication. Thoughts and early tool
+announcements flush preceding text without ending its identity, and parallel
+tools retain their own status updates until terminal publication and collapse.
+
+The adapter must supply stable IDs on solicited and unsolicited text and emit
+assistant messages sequentially. Required pi-acp ID support is a separate
+prerequisite. ID-less prompted output keeps its existing behavior; ID-less
+unsolicited text is diagnosed and omitted. Restart retains conversation routing
+but discards text/event mappings; continuing live chunks start a fresh block.
+Reset and shutdown cancel buffered output and diagnose abandoned publication.
+
+See [unified rendering tests](agent_tests/test_unified_rendering/README.md) and
+the [verification report](docs/unified-message-rendering-verification.md) for
+commands, coverage and live-test limits.
+
 ## Encryption Setup
 
 Stop the daemon and then run:

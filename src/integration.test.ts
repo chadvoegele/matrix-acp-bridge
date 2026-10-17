@@ -187,6 +187,10 @@ class FakeAcpPeer {
     this.#inputController?.close();
   }
 
+  notify(sessionId: string, update: Readonly<Record<string, unknown>>): void {
+    this.#push({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
+  }
+
   #consumeFrames(): void {
     let newline = this.#inputBuffer.indexOf("\n");
     while (newline !== -1) {
@@ -2709,6 +2713,130 @@ void test("identified unsolicited continuations use the mapped SDK room or encry
       } finally {
         if (rig !== undefined && run !== undefined) await stopRig(rig, run);
         await rm(stateDir, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+void test("post-prompt parallel tools and same-ID text stay isolated across SDK rooms and encrypted threads", async () => {
+  for (const responseMode of ["room", "thread"] as const) {
+    for (const encryption of ["disabled", "required"] as const) {
+      const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-unified-isolation-"));
+      const base = encryption === "required" ? requiredConfig(stateDir) : { ...CONFIG, stateDir };
+      const settings: BridgeConfig = { ...base, matrix: { ...base.matrix, responseMode } };
+      let rig: IntegrationRig | undefined;
+      let run: Promise<DaemonExitCode> | undefined;
+      try {
+        if (encryption === "required") await prepareVerifiedCryptoState(settings);
+        rig = createRig(settings, encryption === "required" ? { cryptoAdapter: new HermeticCrypto() } : {});
+        ({ run } = await startRig(rig));
+        const roots = ["$unified-a:example.org", "$unified-b:example.org"];
+        for (const [index, eventId] of roots.entries()) {
+          rig.matrixSdk.emitInbound(
+            sdkEvent({
+              eventId,
+              roomId: responseMode === "room" && index === 1 ? ROOM_TWO : ROOM_ONE,
+              encrypted: encryption === "required",
+              ...(encryption === "required"
+                ? { clearContent: { msgtype: "m.text", body: `start-${index}` } }
+                : { body: `start-${index}` }),
+            }),
+          );
+        }
+        rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "unified-isolation" });
+        await waitFor(() => rig!.peer.prompts.length === 2, "independent mapped sessions");
+        const calls = rig.peer.prompts;
+        assert.notEqual(calls[0]!.sessionId, calls[1]!.sessionId);
+        for (const [index, call] of calls.entries()) {
+          call.update(`prefix-${index}`, "shared-answer");
+          call.respond();
+        }
+        await waitFor(() => rig!.bridge.unresolvedPromptCount === 0, "both prompt responses");
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(() => rig!.matrixSdk.sent.length === 2, "two text originals");
+        for (const [index, call] of calls.entries()) {
+          for (const toolCallId of ["shared-first", "shared-second"]) {
+            rig.peer.notify(call.sessionId, {
+              sessionUpdate: "tool_call",
+              toolCallId,
+              title: `tool-${index}-${toolCallId}`,
+              status: "in_progress",
+            });
+          }
+          call.update(" after tools", "shared-answer");
+          call.update(`next-${index}`, "shared-next");
+        }
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(
+          () => rig!.matrixSdk.sent.filter((sent) => String(sent.content.body).startsWith("next-")).length === 2,
+          "new assistant identities",
+        );
+        for (const call of calls) {
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-second",
+            status: "failed",
+          });
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-first",
+            status: "completed",
+          });
+        }
+        await flushMany(40);
+        const originals = rig.matrixSdk.sent.filter(
+          (sent) => (sent.content["m.relates_to"] as { rel_type?: string } | undefined)?.rel_type !== "m.replace",
+        );
+        for (const [index, root] of roots.entries()) {
+          const expectedRoom = responseMode === "room" && index === 1 ? ROOM_TWO : ROOM_ONE;
+          const initial: number = rig.matrixSdk.sent.findIndex((sent) => sent.content.body === `prefix-${index}`);
+          assert.ok(initial !== -1);
+          const target: string = `$sent-${initial + 1}:example.org`;
+          const continuation: MatrixSendAttempt | undefined = rig.matrixSdk.sent.find(
+            (sent) =>
+              (sent.content["m.new_content"] as { body?: string } | undefined)?.body === `prefix-${index} after tools`,
+          );
+          assert.equal((continuation?.content["m.relates_to"] as { event_id: string }).event_id, target);
+          const own: MatrixSendAttempt[] = rig.matrixSdk.sent.filter((sent) => {
+            const content = (sent.content["m.new_content"] ?? sent.content) as { body: string };
+            return (
+              content.body.includes(`prefix-${index}`) ||
+              content.body === `next-${index}` ||
+              content.body.includes(`tool-${index}-`)
+            );
+          });
+          assert.ok(own.length >= 5);
+          for (const sent of own) {
+            assert.equal(sent.roomId, expectedRoom);
+            assert.equal(sent.wireEncrypted === true, encryption === "required");
+            const content = (sent.content["m.new_content"] ?? sent.content) as Record<string, unknown>;
+            const relation = content["m.relates_to"] as { event_id: string } | undefined;
+            assert.equal(relation?.event_id, responseMode === "thread" ? root : undefined);
+          }
+          const terminal = own.map(
+            (sent) => (sent.content["m.new_content"] ?? sent.content) as { body: string; formatted_body: string },
+          );
+          assert.ok(
+            terminal.some(
+              (content) =>
+                content.body.includes("[completed]") &&
+                content.body.includes(`tool-${index}-shared-first`) &&
+                content.formatted_body.includes("Past agent events"),
+            ),
+          );
+          assert.ok(
+            terminal.some(
+              (content) => content.body.includes("[failed]") && content.body.includes(`tool-${index}-shared-second`),
+            ),
+          );
+        }
+        assert.equal(originals.filter((sent) => String(sent.content.body).startsWith("prefix-")).length, 2);
+        assert.equal(rig.peer.prompts.length, 2);
+      } finally {
+        if (rig !== undefined && run !== undefined) await stopRig(rig, run);
+        await rm(stateDir, { recursive: true, force: true, maxRetries: 3 });
       }
     }
   }

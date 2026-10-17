@@ -1974,7 +1974,7 @@ export class BridgeCoordinator {
     const rendering = this.#renderingBySession.get(update.sessionId);
     const turn = this.#turnsBySession.get(update.sessionId);
     if (rendering !== undefined && update.kind === "agent_message_chunk" && update.messageId) {
-      if (typeof update.text !== "string" || update.text.length === 0) return;
+      if (typeof update.text !== "string") return;
       if (turn !== undefined && !turn.closed) {
         turn.identifiedText = true;
         if (turn.resolveDrain !== undefined) this.#finishDrain(turn, { text: joinedGroups(turn.groups), fatal: false });

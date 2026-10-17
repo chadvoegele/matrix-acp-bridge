@@ -1,5 +1,9 @@
 # Live test authentication and ownership
 
+Identified solicited/background rendering has a dedicated
+[scripted ACP suite](../test_unified_rendering/README.md), with room/thread and
+plaintext/encrypted entry points using this same ownership and cleanup contract.
+
 All room/thread, plaintext/encrypted shell entry points share this contract.
 Use only designated test accounts, joined test rooms and private test state.
 `test*.sh` holds `/tmp/matrix-acp-bridge-steering-live.lock` with nonblocking
