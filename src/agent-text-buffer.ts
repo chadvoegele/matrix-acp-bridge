@@ -123,6 +123,10 @@ export class AgentTextBuffer {
     return !this.#stopped && !this.#options.queue.stopped;
   }
 
+  get hasPendingText(): boolean {
+    return this.#current?.firstDirtyAt !== undefined || this.#options.queue.pendingCount > 0;
+  }
+
   stop(): void {
     this.#stopped = true;
     if (this.#current !== undefined) this.#clearTimer(this.#current);

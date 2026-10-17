@@ -13,7 +13,13 @@ import { matrixHtmlContent, matrixHtmlContentBytes } from "./matrix-message-cont
 import { openBridgeStateStore } from "./bridge-state.js";
 import type { BridgeConfig } from "./config.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
-import type { DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
+import {
+  StderrDiagnosticSink,
+  type DiagnosticRecord,
+  type DiagnosticSink,
+  type FatalError,
+  type FatalErrorListener,
+} from "./diagnostics.js";
 import { FakeClock } from "./test-support/fake-clock.js";
 import type {
   AcpClient,
@@ -1887,7 +1893,7 @@ void test("agent text renders complete Markdown once when its message closes", a
   await bridge.stop();
 });
 
-void test("tool, thought, and distinct IDs close text in order without text edits", async () => {
+void test("tool and thought flush text before activity while distinct IDs retire blocks", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -1963,16 +1969,11 @@ void test("tool, thought, and distinct IDs close text in order without text edit
     text: "Two",
   });
   await waitFor(() => matrix.html.some((message) => message.body === "One"));
-  acp.emit({
-    sessionId,
-    kind: "agent_message_chunk",
-    messageId: "first",
-    text: "stale",
-  });
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await completion;
+  await flush();
   assert.equal(matrix.html.filter((message) => message.body === "Two").length, 1);
   assert.equal(
     matrix.html.some(
@@ -2149,8 +2150,9 @@ void test("live activity rolls over after ten events, archives at agent text, an
   );
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await completion;
+  await flush();
   assert.equal(matrix.sent.length, 0);
   assert.equal(
     matrix.html.filter((message) => message.body === "Hello world!" && message.targetEventId === undefined).length,
@@ -2451,7 +2453,7 @@ void test("oversized activity truncates detail and rolls over before the encoded
   await bridge.stop();
 });
 
-void test("live timeout keeps partial text once and rejects late chunks in the next turn", async () => {
+void test("live timeout reports status separately and retains identified continuation in the next turn", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -2489,7 +2491,7 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
     sessionId,
     kind: "agent_message_chunk",
     messageId: "first",
-    text: "stale",
+    text: " continuation",
   });
   acp.emit({
     sessionId,
@@ -2504,12 +2506,13 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
   );
   resolvers.shift()!({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await second;
+  await flush();
   assert.equal(matrix.html.filter((message) => message.body === "fresh").length, 1);
   assert.equal(
-    matrix.html.some((message) => message.body.includes("stale")),
-    false,
+    matrix.html.some((message) => message.body === "partial continuation" && message.targetEventId !== undefined),
+    true,
   );
   await bridge.stop();
 });
@@ -4532,8 +4535,9 @@ void test("steering retains original text/activity collector and typing while in
   acp.emit({ kind: "agent_message_chunk", sessionId: "session-1", messageId: "final", text: "original final" });
   prompts.get("first")?.({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await first;
+  await flush();
   assert.ok(matrix.html.some((message) => message.body === "original final"));
   assert.equal(matrix.sent.length, 0);
   assert.equal(matrix.typing.at(-1)?.isTyping, false);
@@ -4760,4 +4764,313 @@ void test("shutdown abandons response backoff immediately without spending the g
   assert.equal(clock.pendingTimerCount, 0);
   assert.equal(matrix.stopped, true);
   assert.equal(acp.closed, true);
+});
+
+async function identifiedFixture(bridgeConfig = config(), matrix = new FakeLiveMatrix()) {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const diagnostics: DiagnosticRecord[] = [];
+  const sink = new StderrDiagnosticSink({
+    clock,
+    writeLine: (line) => {
+      diagnostics.push(JSON.parse(line) as DiagnosticRecord);
+    },
+  });
+  const bridge = new BridgeCoordinator({ config: bridgeConfig, acp, matrix, clock, diagnostics: sink });
+  const completion = bridge.handleTimelineEvent(event("$identified"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  const text = (value: string, messageId = "answer") =>
+    acp.emit({ sessionId, kind: "agent_message_chunk", messageId, text: value });
+  return {
+    clock,
+    acp,
+    matrix,
+    bridge,
+    completion,
+    sessionId,
+    text,
+    diagnostics,
+    finish: (outcome?: AcpOutcome) => resolvePrompt(outcome ?? { kind: "turn", stopReason: "end_turn" }),
+  };
+}
+
+void test("identified prompt completion is independent of quiet publication and later unsolicited continuation", async () => {
+  const f = await identifiedFixture();
+  f.text("hello");
+  f.finish({ kind: "turn", stopReason: "end_turn", text: "hello" });
+  await f.completion;
+  assert.equal(f.matrix.html.length, 0);
+  assert.equal(f.matrix.sent.length, 0);
+  assert.equal(f.bridge.snapshot.unresolvedPrompts, 0);
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  f.text(" world");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 2);
+  assert.equal(f.matrix.html[1]?.body, "hello world");
+  assert.equal(f.matrix.html[1]?.targetEventId, "$live-1:example.org");
+  f.text("background", "next");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 3);
+  assert.equal(f.matrix.html[2]?.targetEventId, undefined);
+  assert.equal(f.matrix.html[2]?.roomId, ROOM_ONE);
+  assert.equal(f.acp.promptCalls.length, 1);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("early tool announcement flushes identified text without retiring its event mapping", async () => {
+  const f = await identifiedFixture();
+  f.text("before ");
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call", toolCallId: "tool", title: "read", status: "pending" });
+  await waitFor(() => f.matrix.html.length === 2);
+  assert.equal(f.matrix.html[0]?.body, "before ");
+  f.text("after");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.some((message) => message.body === "before after"));
+  const edit = f.matrix.html.find((message) => message.body === "before after");
+  assert.equal(edit?.targetEventId, "$live-1:example.org");
+  f.finish();
+  await f.completion;
+  await f.bridge.stop();
+});
+
+void test("identified publication in flight coalesces continuation without delaying prompt completion", async () => {
+  const matrix = new FakeLiveMatrix();
+  let release!: () => void;
+  matrix.htmlSend = async (message) => {
+    if (matrix.html.length === 0)
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    matrix.html.push(message);
+    return message.targetEventId ?? "$slow";
+  };
+  const f = await identifiedFixture(config(), matrix);
+  f.text("one");
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.attempts.length === 1);
+  f.text(" two");
+  f.clock.advanceBy(750);
+  f.text(" three");
+  f.clock.advanceBy(750);
+  f.finish();
+  await f.completion;
+  assert.equal(matrix.attempts.length, 1);
+  release();
+  await waitFor(() => matrix.html.length === 2);
+  assert.deepEqual(
+    matrix.html.map(({ body }) => body),
+    ["one", "one two three"],
+  );
+  assert.equal(matrix.html[1]?.targetEventId, "$slow");
+  await f.bridge.stop();
+});
+
+void test("sequential assistant IDs use bounded current state without suppressing repeated deltas", async () => {
+  const f = await identifiedFixture();
+  f.text("message 0", "id-0");
+  f.finish();
+  await f.completion;
+  for (let index = 0; index < 100; index++) {
+    if (index > 0) f.text(`message ${index}`, `id-${index}`);
+    f.clock.advanceBy(750);
+    await waitFor(() => f.matrix.html.length === index + 1);
+  }
+  f.text("!", "id-99");
+  f.text("!", "id-99");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 101);
+  assert.equal(f.matrix.html[100]?.body, "message 99!!");
+  assert.equal(f.matrix.html[100]?.targetEventId, "$live-100:example.org");
+  f.finish();
+  await f.completion;
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("reset drops buffered identified output and rejects unknown and retired sessions", async () => {
+  const f = await identifiedFixture();
+  f.text("published");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  f.finish();
+  await f.completion;
+  f.text(" buffered");
+  await f.bridge.handleTimelineEvent(event("$reset-identified", ROOM_ONE, "/reset"));
+  f.text(" obsolete");
+  f.acp.emit({ sessionId: "unknown", kind: "agent_message_chunk", messageId: "unknown", text: "unknown" });
+  f.clock.advanceBy(5000);
+  await flush();
+  assert.equal(f.matrix.html.length, 1);
+  assert.equal(f.clock.pendingTimerCount, 0);
+  await f.bridge.stop();
+});
+
+void test("restored sessions ignore replay and start continuing IDs from newly received text", async () => {
+  await withThreadState(async (store) => {
+    const identity = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$restored" } as const;
+    await store.setConversationRecord({ ...identity, sessionId: "saved" });
+    const transactions: string[] = [];
+    for (let restart = 0; restart < 2; restart++) {
+      const clock = new FakeClock();
+      const acp = new FakeAcp();
+      const matrix = new FakeLiveMatrix();
+      acp.loadSessionImpl = async ({ sessionId }) => {
+        acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "same", text: "history" });
+        return { sessionId };
+      };
+      acp.promptImpl = async (sessionId) => {
+        acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "same", text: `live ${restart}` });
+        return { kind: "turn", stopReason: "end_turn" };
+      };
+      const bridge = new BridgeCoordinator({
+        config: threadConfig(),
+        acp,
+        matrix,
+        clock,
+        stateStore: store,
+        loadSession: true,
+      });
+      await bridge.handleTimelineEvent(threadEvent(`$restart-${restart}`, identity.threadRootEventId));
+      clock.advanceBy(750);
+      await waitFor(() => matrix.html.length === 1);
+      acp.emit({ sessionId: "saved", kind: "agent_message_chunk", messageId: "same", text: " unsolicited" });
+      clock.advanceBy(750);
+      await waitFor(() => matrix.html.length === 2);
+      assert.equal(matrix.html[0]?.body, `live ${restart}`);
+      assert.equal(matrix.html[0]?.targetEventId, undefined);
+      assert.equal(matrix.html[1]?.body, `live ${restart} unsolicited`);
+      assert.equal(matrix.html[1]?.threadRootEventId, "$restored");
+      transactions.push(matrix.html[0].transactionId);
+      await bridge.stop();
+      assert.equal(clock.pendingTimerCount, 0);
+    }
+    assert.notEqual(transactions[0], transactions[1]);
+  });
+});
+
+void test("identified text keeps prompt errors separate without duplicating the response text", async () => {
+  const f = await identifiedFixture();
+  f.text("partial");
+  f.finish({ kind: "method_error", operation: "session_prompt", fatal: false });
+  await f.completion;
+  assert.equal(f.matrix.sent.length, 1);
+  assert.equal(f.matrix.sent[0]?.responseKind, "error");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.equal(f.matrix.html[0]?.body, "partial");
+  f.text(" continued");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 2);
+  assert.equal(f.matrix.html[1]?.body, "partial continued");
+  await f.bridge.stop();
+});
+
+void test("identified publication failures are observable and a new prompt can recover without fallback duplication", async () => {
+  const matrix = new FakeLiveMatrix();
+  matrix.htmlSend = async () => {
+    throw { httpStatus: 403 };
+  };
+  const f = await identifiedFixture(config(), matrix);
+  f.text("lost");
+  f.finish();
+  await f.completion;
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.attempts.length === 1);
+  await flush();
+  assert.equal(f.bridge.fatalError, undefined);
+  assert.equal(matrix.sent.length, 0);
+  assert.ok(
+    f.diagnostics.some((record) => record.event === "agent-text-abandoned" && record.fields.kind === "delivery"),
+  );
+  assert.equal(JSON.stringify(f.diagnostics).includes("lost"), false);
+  matrix.htmlSend = async (message) => {
+    matrix.html.push(message);
+    return "$recovered";
+  };
+  const next = f.bridge.handleTimelineEvent(event("$recovered"));
+  await waitFor(() => f.acp.promptCalls.length === 2);
+  f.text("recovered", "next");
+  f.finish();
+  await next;
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.html.length === 1);
+  assert.equal(matrix.html[0]?.body, "recovered");
+  assert.equal(matrix.html[0]?.targetEventId, undefined);
+  assert.equal(matrix.sent.length, 0);
+  await f.bridge.stop();
+});
+
+void test("ID-less unsolicited chunks emit one bounded diagnostic and never attach to an identified block", async () => {
+  const f = await identifiedFixture();
+  f.text("identified");
+  f.finish();
+  await f.completion;
+  for (let index = 0; index < 100; index++) {
+    f.acp.emit({ sessionId: f.sessionId, kind: "agent_message_chunk", text: "private ID-less text" });
+  }
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.equal(f.matrix.html[0]?.body, "identified");
+  assert.equal(f.diagnostics.filter((record) => record.event === "agent-text-missing-id").length, 1);
+  assert.equal(JSON.stringify(f.diagnostics).includes("private"), false);
+  await f.bridge.stop();
+});
+
+void test("identified queue capacity failure stops intake observably and cancels timers", async () => {
+  const matrix = new FakeLiveMatrix();
+  let release!: () => void;
+  matrix.htmlSend = async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return "$in-flight";
+  };
+  const f = await identifiedFixture(config({ maxActivityEventsPerMessage: 1 }), matrix);
+  f.text("first");
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.attempts.length === 1);
+  f.finish();
+  await f.completion;
+  f.text("second", "second");
+  f.text("third", "third");
+  f.text("fourth", "fourth");
+  assert.equal(f.bridge.fatalError?.code, "matrix_transport");
+  assert.ok(
+    f.diagnostics.some((record) => record.event === "agent-text-abandoned" && record.fields.kind === "capacity"),
+  );
+  release();
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+  assert.equal(matrix.attempts.length, 1);
+});
+
+void test("thought grouping resumes after identified text without whitespace or tool updates flushing text", async () => {
+  const f = await identifiedFixture();
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "first thought" });
+  await waitFor(() => f.matrix.html.length === 1);
+  f.text("answer");
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "  " });
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call_update", toolCallId: "unknown", status: "completed" });
+  await flush();
+  assert.equal(
+    f.matrix.html.some((message) => message.body === "answer"),
+    false,
+  );
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "second thought" });
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("second thought")));
+  const textIndex = f.matrix.html.findIndex((message) => message.body === "answer");
+  const thoughtIndex = f.matrix.html.findIndex((message) => message.body.includes("second thought"));
+  assert.ok(textIndex !== -1 && thoughtIndex > textIndex);
+  assert.equal(f.matrix.html[thoughtIndex]?.body.includes("first thought"), false);
+  f.finish();
+  await f.completion;
+  await f.bridge.stop();
 });

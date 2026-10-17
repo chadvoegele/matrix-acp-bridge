@@ -1,7 +1,9 @@
 import { MatrixDelivery, type DeliveryOptions } from "./matrix-delivery.js";
 import { PromptPermits } from "./prompt-permits.js";
 import { createCancellationController } from "./cancellation.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { AgentTextBuffer } from "./agent-text-buffer.js";
+import { ConversationPublication } from "./conversation-publication.js";
 import { AcpActivityModel, type AcpActivity } from "./acp-activity.js";
 import { AcpActivityBatches, type ActivityBatch } from "./acp-activity-batches.js";
 import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
@@ -159,6 +161,12 @@ interface ActiveRun {
   typingStarted: boolean;
 }
 
+interface SessionTextRendering {
+  readonly buffer: AgentTextBuffer;
+  readonly queue: ConversationPublication;
+  warnedIdless: boolean;
+}
+
 interface TextGroup {
   readonly messageId: string | undefined;
   text: string;
@@ -175,6 +183,8 @@ interface ActivityBatchDelivery {
 
 interface TurnCollector extends MatrixOutputRouting {
   readonly sessionId: AcpSessionId;
+  readonly publication: ConversationPublication | undefined;
+  identifiedText: boolean;
   readonly groups: TextGroup[];
   readonly activity: AcpActivityModel;
   readonly activityBatches: AcpActivityBatches;
@@ -383,6 +393,8 @@ export class BridgeCoordinator {
   readonly #eventOrder: MatrixEventId[] = [];
 
   readonly #closedMessageIds = new Map<AcpSessionId, { readonly set: Set<string>; readonly order: string[] }>();
+
+  readonly #textBySession = new Map<AcpSessionId, SessionTextRendering>();
 
   readonly #turnsBySession = new Map<AcpSessionId, TurnCollector>();
 
@@ -703,6 +715,7 @@ export class BridgeCoordinator {
     this.#stopping = true;
     this.#intakeOpen = false;
     this.#dispatchOpen = false;
+    for (const sessionId of this.#textBySession.keys()) this.#retireSessionText(sessionId);
     this.#delivery.cancelRetries();
     try {
       this.#matrix.stopIntake();
@@ -1170,6 +1183,10 @@ export class BridgeCoordinator {
           if (!(await this.#prepareSessionState())) return;
           if (this.#loadSession) await this.#stateStore?.resetConversation(run.conversation.identity);
           this.#sessionStore.resetConversation(run.conversation.identity);
+          if (run.conversation.sessionId !== undefined) {
+            this.#retireSessionText(run.conversation.sessionId);
+            this.#closedMessageIds.delete(run.conversation.sessionId);
+          }
           run.conversation.sessionId = undefined;
         } catch {
           this.#triggerFatal({
@@ -1221,6 +1238,7 @@ export class BridgeCoordinator {
         return;
       }
 
+      const rendering = this.#sessionText(run.conversation, session.sessionId, run.entry.event);
       const releasePermit = await this.#semaphore.acquire();
       if (releasePermit === undefined || this.#stopping || this.#fatal !== undefined) {
         releasePermit?.();
@@ -1234,6 +1252,8 @@ export class BridgeCoordinator {
       const turn: TurnCollector = {
         ...routing,
         sessionId: session.sessionId,
+        publication: rendering?.queue,
+        identifiedText: false,
         groups: [],
         activity: new AcpActivityModel(),
         activityBatches: new AcpActivityBatches({
@@ -1289,6 +1309,7 @@ export class BridgeCoordinator {
       if (
         isRecord(outcome) &&
         typeof outcome.text === "string" &&
+        !turn.identifiedText &&
         joinedGroups(turn.groups).length === 0 &&
         outcome.text.length > 0
       ) {
@@ -1303,7 +1324,7 @@ export class BridgeCoordinator {
         turn.lastTextChangeAt = this.#clock.now();
       }
 
-      const skipDrain = prompt.timedOut || outcome.kind === "method_error";
+      const skipDrain = turn.identifiedText || prompt.timedOut || outcome.kind === "method_error";
       if (!skipDrain && outcome.kind === "turn") {
         turn.promptResolved = true;
         const drained = await this.#drainTurn(turn);
@@ -1321,7 +1342,7 @@ export class BridgeCoordinator {
       }
 
       this.#closeTextGroup(turn);
-      await turn.outboundTail;
+      if (!turn.identifiedText || turn.groups.length > 0) await turn.outboundTail;
       if (this.#stopping || this.#fatal !== undefined) return;
 
       const unsent =
@@ -1333,7 +1354,8 @@ export class BridgeCoordinator {
                 text: group.text.slice(group.sentLength),
               })),
             );
-      const streamed = this.#matrix.sendHtmlMessage !== undefined && text.length > 0 && unsent.length === 0;
+      const streamed =
+        turn.identifiedText || (this.#matrix.sendHtmlMessage !== undefined && text.length > 0 && unsent.length === 0);
 
       const response: RenderableResponse = prompt.timedOut
         ? { kind: "timeout", ...(unsent.length > 0 ? { text: unsent } : {}) }
@@ -1341,10 +1363,10 @@ export class BridgeCoordinator {
           ? { kind: "error", ...(unsent.length > 0 ? { text: unsent } : {}) }
           : {
               ...outcome,
-              ...(unsent.length > 0 ? { text: unsent } : {}),
               ...(streamed ? { text: "" } : {}),
+              ...(unsent.length > 0 ? { text: unsent } : {}),
             };
-      if (streamed && outcome.kind === "turn" && outcome.stopReason === "end_turn") {
+      if (streamed && unsent.length === 0 && outcome.kind === "turn" && outcome.stopReason === "end_turn") {
         this.#stopTyping(run);
         await this.#completeTerminal(run.entry.terminalCompletion);
         return;
@@ -1369,6 +1391,65 @@ export class BridgeCoordinator {
       }
       this.#finishRun(run);
     }
+  }
+
+  #sessionText(
+    conversation: ConversationState,
+    sessionId: AcpSessionId,
+    event: NormalizedInboundEvent,
+  ): SessionTextRendering | undefined {
+    if (this.#matrix.sendHtmlMessage === undefined) return;
+    const existing = this.#textBySession.get(sessionId);
+    if (existing !== undefined && !existing.queue.stopped) return existing;
+    const routing = routingForEvent(event);
+    const generation = randomUUID();
+    let revision = 0;
+    const queue = new ConversationPublication(
+      this.#config.limits.maxActivityEventsPerMessage + this.#config.limits.maxQueuedTurnsPerConversation,
+      (reason) => {
+        this.#diagnostic("warn", "agent-text-abandoned", { kind: reason });
+        if (reason === "capacity") {
+          this.#triggerFatal({ code: "matrix_transport", message: "Agent output publication capacity exceeded" });
+        }
+      },
+    );
+    const buffer = new AgentTextBuffer({
+      settings: this.#config.matrix,
+      maxOutputBytes: this.#config.limits.maxOutputBytes,
+      maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
+      queue,
+      routing,
+      clock: this.#clock,
+      publish: async (publication) => {
+        if (this.#textBySession.get(sessionId)?.buffer !== buffer || conversation.sessionId !== sessionId) return;
+        this.#outboundOperations += 1;
+        try {
+          return await this.#delivery.sendLive({
+            ...routing,
+            roomId: conversation.identity.roomId,
+            transactionId: `matrix-acp-text-${generation}-${revision++}`,
+            body: publication.body,
+            formattedBody: publication.formattedBody as MatrixSafeHtml,
+            ...(publication.targetEventId === undefined ? {} : { targetEventId: publication.targetEventId }),
+          });
+        } finally {
+          this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
+          this.#resolveIdleWaiters();
+          this.#maybeFinalizeStop();
+        }
+      },
+    });
+    const rendering = { buffer, queue, warnedIdless: false };
+    this.#textBySession.set(sessionId, rendering);
+    return rendering;
+  }
+
+  #retireSessionText(sessionId: AcpSessionId): void {
+    const rendering = this.#textBySession.get(sessionId);
+    if (rendering === undefined) return;
+    if (rendering.buffer.hasPendingText) this.#diagnostic("warn", "agent-text-abandoned", { kind: "lifecycle" });
+    rendering.queue.stop();
+    this.#textBySession.delete(sessionId);
   }
 
   async #sessionForConversation(conversation: ConversationState): Promise<SessionResolution> {
@@ -1841,6 +1922,7 @@ export class BridgeCoordinator {
     if (this.#turnsBySession.get(turn.sessionId) === turn) {
       this.#turnsBySession.delete(turn.sessionId);
     }
+    if (turn.messageOrder.length === 0) return;
     const closed = this.#closedMessageIds.get(turn.sessionId) ?? {
       set: new Set<string>(),
       order: [],
@@ -1868,7 +1950,30 @@ export class BridgeCoordinator {
     if (this.#loadingSessions.has(update.sessionId)) {
       return;
     }
+    if (this.#stopping || this.#fatal !== undefined) return;
+    const rendering = this.#textBySession.get(update.sessionId);
     const turn = this.#turnsBySession.get(update.sessionId);
+    if (rendering !== undefined && update.kind === "agent_message_chunk" && update.messageId) {
+      if (typeof update.text !== "string" || update.text.length === 0) return;
+      if (turn !== undefined && !turn.closed) {
+        turn.identifiedText = true;
+        turn.activity.accept(update);
+        if (turn.resolveDrain !== undefined) this.#finishDrain(turn, { text: joinedGroups(turn.groups), fatal: false });
+        this.#closeTextGroup(turn);
+        if (update.text.trim()) {
+          for (const batch of turn.activityBatches.collapse()) this.#scheduleBatch(turn, batch);
+        }
+      }
+      rendering.buffer.append(update.messageId, update.text);
+      return;
+    }
+    if (rendering !== undefined && update.kind === "agent_message_chunk" && (turn === undefined || turn.closed)) {
+      if (!rendering.warnedIdless) {
+        rendering.warnedIdless = true;
+        this.#diagnostic("warn", "agent-text-missing-id", {});
+      }
+      return;
+    }
     if (turn === undefined || turn.closed || turn.drainComplete) {
       return;
     }
@@ -1878,6 +1983,7 @@ export class BridgeCoordinator {
         const activity = turn.activity.accept(update);
         if (activity !== undefined) {
           if (update.kind === "tool_call" || (update.kind === "agent_thought_chunk" && update.text?.trim())) {
+            rendering?.buffer.flush();
             this.#closeTextGroup(turn);
           }
           this.#acceptActivity(turn, activity);
@@ -1966,6 +2072,11 @@ export class BridgeCoordinator {
   }
 
   #enqueueLive(turn: TurnCollector, operation: () => Promise<void>): void {
+    if (turn.publication !== undefined) {
+      turn.publication.enqueue({}, operation);
+      turn.outboundTail = turn.publication.waitForIdle();
+      return;
+    }
     turn.outboundTail = turn.outboundTail.then(operation).catch(() => {
       turn.liveFailed = true;
       this.#diagnostic("warn", "matrix-live-abandoned", { kind: "unexpected" });
@@ -2032,7 +2143,13 @@ export class BridgeCoordinator {
     rendered: MatrixHtmlBody,
     targetEventId?: MatrixEventId,
   ): Promise<MatrixEventId | undefined> {
-    if (this.#matrix.sendHtmlMessage === undefined || this.#stopping || this.#fatal !== undefined) return;
+    if (
+      this.#matrix.sendHtmlMessage === undefined ||
+      this.#stopping ||
+      this.#fatal !== undefined ||
+      turn.publication?.stopped
+    )
+      return;
     if (
       matrixHtmlContentBytes({ ...rendered, ...routingForTurn(turn) }, targetEventId) >
       this.#config.limits.maxMatrixMessageBytes

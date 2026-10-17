@@ -957,7 +957,7 @@ async function completePrompt(rig: IntegrationRig, call: PromptCall, reply: stri
   await flushMany(2);
   call.respond();
   await waitFor(() => rig.bridge.unresolvedPromptCount === 0, `ACP response for ${call.text}`);
-  rig.clock.advanceBy(300);
+  rig.clock.advanceBy(750);
   await waitFor(
     () => rig.matrixSdk.sent.some((attempt) => attempt.content.body === reply),
     `Matrix delivery for ${call.text}`,
@@ -979,7 +979,7 @@ async function completeAbandonedPrompt(
   await flushMany(2);
   call.respond();
   await waitFor(() => rig.bridge.unresolvedPromptCount === 0, `ACP response for abandoned ${call.text}`);
-  rig.clock.advanceBy(300);
+  rig.clock.advanceBy(750);
   await waitFor(
     () => rig.matrixSdk.attempts.length >= expectedAttempts && !rig.bridge.isRoomActive(ROOM_ONE),
     `permanent Matrix abandonment for ${call.text}`,
@@ -1045,7 +1045,7 @@ void test("integration suppresses the complete first sync, delivers live text, a
       format: "org.matrix.custom.html",
       formatted_body: "<p>live reply</p>",
     });
-    assert.match(liveSend.transactionId ?? "", /^matrix-acp-live-[0-9a-f]{64}$/u);
+    assert.match(liveSend.transactionId ?? "", /^matrix-acp-text-[0-9a-f-]{36}-[0-9]+$/u);
     assert.equal(
       rig.peer.prompts.some((prompt) => prompt.text === "must be suppressed"),
       false,
@@ -1140,7 +1140,7 @@ void test("integration keeps same-room order, isolates sessions, and permits bou
       call.respond();
     }
     await waitFor(() => rig.bridge.unresolvedPromptCount === 0, "cross-room ACP responses");
-    rig.clock.advanceBy(300);
+    rig.clock.advanceBy(750);
     await waitFor(
       () =>
         rig.matrixSdk.sent.some((attempt) => attempt.content.body === "cross reply 1") &&
@@ -1200,7 +1200,7 @@ void test("integration reconnects Matrix, retries transient sends with one trans
     await flushMany(2);
     retryCall.respond();
     await waitFor(() => rig.bridge.unresolvedPromptCount === 0, "retry ACP response");
-    rig.clock.advanceBy(300);
+    rig.clock.advanceBy(750);
     await waitFor(() => rig.matrixSdk.attempts.length === 1, "first transient Matrix attempt");
     assert.equal(rig.matrixSdk.sent.length, 0);
     const retryTransactionId = rig.matrixSdk.attempts[0]?.transactionId;
@@ -1226,8 +1226,7 @@ void test("integration reconnects Matrix, retries transient sends with one trans
     const permanentCall = rig.peer.prompts[1]!;
     await completeAbandonedPrompt(rig, permanentCall, "abandoned reply", 3);
     const permanentAttempts = rig.matrixSdk.attempts.filter((attempt) => attempt.content.body === "abandoned reply");
-    assert.equal(permanentAttempts.length, 2);
-    assert.notEqual(permanentAttempts[0]?.transactionId, permanentAttempts[1]?.transactionId);
+    assert.equal(permanentAttempts.length, 1);
 
     rig.matrixSdk.emitInbound(
       sdkEvent({
@@ -1520,7 +1519,7 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
       call.respond();
     }
     await waitFor(() => seed!.bridge.unresolvedPromptCount === 0, "seed room responses");
-    seed.clock.advanceBy(300);
+    seed.clock.advanceBy(750);
     await waitFor(
       () => seed!.matrixSdk.sent.filter((attempt) => attempt.content.body?.toString().startsWith("seed ")).length === 2,
       "seed Matrix responses",
@@ -1584,7 +1583,7 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
       restart.peer.prompts[index]!.respond();
     }
     await waitFor(() => restart!.bridge.unresolvedPromptCount === 0, "restored room responses");
-    restart.clock.advanceBy(300);
+    restart.clock.advanceBy(750);
     await waitFor(
       () =>
         restart!.matrixSdk.sent.filter(
@@ -1646,7 +1645,7 @@ void test("M2 scenario 5: a stale mapping and /reset each create a fresh isolate
       call.respond();
     }
     await waitFor(() => seed!.bridge.unresolvedPromptCount === 0, "reset seed responses");
-    seed.clock.advanceBy(300);
+    seed.clock.advanceBy(750);
     await waitFor(
       () =>
         seed!.matrixSdk.sent.filter((attempt) => attempt.content.body?.toString().startsWith("seed reply")).length ===
@@ -1774,7 +1773,7 @@ void test("M2 scenario 6: typing spans only an active ACP turn", async () => {
       [true, true, false, true, false],
     );
     assert.ok(
-      rig.matrixSdk.operations.indexOf("message:typing one response") < rig.matrixSdk.operations.indexOf("typing:off"),
+      rig.matrixSdk.operations.indexOf("typing:off") < rig.matrixSdk.operations.indexOf("message:typing one response"),
     );
   } finally {
     await stopRig(rig, run);
@@ -1947,7 +1946,7 @@ void test("M2 scenario 9: completion precedes a lost Matrix response and ACP is 
     await flushMany(2);
     call.respond();
     await waitFor(() => first!.bridge.unresolvedPromptCount === 0, "response-loss ACP completion");
-    first.clock.advanceBy(300);
+    first.clock.advanceBy(750);
     await waitFor(() => !first!.bridge.isRoomActive(ROOM_ONE), "response-loss bridge completion");
 
     const saved = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
@@ -2336,7 +2335,7 @@ void test("encrypted thread steering routes silent injection, method errors and 
     first.respond();
     independent.respond();
     await waitFor(() => rig!.bridge.unresolvedPromptCount === 0, "both thread prompt responses");
-    rig.clock.advanceBy(300);
+    rig.clock.advanceBy(750);
     await waitFor(() => rig!.peer.prompts.length === 3, "thread fallback prompt");
     assert.equal(rig.peer.prompts[2]!.sessionId, first.sessionId);
     assert.equal(rig.peer.prompts[2]!.text, "queued");
@@ -2660,5 +2659,57 @@ void test("M3 scenario 11: missing or replaced crypto state fails closed without
     assert.equal(await readFile(join(stateDir, "crypto-state.json"), "utf8"), manifestBefore);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+void test("identified unsolicited continuations use the mapped SDK room or encrypted thread after prompt completion", async () => {
+  for (const responseMode of ["room", "thread"] as const) {
+    for (const encryption of ["disabled", "required"] as const) {
+      const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-unsolicited-"));
+      const base = encryption === "required" ? requiredConfig(stateDir) : { ...CONFIG, stateDir };
+      const settings: BridgeConfig = { ...base, matrix: { ...base.matrix, responseMode } };
+      let rig: IntegrationRig | undefined;
+      let run: Promise<DaemonExitCode> | undefined;
+      try {
+        if (encryption === "required") await prepareVerifiedCryptoState(settings);
+        rig = createRig(settings, encryption === "required" ? { cryptoAdapter: new HermeticCrypto() } : {});
+        ({ run } = await startRig(rig));
+        const root = "$unsolicited-root:example.org";
+        rig.matrixSdk.emitInbound(
+          sdkEvent({
+            eventId: root,
+            encrypted: encryption === "required",
+            ...(encryption === "required" ? { clearContent: { msgtype: "m.text", body: "start" } } : { body: "start" }),
+          }),
+        );
+        rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "unsolicited-cursor" });
+        await waitFor(() => rig!.peer.prompts.length === 1, "mapped session prompt");
+        const call = rig.peer.prompts[0]!;
+        await completePrompt(rig, call, "prefix");
+        call.update(" continuation", `message-${call.index}`);
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(() => rig!.matrixSdk.sent.length === 2, "unsolicited replacement");
+        const edit = rig.matrixSdk.sent[1]!;
+        assert.equal(edit.roomId, ROOM_ONE);
+        assert.equal(edit.wireEncrypted === true, encryption === "required");
+        assert.deepEqual(edit.content["m.relates_to"], { rel_type: "m.replace", event_id: "$sent-1:example.org" });
+        const replacement = edit.content["m.new_content"] as Record<string, unknown>;
+        assert.equal(replacement.body, "prefix continuation");
+        if (responseMode === "thread") {
+          assert.equal((replacement["m.relates_to"] as { event_id: string }).event_id, root);
+        }
+        call.update("background message", "unsolicited-new-id");
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(() => rig!.matrixSdk.sent.length === 3, "unsolicited new message");
+        assert.equal(rig.matrixSdk.sent[2]?.content.body, "background message");
+        assert.equal(rig.peer.prompts.length, 1);
+        assert.equal(rig.peer.frames.filter((frame) => frame.method === "session/prompt").length, 1);
+      } finally {
+        if (rig !== undefined && run !== undefined) await stopRig(rig, run);
+        await rm(stateDir, { recursive: true, force: true });
+      }
+    }
   }
 });

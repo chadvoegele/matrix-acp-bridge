@@ -79,6 +79,7 @@ export interface AcpProtocolError {
 export interface AcpTurnOutcome {
   readonly kind: "turn";
   readonly stopReason: AcpStopReason;
+  /** Compatibility text from ID-less chunks only; identified text belongs to session updates. */
   readonly text?: string;
 }
 
@@ -207,8 +208,7 @@ interface PendingPermission {
   readonly completion: Promise<RequestPermissionResponse>;
 }
 
-interface TextGroup {
-  readonly messageId?: string;
+interface PromptText {
   text: string;
 }
 
@@ -340,7 +340,7 @@ export class InheritedStdioAcpClient implements AcpClient {
 
   readonly #pendingPermissions = new Map<string, PendingPermission>();
 
-  readonly #activeTurns = new Map<string, TextGroup[]>();
+  readonly #activeTurns = new Map<string, PromptText>();
 
   readonly #startupInfoBySession = new Map<string, string>();
 
@@ -536,8 +536,8 @@ export class InheritedStdioAcpClient implements AcpClient {
       return error;
     }
 
-    const groups: TextGroup[] = [];
-    this.#activeTurns.set(sessionId, groups);
+    const collected: PromptText = { text: "" };
+    this.#activeTurns.set(sessionId, collected);
     const removeCancellation = cancellation.onCancel(() => {
       void this.cancel(sessionId).catch(() => {});
     });
@@ -558,11 +558,10 @@ export class InheritedStdioAcpClient implements AcpClient {
         this.#reportFatal("protocol", "session_prompt");
         return error;
       }
-      const collected = groups.map((group) => group.text).join("\n\n");
       const outcome: AcpTurnOutcome = {
         kind: "turn",
         stopReason: reason,
-        ...(collected.length === 0 ? {} : { text: collected }),
+        ...(collected.text.length === 0 ? {} : { text: collected.text }),
       };
       return outcome;
     } catch (error) {
@@ -572,7 +571,7 @@ export class InheritedStdioAcpClient implements AcpClient {
       return this.#classifyFailure("session_prompt", error, false);
     } finally {
       removeCancellation();
-      if (this.#activeTurns.get(sessionId) === groups) {
+      if (this.#activeTurns.get(sessionId) === collected) {
         this.#activeTurns.delete(sessionId);
       }
     }
@@ -954,27 +953,11 @@ export class InheritedStdioAcpClient implements AcpClient {
         this.#startupInfoBySession.delete(sessionId);
         return;
       }
-      const groups = this.#activeTurns.get(sessionId);
-      if (groups === undefined) return;
-      this.#collectText(groups, text, messageId);
+      const collected = this.#activeTurns.get(sessionId);
+      if (collected !== undefined && !messageId) collected.text += text;
     }
 
     this.#notifyUpdate(update);
-  }
-
-  #collectText(groups: TextGroup[], text: string, id: string | undefined): void {
-    const last = groups.at(-1);
-    if (last === undefined) {
-      groups.push(id === undefined ? { text } : { messageId: id, text });
-      return;
-    }
-
-    if (id !== undefined && last.messageId !== undefined && last.messageId !== id) {
-      groups.push({ messageId: id, text });
-      return;
-    }
-
-    last.text += text;
   }
 
   #notifyUpdate(update: AcpUpdate): void {

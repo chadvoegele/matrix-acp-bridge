@@ -362,7 +362,7 @@ void test("rejects a non-v1 negotiated version and emits one protocol fatal", as
   await client.close();
 });
 
-void test("maps text and ignored updates and joins distinct message IDs", async () => {
+void test("forwards identified text and activity without retaining prompt-final copies", async () => {
   const input = createFakeInput();
   const output = createFakeOutput();
   const client = newClient(input, output);
@@ -443,7 +443,6 @@ void test("maps text and ignored updates and joins distinct message IDs", async 
   assert.deepEqual(outcome, {
     kind: "turn",
     stopReason: "end_turn",
-    text: "hello world\n\nnext",
   });
   assert.deepEqual(updates, [
     {
@@ -904,7 +903,7 @@ void test("malformed optional activity fields do not escape into updates or diag
   await client.close();
 });
 
-void test("ignores agent text updates before a prompt while preserving later prompt text", async () => {
+void test("forwards unsolicited agent text without including it in later prompt text", async () => {
   const input = createFakeInput();
   const output = createFakeOutput();
   const client = newClient(input, output);
@@ -924,7 +923,7 @@ void test("ignores agent text updates before a prompt while preserving later pro
     }),
   );
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(updates, []);
+  assert.equal(updates.length, 1);
 
   const prompt = client.prompt(sessionId, "hello", {
     cancelled: false,
@@ -950,9 +949,9 @@ void test("ignores agent text updates before a prompt while preserving later pro
   assert.deepEqual(await prompt, {
     kind: "turn",
     stopReason: "end_turn",
-    text: "answer",
   });
   assert.deepEqual(updates, [
+    { sessionId, kind: "agent_message_chunk", text: "startup history", messageId: "startup-message" },
     {
       sessionId,
       kind: "agent_message_chunk",
@@ -1020,7 +1019,6 @@ void test("suppresses a session startup prelude that races the first prompt", as
   assert.deepEqual(await prompt, {
     kind: "turn",
     stopReason: "end_turn",
-    text: "actual prompt text",
   });
   assert.deepEqual(updates, [
     {
@@ -1468,7 +1466,7 @@ void test("steering replies concurrently on its own wire ID and preserves prompt
   cancellation.cancel("original turn cancelled");
   assert.deepEqual(await output.nextFrame(), { jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
   input.push(rpcResponse(promptFrame.id, { stopReason: "cancelled" }));
-  assert.deepEqual(await prompt, { kind: "turn", stopReason: "cancelled", text: "before after" });
+  assert.deepEqual(await prompt, { kind: "turn", stopReason: "cancelled" });
   assert.equal(updates.length, 3);
   assert.equal((updates[1] as { kind: string }).kind, "tool_call");
   assert.equal(fatal.errors.length, 0);
