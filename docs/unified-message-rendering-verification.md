@@ -2,8 +2,10 @@
 
 Chad's Agent audited the implementation against
 `specifications/unified-message-rendering.md`, the four-phase implementation plan,
-and the mandatory CODE.md guidelines. This report covers the integrated feature
-branch; no deployment or merge into main is authorized by these results.
+and the mandatory CODE.md guidelines. Tested implementation revision:
+`aeb7da5f9474e7a98132bb1a20a8b4b7beb08649`. The subsequent report-only commit
+does not change tested code. No deployment or merge into main is authorized by
+these results.
 
 ## Environment and results
 
