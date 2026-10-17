@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1090" viewBox="0 0 1280 1090" role="img" aria-labelledby="title description">
+  <title id="title">PR 28: session-owned output instead of prompt-owned output</title>
+  <desc id="description">The existing ACP client forwards identified text and activity to the changed bridge coordinator. Authorized session routing selects a new AgentTextBuffer and SessionActivity, sharing a new ConversationPublication queue. Their publisher callbacks reuse MatrixDelivery and the Matrix SDK. Session routing is retained by the existing session stores. Identified text and tool activity survive prompt completion.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#334155"/></marker>
+    <style>
+      text { font-family: DejaVu Sans, sans-serif; fill: #172033; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 20px; fill: #475569; }
+      .name { font-size: 23px; font-weight: 700; }
+      .body { font-size: 19px; }
+      .small { font-size: 17px; }
+      .code { font-family: DejaVu Sans Mono, monospace; font-size: 17px; }
+      .tag { font-size: 15px; font-weight: 700; letter-spacing: 1px; }
+      .new { fill: #e8f2ff; stroke: #2563eb; stroke-width: 2; }
+      .changed { fill: #fff4d6; stroke: #a16207; stroke-width: 2; }
+      .existing { fill: #f1f5f9; stroke: #64748b; stroke-width: 2; }
+      .flow { fill: none; stroke: #334155; stroke-width: 2.5; marker-end: url(#arrow); }
+      .control { fill: none; stroke: #64748b; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1280" height="1090" fill="#ffffff"/>
+  <text x="40" y="50" class="title">The change: rendering belongs to the live session</text>
+  <text x="40" y="83" class="subtitle">Identified assistant text and tool activity keep flowing after the prompt response.</text>
+  <rect x="40" y="108" width="22" height="22" rx="4" class="new"/><text x="72" y="125" class="small">New component</text>
+  <rect x="270" y="108" width="22" height="22" rx="4" class="changed"/><text x="302" y="125" class="small">Existing, changed</text>
+  <rect x="530" y="108" width="22" height="22" rx="4" class="existing"/><text x="562" y="125" class="small">Existing, reused</text>
+  <path d="M 820 119 H 865" class="flow"/><text x="880" y="125" class="small">Data / call</text>
+  <path d="M 1040 119 H 1085" class="control"/><text x="1100" y="125" class="small">Routing</text>
+
+  <rect x="40" y="190" width="320" height="155" rx="12" class="changed"/>
+  <text x="60" y="219" class="tag">ACP ADAPTER · CHANGED</text>
+  <text x="60" y="252" class="name">InheritedStdioAcpClient</text>
+  <text x="60" y="284" class="body">Forward session updates even</text>
+  <text x="60" y="310" class="body">without a pending prompt.</text>
+  <path d="M 360 275 H 460" class="flow"/>
+  <text x="410" y="231" text-anchor="middle" class="code">onUpdate</text>
+  <text x="410" y="254" text-anchor="middle" class="small">AcpUpdate</text>
+
+  <rect x="460" y="190" width="360" height="155" rx="12" class="changed"/>
+  <text x="480" y="219" class="tag">ROUTING / LIFECYCLE · CHANGED</text>
+  <text x="480" y="252" class="name">BridgeCoordinator</text>
+  <text x="480" y="284" class="body">Filter replay / stale updates;</text>
+  <text x="480" y="310" class="body">select renderer by sessionId.</text>
+
+  <rect x="920" y="190" width="320" height="155" rx="12" class="existing"/>
+  <text x="940" y="219" class="tag">SESSION STORES · REUSED</text>
+  <text x="940" y="252" class="name">Conversation identity</text>
+  <text x="940" y="284" class="body">sessionId ↔ room / thread</text>
+  <text x="940" y="310" class="body">Durable routing, not text history.</text>
+  <path d="M 920 275 H 820" class="control"/>
+  <text x="870" y="244" text-anchor="middle" class="small">lookup /</text>
+  <text x="870" y="265" text-anchor="middle" class="small">restore</text>
+
+  <rect x="130" y="410" width="1020" height="395" rx="18" fill="#fbfdff" stroke="#94a3b8" stroke-width="2" stroke-dasharray="9 6"/>
+  <text x="640" y="443" text-anchor="middle" class="body" font-weight="700">One SessionRendering per live sessionId</text>
+  <path d="M 550 345 V 385 H 355 V 465" class="flow"/>
+  <text x="310" y="373" text-anchor="middle" class="small">Identified text: messageId + delta</text>
+  <path d="M 730 345 V 385 H 925 V 465" class="flow"/>
+  <text x="990" y="373" text-anchor="middle" class="small">Thought / tool updates</text>
+
+  <rect x="175" y="465" width="360" height="145" rx="12" class="new"/>
+  <text x="195" y="495" class="tag">NEW</text>
+  <text x="195" y="526" class="name">AgentTextBuffer</text>
+  <text x="195" y="558" class="body">append(messageId, delta)</text>
+  <text x="195" y="585" class="body">Paced, progressive originals / edits.</text>
+
+  <rect x="745" y="465" width="360" height="145" rx="12" class="new"/>
+  <text x="765" y="495" class="tag">NEW OWNER; EXISTING PRESENTATION</text>
+  <text x="765" y="526" class="name">SessionActivity</text>
+  <text x="765" y="558" class="body">accept(AcpUpdate)</text>
+  <text x="765" y="585" class="body">Retain parallel tools until terminal.</text>
+
+  <path d="M 355 610 V 655 H 520 V 690" class="flow"/>
+  <rect x="212" y="617" width="286" height="27" fill="#fbfdff"/>
+  <text x="355" y="637" text-anchor="middle" class="code">enqueue(block, operation)</text>
+  <path d="M 925 610 V 655 H 760 V 690" class="flow"/>
+  <rect x="782" y="617" width="286" height="27" fill="#fbfdff"/>
+  <text x="925" y="637" text-anchor="middle" class="code">enqueue(batch, operation)</text>
+  <rect x="460" y="690" width="360" height="90" rx="12" class="new"/>
+  <text x="640" y="725" text-anchor="middle" class="name">ConversationPublication</text>
+  <text x="640" y="754" text-anchor="middle" class="body">Bounded FIFO; coalesce pending keys.</text>
+
+  <path d="M 640 780 V 870" class="flow"/>
+  <text x="660" y="831" class="small">Execute owner publisher callbacks</text>
+  <rect x="460" y="870" width="360" height="120" rx="12" class="existing"/>
+  <text x="480" y="899" class="tag">DELIVERY POLICY · REUSED</text>
+  <text x="480" y="932" class="name">MatrixDelivery.sendLive()</text>
+  <text x="480" y="965" class="body">Room serialization + transport retries.</text>
+  <path d="M 820 947 H 920" class="flow"/>
+  <text x="870" y="917" text-anchor="middle" class="small">SDK call</text>
+  <rect x="920" y="870" width="320" height="120" rx="12" class="existing"/>
+  <text x="940" y="899" class="tag">MATRIX ADAPTER / SDK · REUSED</text>
+  <text x="940" y="932" class="name">sendHtmlMessage()</text>
+  <text x="940" y="965" class="body">Room / thread; normal encryption.</text>
+
+  <text x="40" y="885" class="tag">COMPARED WITH THE OLD PATH</text>
+  <text x="40" y="920" class="body">No prompt-final copy of identified text.</text>
+  <text x="40" y="950" class="body">No turn-owned tool retirement.</text>
+  <text x="40" y="980" class="body">ID-less solicited fallback is retained.</text>
+  <text x="40" y="1045" class="subtitle">Same renderer before and after prompt completion; existing Matrix transport and room/thread policy stay in place.</text>
+</svg>

@@ -114,8 +114,9 @@ unsolicited text is diagnosed and omitted. Restart retains conversation routing
 but discards text/event mappings; continuing live chunks start a fresh block.
 Reset and shutdown cancel buffered output and diagnose abandoned publication.
 
-See [unified rendering tests](agent_tests/test_unified_rendering/README.md) and
-the [verification report](docs/unified-message-rendering-verification.md) for
+See the [component diagrams](docs/unified-rendering-architecture.md) for architecture
+and interfaces, [unified rendering tests](agent_tests/test_unified_rendering/README.md)
+and the [verification report](docs/unified-message-rendering-verification.md) for
 commands, coverage and live-test limits.
 
 ## Encryption Setup
