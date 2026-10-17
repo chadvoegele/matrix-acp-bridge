@@ -6,6 +6,7 @@ const sessions = new Map();
 const observations = new Map();
 
 function waitForObservation(marker, stage) {
+  if (process.argv.includes("--recover") && stage !== "reset") return Promise.resolve();
   return new Promise((resolve) => observations.set(`${marker}/${stage}`, resolve));
 }
 

@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { childExit } from "./acp.mjs";
 import { repoRoot, writePrivateFile } from "./common.mjs";
 import { makeConfig } from "../test_unencrypted_message/lib.mjs";
+import { openBridgeStateStore } from "../../dist/bridge-state.js";
 
 function stopProcessGroup(pid) {
   try {
@@ -74,7 +75,7 @@ async function startMatrixFixture(root) {
       else if (path.endsWith("/joined_rooms")) body = { joined_rooms: [roomId] };
       else if (path.endsWith("/state")) body = members;
       else if (path.endsWith("/sync")) {
-        const since = Number(url.searchParams.get("since") ?? events.length);
+        const since = Number(url.searchParams.get("since") ?? 0);
         if (since >= events.length) await pause(25);
         body = {
           next_batch: String(events.length),
@@ -157,6 +158,7 @@ for (const mode of ["room", "thread"]) {
           homeserver: fixture.homeserver,
           roomId: fixture.roomId,
           acpCwd: root,
+          privateRoot: root,
           acpCommand: [process.execPath, join(repoRoot, "agent_tests/e2e-support/scripted-unified-acp.mjs")],
           bridge: {
             userId: fixture.bridgeUser,
@@ -173,6 +175,28 @@ for (const mode of ["room", "thread"]) {
           environment.bridge.configFile,
           makeConfig(environment).replace('response_mode = "room"', `response_mode = "${mode}"`),
         );
+        const recoveredMarker = "CAFE00000001";
+        if (mode === "room") {
+          environment.bridge.ownership = "reusable";
+          const state = await openBridgeStateStore({
+            stateDir: environment.bridge.stateDir,
+            identity: {
+              homeserver: environment.homeserver,
+              userId: environment.bridge.userId,
+              deviceId: environment.bridge.deviceId,
+            },
+          });
+          await state.establishInitialBaseline([]);
+          await state.flush();
+          fixture.events.push({
+            event_id: "$backlog-probe",
+            room_id: fixture.roomId,
+            type: "m.room.message",
+            sender: fixture.senderUser,
+            origin_server_ts: Date.now(),
+            content: { msgtype: "m.text", body: `UNIFIED_STREAM_${recoveredMarker}` },
+          });
+        }
         const environmentPath = join(root, "environment.json");
         await writePrivateFile(environmentPath, JSON.stringify(environment));
         child = spawn(process.execPath, [join(repoRoot, "agent_tests/e2e-support/unified-wire.mjs"), environmentPath], {
@@ -202,6 +226,15 @@ for (const mode of ["room", "thread"]) {
         });
         assert.match(output, /2 streams, stale-session reset and buffered shutdown passed/u);
         assert.deepEqual(fixture.unexpected, []);
+        if (mode === "room") {
+          assert.match(output, /Unified profile recovery: 1 queued prompts processed/u);
+          assert(
+            fixture.events.some((event) => event.content.body === `UNIFIED_DONE_${recoveredMarker}`),
+            "recovered input did not finish normal rendering",
+          );
+          const state = JSON.parse(await readFile(join(environment.bridge.stateDir, "bridge-state.json"), "utf8"));
+          assert(state.completedEventIds[fixture.roomId].includes("$backlog-probe"), "recovery discarded the ledger");
+        }
       } finally {
         if (child?.pid) {
           stopProcessGroup(child.pid);

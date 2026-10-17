@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 
 import { startBridgePair, stopBridgePair, waitFor } from "./acp.mjs";
 import { ThreadSessionMonitor } from "./thread-sessions.mjs";
 import { assertUnifiedStream, effectiveContent } from "./unified-observations.mjs";
+import { warmProfile } from "./warm-profile.mjs";
 import { installLiveDecryptionFailureHandler } from "../test_encrypted_message/decryption-failure-gate.mjs";
 import { createAdapter as createEncryptedAdapter } from "../test_encrypted_message/lib.mjs";
 import { readEnvironment, readToken } from "../test_unencrypted_message/lib.mjs";
@@ -151,6 +153,14 @@ async function assertWire(eventsToCheck) {
 }
 
 try {
+  if (environment.bridge.ownership === "reusable") {
+    const evidencePath = join(environment.privateRoot, "unified-profile-recovery.json");
+    await warmProfile(environment, evidencePath, [...environment.acpCommand, "--recover"]);
+    const recovery = JSON.parse(await readFile(evidencePath, "utf8"));
+    process.stdout.write(
+      `Unified profile recovery: ${recovery.prompts} queued prompts processed; ${recovery.sessionsDeleted} sessions cleaned.\n`,
+    );
+  }
   pair = await startBridgePair(environment, {
     onPair: (value) => {
       pair = value;

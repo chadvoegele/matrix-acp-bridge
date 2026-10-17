@@ -38,6 +38,13 @@ These harness-only ACP notifications do not submit prompts or alter production
 buffering. Slow homeserver delivery can therefore coalesce freely without skipping
 an intermediate snapshot required by this scenario.
 
+Reusable profiles first run the existing profile-recovery path with the same
+scripted peer in `--recover` mode. Recovered streams advance without snapshot
+acknowledgments; the strict scenario still gates every intermediate delivery.
+Recovery handles old room inputs normally, records their terminal IDs, deletes
+its exact ACP sessions, and detaches mappings while preserving the ledger and
+crypto. Its sanitized prompt/session counts are included in the live log.
+
 Originals and replacement targets, exact text counts, thread roots/fallbacks,
 HTML, event-size bounds and raw wire types are asserted. Observations require
 server timestamps at/after the input. Encrypted runs require authenticated
@@ -67,7 +74,9 @@ The first scoped command runs the same plaintext runner in room and thread modes
 against a loopback HTTPS Matrix **protocol fixture**, with actual bridge, ACP and
 sender subprocesses and the real Matrix SDK. It delays progressive HTTP publications by three
 seconds, exceeding the former 1.1-second scripted pacing, to regress intermediate
-snapshot coalescing. It creates an ephemeral one-day
+snapshot coalescing. The room fixture also starts with an initialized ledger and
+an unseen prior probe: recovery must publish its final output and preserve its
+completed ID before the strict streams begin. It creates an ephemeral one-day
 certificate using `openssl`, trusts only that certificate through
 `NODE_EXTRA_CA_CERTS`, and removes its temporary config/state/certificate and
 process group. TLS validation remains enabled. It has no real accounts/devices,
