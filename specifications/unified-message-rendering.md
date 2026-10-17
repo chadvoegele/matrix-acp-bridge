@@ -16,6 +16,12 @@ The bridge currently collects output within an active prompt. An extension can t
 
 This specification replaces the agent-text portion of **Eager Message Rendering** in [Verbose ACP output](verbose-acp-output.md): identified messages may be sent incrementally and edited rather than sent only once at inferred completion. Existing thought/tool presentation remains unchanged unless needed to preserve routing and ordering.
 
+## Design overview
+
+![Unified message rendering: solicited and unsolicited output shares a session-scoped block and buffered Matrix send/edit path.](diagrams/unified-message-rendering.svg)
+
+Both sources deliver the same identified text chunks. The bridge routes by session, appends to the current message block, and buffers publication through an ordered conversation queue. The first flush sends a Matrix message; later flushes edit it in place. A different assistant message ID retires the previous block after delivery. Prompt completion remains separate from rendering.
+
 ## Goals
 
 - Display solicited and unsolicited assistant text through the same renderer.
