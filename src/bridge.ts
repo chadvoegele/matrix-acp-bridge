@@ -4,8 +4,7 @@ import { createCancellationController } from "./cancellation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { AgentTextBuffer } from "./agent-text-buffer.js";
 import { ConversationPublication } from "./conversation-publication.js";
-import { AcpActivityModel, type AcpActivity } from "./acp-activity.js";
-import { AcpActivityBatches, type ActivityBatch } from "./acp-activity-batches.js";
+import { SessionActivity } from "./session-activity.js";
 import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
 import type { MatrixSafeHtml } from "./matrix-html.js";
 import { systemClock, clampTimerMilliseconds } from "./clock.js";
@@ -161,8 +160,9 @@ interface ActiveRun {
   typingStarted: boolean;
 }
 
-interface SessionTextRendering {
+interface SessionRendering {
   readonly buffer: AgentTextBuffer;
+  readonly activity: SessionActivity;
   readonly queue: ConversationPublication;
   warnedIdless: boolean;
 }
@@ -174,21 +174,11 @@ interface TextGroup {
   sentLength: number;
 }
 
-interface ActivityBatchDelivery {
-  eventId?: MatrixEventId;
-  revision: number;
-  pending: boolean;
-  dirty: boolean;
-}
-
 interface TurnCollector extends MatrixOutputRouting {
   readonly sessionId: AcpSessionId;
   readonly publication: ConversationPublication | undefined;
   identifiedText: boolean;
   readonly groups: TextGroup[];
-  readonly activity: AcpActivityModel;
-  readonly activityBatches: AcpActivityBatches;
-  readonly batchDeliveries: WeakMap<ActivityBatch, ActivityBatchDelivery>;
   outboundTail: Promise<void>;
   liveFailed: boolean;
   lastTextGroup: TextGroup | undefined;
@@ -394,7 +384,7 @@ export class BridgeCoordinator {
 
   readonly #closedMessageIds = new Map<AcpSessionId, { readonly set: Set<string>; readonly order: string[] }>();
 
-  readonly #textBySession = new Map<AcpSessionId, SessionTextRendering>();
+  readonly #renderingBySession = new Map<AcpSessionId, SessionRendering>();
 
   readonly #turnsBySession = new Map<AcpSessionId, TurnCollector>();
 
@@ -715,7 +705,7 @@ export class BridgeCoordinator {
     this.#stopping = true;
     this.#intakeOpen = false;
     this.#dispatchOpen = false;
-    for (const sessionId of this.#textBySession.keys()) this.#retireSessionText(sessionId);
+    for (const sessionId of this.#renderingBySession.keys()) this.#retireSessionRendering(sessionId);
     this.#delivery.cancelRetries();
     try {
       this.#matrix.stopIntake();
@@ -1184,7 +1174,7 @@ export class BridgeCoordinator {
           if (this.#loadSession) await this.#stateStore?.resetConversation(run.conversation.identity);
           this.#sessionStore.resetConversation(run.conversation.identity);
           if (run.conversation.sessionId !== undefined) {
-            this.#retireSessionText(run.conversation.sessionId);
+            this.#retireSessionRendering(run.conversation.sessionId);
             this.#closedMessageIds.delete(run.conversation.sessionId);
           }
           run.conversation.sessionId = undefined;
@@ -1238,7 +1228,7 @@ export class BridgeCoordinator {
         return;
       }
 
-      const rendering = this.#sessionText(run.conversation, session.sessionId, run.entry.event);
+      const rendering = this.#sessionRendering(run.conversation, session.sessionId, run.entry.event);
       const releasePermit = await this.#semaphore.acquire();
       if (releasePermit === undefined || this.#stopping || this.#fatal !== undefined) {
         releasePermit?.();
@@ -1255,13 +1245,6 @@ export class BridgeCoordinator {
         publication: rendering?.queue,
         identifiedText: false,
         groups: [],
-        activity: new AcpActivityModel(),
-        activityBatches: new AcpActivityBatches({
-          maxEvents: this.#config.limits.maxActivityEventsPerMessage,
-          maxMessageBytes: this.#config.limits.maxMatrixMessageBytes,
-          measure: (rendered) => matrixHtmlEditContentBytes({ ...rendered, ...routing }),
-        }),
-        batchDeliveries: new WeakMap(),
         outboundTail: Promise.resolve(),
         liveFailed: false,
         lastTextGroup: undefined,
@@ -1393,13 +1376,13 @@ export class BridgeCoordinator {
     }
   }
 
-  #sessionText(
+  #sessionRendering(
     conversation: ConversationState,
     sessionId: AcpSessionId,
     event: NormalizedInboundEvent,
-  ): SessionTextRendering | undefined {
+  ): SessionRendering | undefined {
     if (this.#matrix.sendHtmlMessage === undefined) return;
-    const existing = this.#textBySession.get(sessionId);
+    const existing = this.#renderingBySession.get(sessionId);
     if (existing !== undefined && !existing.queue.stopped) return existing;
     const routing = routingForEvent(event);
     const generation = randomUUID();
@@ -1421,7 +1404,7 @@ export class BridgeCoordinator {
       routing,
       clock: this.#clock,
       publish: async (publication) => {
-        if (this.#textBySession.get(sessionId)?.buffer !== buffer || conversation.sessionId !== sessionId) return;
+        if (this.#renderingBySession.get(sessionId)?.buffer !== buffer || conversation.sessionId !== sessionId) return;
         this.#outboundOperations += 1;
         try {
           return await this.#delivery.sendLive({
@@ -1439,17 +1422,55 @@ export class BridgeCoordinator {
         }
       },
     });
-    const rendering = { buffer, queue, warnedIdless: false };
-    this.#textBySession.set(sessionId, rendering);
+    const activity = new SessionActivity({
+      queue,
+      limits: {
+        maxEvents: this.#config.limits.maxActivityEventsPerMessage,
+        maxMessageBytes: this.#config.limits.maxMatrixMessageBytes,
+        measure: (rendered) => matrixHtmlEditContentBytes({ ...rendered, ...routing }),
+      },
+      maxRetainedEvents:
+        this.#config.limits.maxActivityEventsPerMessage * (this.#config.limits.maxQueuedTurnsPerConversation + 1),
+      onAbandoned: (reason) => {
+        this.#diagnostic("warn", "agent-activity-abandoned", { kind: reason });
+        if (reason === "capacity") {
+          this.#triggerFatal({ code: "matrix_transport", message: "Agent activity capacity exceeded" });
+        }
+      },
+      publish: async (rendered, targetEventId) => {
+        if (this.#renderingBySession.get(sessionId)?.buffer !== buffer || conversation.sessionId !== sessionId) return;
+        if (
+          matrixHtmlContentBytes({ ...rendered, ...routing }, targetEventId) > this.#config.limits.maxMatrixMessageBytes
+        )
+          return;
+        this.#outboundOperations += 1;
+        try {
+          return await this.#delivery.sendLive({
+            ...routing,
+            roomId: conversation.identity.roomId,
+            transactionId: `matrix-acp-activity-${generation}-${revision++}`,
+            body: rendered.body,
+            formattedBody: rendered.formattedBody as MatrixSafeHtml,
+            ...(targetEventId === undefined ? {} : { targetEventId }),
+          });
+        } finally {
+          this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
+          this.#resolveIdleWaiters();
+          this.#maybeFinalizeStop();
+        }
+      },
+    });
+    const rendering = { buffer, activity, queue, warnedIdless: false };
+    this.#renderingBySession.set(sessionId, rendering);
     return rendering;
   }
 
-  #retireSessionText(sessionId: AcpSessionId): void {
-    const rendering = this.#textBySession.get(sessionId);
+  #retireSessionRendering(sessionId: AcpSessionId): void {
+    const rendering = this.#renderingBySession.get(sessionId);
     if (rendering === undefined) return;
     if (rendering.buffer.hasPendingText) this.#diagnostic("warn", "agent-text-abandoned", { kind: "lifecycle" });
     rendering.queue.stop();
-    this.#textBySession.delete(sessionId);
+    this.#renderingBySession.delete(sessionId);
   }
 
   async #sessionForConversation(conversation: ConversationState): Promise<SessionResolution> {
@@ -1912,7 +1933,6 @@ export class BridgeCoordinator {
       return;
     }
     turn.closed = true;
-    turn.activity.close();
     if (turn.quietTimer !== undefined) {
       this.#clock.clearTimeout(turn.quietTimer);
     }
@@ -1951,19 +1971,16 @@ export class BridgeCoordinator {
       return;
     }
     if (this.#stopping || this.#fatal !== undefined) return;
-    const rendering = this.#textBySession.get(update.sessionId);
+    const rendering = this.#renderingBySession.get(update.sessionId);
     const turn = this.#turnsBySession.get(update.sessionId);
     if (rendering !== undefined && update.kind === "agent_message_chunk" && update.messageId) {
       if (typeof update.text !== "string" || update.text.length === 0) return;
       if (turn !== undefined && !turn.closed) {
         turn.identifiedText = true;
-        turn.activity.accept(update);
         if (turn.resolveDrain !== undefined) this.#finishDrain(turn, { text: joinedGroups(turn.groups), fatal: false });
         this.#closeTextGroup(turn);
-        if (update.text.trim()) {
-          for (const batch of turn.activityBatches.collapse()) this.#scheduleBatch(turn, batch);
-        }
       }
+      rendering.activity.accept(update);
       rendering.buffer.append(update.messageId, update.text);
       return;
     }
@@ -1974,23 +1991,18 @@ export class BridgeCoordinator {
       }
       return;
     }
-    if (turn === undefined || turn.closed || turn.drainComplete) {
-      return;
-    }
-    if (update.kind !== "agent_message_chunk") {
-      if (update.kind === "agent_thought_chunk" || update.kind === "tool_call" || update.kind === "tool_call_update") {
-        if (this.#matrix.sendHtmlMessage === undefined) return;
-        const activity = turn.activity.accept(update);
-        if (activity !== undefined) {
-          if (update.kind === "tool_call" || (update.kind === "agent_thought_chunk" && update.text?.trim())) {
-            rendering?.buffer.flush();
-            this.#closeTextGroup(turn);
-          }
-          this.#acceptActivity(turn, activity);
-        }
+    if (
+      rendering !== undefined &&
+      (update.kind === "agent_thought_chunk" || update.kind === "tool_call" || update.kind === "tool_call_update")
+    ) {
+      if (update.kind === "tool_call" || (update.kind === "agent_thought_chunk" && update.text.trim())) {
+        rendering.buffer.flush();
+        if (turn !== undefined && !turn.closed) this.#closeTextGroup(turn);
       }
+      rendering.activity.accept(update);
       return;
     }
+    if (turn === undefined || turn.closed || turn.drainComplete || update.kind !== "agent_message_chunk") return;
     if (typeof update.text !== "string" || update.text.length === 0) return;
     const messageId = update.messageId;
     if (messageId !== undefined && this.#closedMessageIds.get(update.sessionId)?.set.has(messageId)) {
@@ -2006,10 +2018,7 @@ export class BridgeCoordinator {
     ) {
       return;
     }
-    if (update.text.trim()) {
-      for (const batch of turn.activityBatches.collapse()) this.#scheduleBatch(turn, batch);
-    }
-    turn.activity.accept(update);
+    rendering?.activity.accept(update);
     this.#appendText(turn, messageId, update.text);
     if (update.text.length > 0) {
       turn.hasText = true;
@@ -2066,11 +2075,6 @@ export class BridgeCoordinator {
     });
   }
 
-  #acceptActivity(turn: TurnCollector, activity: AcpActivity): void {
-    if (this.#matrix.sendHtmlMessage === undefined) return;
-    for (const batch of turn.activityBatches.accept(activity)) this.#scheduleBatch(turn, batch);
-  }
-
   #enqueueLive(turn: TurnCollector, operation: () => Promise<void>): void {
     if (turn.publication !== undefined) {
       turn.publication.enqueue({}, operation);
@@ -2080,59 +2084,6 @@ export class BridgeCoordinator {
     turn.outboundTail = turn.outboundTail.then(operation).catch(() => {
       turn.liveFailed = true;
       this.#diagnostic("warn", "matrix-live-abandoned", { kind: "unexpected" });
-    });
-  }
-
-  #scheduleBatch(turn: TurnCollector, batch: ActivityBatch): void {
-    if (this.#matrix.sendHtmlMessage === undefined || turn.liveFailed) return;
-    let delivery = turn.batchDeliveries.get(batch);
-    if (delivery === undefined) {
-      delivery = { revision: 0, pending: false, dirty: false };
-      turn.batchDeliveries.set(batch, delivery);
-    }
-    const state = delivery;
-    state.dirty = true;
-    if (state.pending) return;
-    state.pending = true;
-    // Capture the first expanded view before queued sends or a later agent
-    // message can collapse this batch. Otherwise its original event may arrive
-    // already collapsed, with no live version for the user to see.
-    const initial = state.eventId === undefined ? turn.activityBatches.render(batch) : undefined;
-    this.#enqueueLive(turn, async () => {
-      try {
-        let first = initial;
-        while (state.dirty && !turn.liveFailed) {
-          state.dirty = false;
-          const rendered = first ?? turn.activityBatches.render(batch);
-          first = undefined;
-          if (
-            matrixHtmlEditContentBytes({ ...rendered, ...routingForTurn(turn) }) >
-            this.#config.limits.maxMatrixMessageBytes
-          ) {
-            turn.liveFailed = true;
-            this.#diagnostic("warn", "matrix-live-abandoned", { kind: "size" });
-            break;
-          }
-          const id = await this.#deliverLive(
-            turn,
-            `activity-${batch.index}`,
-            state.revision++,
-            rendered,
-            state.eventId,
-          );
-          if (id === undefined) {
-            turn.liveFailed = true;
-            break;
-          }
-          state.eventId = id;
-          if (rendered === initial) {
-            const current = turn.activityBatches.render(batch);
-            if (current.body !== rendered.body || current.formattedBody !== rendered.formattedBody) state.dirty = true;
-          }
-        }
-      } finally {
-        state.pending = false;
-      }
     });
   }
 

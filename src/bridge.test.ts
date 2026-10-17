@@ -5074,3 +5074,117 @@ void test("thought grouping resumes after identified text without whitespace or 
   await f.completion;
   await f.bridge.stop();
 });
+
+void test("unsolicited thoughts and parallel tools survive prompt completion and assistant ID transitions", async () => {
+  const f = await identifiedFixture();
+  f.text("prompt answer");
+  f.finish();
+  await f.completion;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "background-thought",
+    text: "background plan",
+  });
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call", toolCallId: "first", title: "first", status: "in_progress" });
+  f.text("background answer", "background");
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call",
+    toolCallId: "second",
+    title: "second",
+    status: "in_progress",
+  });
+  f.text("next answer", "next");
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("second")));
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "second",
+    status: "failed",
+    content: [{ type: "content", text: "second result" }],
+  });
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "first",
+    status: "completed",
+    content: [{ type: "content", text: "first result" }],
+  });
+  await waitFor(
+    () =>
+      f.matrix.html.some((message) => message.body.includes("first result")) &&
+      f.matrix.html.some((message) => message.body.includes("second result")),
+  );
+  assert.equal(f.acp.promptCalls.length, 1);
+  assert.equal(f.matrix.sent.length, 0);
+  assert.ok(f.matrix.html.some((message) => message.body.includes("background plan")));
+  for (const result of ["first result", "second result"]) {
+    const edit = f.matrix.html.find((message) => message.body.includes(result));
+    assert.ok(edit?.targetEventId);
+    assert.match(edit.formattedBody, /Past agent events/);
+    assert.equal(edit.roomId, ROOM_ONE);
+  }
+  const count = f.matrix.html.length;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "first",
+    status: "failed",
+    content: [{ type: "content", text: "obsolete" }],
+  });
+  await flush();
+  assert.equal(f.matrix.html.length, count);
+  await f.bridge.stop();
+});
+
+void test("reset retires unsolicited running tools and drops stale terminal updates", async () => {
+  const f = await identifiedFixture();
+  f.text("answer");
+  f.finish();
+  await f.completion;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call",
+    toolCallId: "background",
+    title: "background",
+    status: "in_progress",
+  });
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("background")));
+  await f.bridge.handleTimelineEvent(event("$reset-activity", ROOM_ONE, "/reset"));
+  const count = f.matrix.html.length;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "background",
+    status: "completed",
+    content: [{ type: "content", text: "stale result" }],
+  });
+  await flush();
+  assert.equal(f.matrix.html.length, count);
+  assert.ok(f.diagnostics.some((record) => record.event === "agent-activity-abandoned"));
+  await f.bridge.stop();
+});
+
+void test("ACP subprocess failure abandons unsolicited running tools and ignores subsequent updates", async () => {
+  const f = await identifiedFixture();
+  f.text("answer");
+  f.finish();
+  await f.completion;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call",
+    toolCallId: "background",
+    title: "background",
+    status: "in_progress",
+  });
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("background")));
+  f.acp.emitFatal({ code: "acp_transport", message: "ACP subprocess exited" });
+  await f.bridge.stop();
+  const count = f.matrix.html.length;
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call_update", toolCallId: "background", status: "completed" });
+  await flush();
+  assert.equal(f.matrix.html.length, count);
+  assert.ok(f.diagnostics.some((record) => record.event === "agent-activity-abandoned"));
+  assert.equal(f.clock.pendingTimerCount, 0);
+});

@@ -26,6 +26,8 @@ export class AcpActivityBatches {
 
   #current: MutableActivityBatch | undefined;
 
+  #nextIndex = 0;
+
   constructor(readonly limits: ActivityBatchLimits) {}
 
   accept(activity: AcpActivity): readonly ActivityBatch[] {
@@ -57,6 +59,26 @@ export class AcpActivityBatches {
     return changed;
   }
 
+  get retainedCount(): number {
+    return this.#batches.length;
+  }
+
+  release(batch: ActivityBatch): void {
+    const index = this.#batches.indexOf(batch as MutableActivityBatch);
+    if (index === -1) return;
+    this.#batches.splice(index, 1);
+    for (const event of batch.events) this.#eventBatches.delete(event);
+    if (this.#current === batch) this.#current = undefined;
+  }
+
+  clear(): void {
+    for (const batch of this.#batches) {
+      for (const event of batch.events) this.#eventBatches.delete(event);
+    }
+    this.#batches.length = 0;
+    this.#current = undefined;
+  }
+
   render(batch: ActivityBatch): RenderedAcpActivity {
     const wrapperStart = batch.collapsed
       ? `<details><summary>Past agent events (${batch.events.length})</summary>`
@@ -83,7 +105,7 @@ export class AcpActivityBatches {
     const previous = this.#batches.at(-1);
     if (previous !== undefined) this.#collapse(previous, changed);
     const batch: MutableActivityBatch = {
-      index: this.#batches.length,
+      index: this.#nextIndex++,
       events: [],
       collapsed: false,
     };

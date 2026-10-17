@@ -86,7 +86,7 @@ void test("thought runs ignore spacing, use IDs, and close at agent-message and 
     }),
     undefined,
   );
-  assert.equal(model.events.length, 4);
+  assert.equal(model.events.length, 0);
 });
 
 void test("one streamed thought retains paragraph breaks and unbolds heading-like paragraphs", () => {

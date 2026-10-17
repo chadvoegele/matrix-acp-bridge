@@ -129,7 +129,7 @@ function rawFallback(value: AcpToolCallUpdate["rawOutput"]): BoundedText | undef
   return found ? { text, cut } : undefined;
 }
 
-/** Holds one turn's bounded, normalized activity. Tool updates change the original event object. */
+/** Holds retained session activity. Tool updates change the original event object. */
 export class AcpActivityModel {
   readonly events: AcpActivity[] = [];
 
@@ -143,6 +143,20 @@ export class AcpActivityModel {
 
   close(): void {
     this.#closed = true;
+    this.events.length = 0;
+    this.#tools.clear();
+    this.#thoughts.clear();
+    this.#lastThought = undefined;
+  }
+
+  release(events: readonly AcpActivity[]): void {
+    for (const event of events) {
+      const index = this.events.indexOf(event);
+      if (index !== -1) this.events.splice(index, 1);
+      if (event.type === "tool" && event.toolCallId) this.#tools.delete(event.toolCallId);
+      if (event.type === "thought" && event.messageId) this.#thoughts.delete(event.messageId);
+      if (this.#lastThought === event) this.#lastThought = undefined;
+    }
   }
 
   accept(update: AcpUpdate): AcpActivity | undefined {
@@ -241,4 +255,8 @@ export class AcpActivityModel {
     }
     return event;
   }
+}
+
+export function isActiveTool(activity: AcpActivity): boolean {
+  return activity.type === "tool" && activity.status !== "completed" && activity.status !== "failed";
 }
