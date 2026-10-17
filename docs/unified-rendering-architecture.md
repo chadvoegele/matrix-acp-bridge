@@ -66,3 +66,10 @@ Sources: [coordinator](../src/bridge.ts), [text buffer](../src/agent-text-buffer
 [session activity](../src/session-activity.ts),
 [publication queue](../src/conversation-publication.ts).
 The SVGs are self-contained, editable source files with no external assets.
+
+## Proposed next design
+
+The [collector-based output rendering draft](../specifications/collector-based-output-rendering.md)
+proposes shared text collection/flush rules, separate activity composition and
+emitter-local Matrix mappings with explicit finish signals. It includes a new
+component/data-flow SVG. That draft is not implemented by the code mapped above.
