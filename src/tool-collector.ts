@@ -1,7 +1,7 @@
 import { AcpToolModel, type AcpToolActivity } from "./acp-activity.js";
 import type { AcpToolCallUpdate } from "./acp-activity-update.js";
 import type { Clock } from "./clock.js";
-import type { AgentTextSettings } from "./config.js";
+import { validateAgentTextSettings, type AgentTextSettings } from "./config.js";
 import type { OutputSink } from "./output-sink.js";
 import { PublicationScheduler } from "./publication-scheduler.js";
 
@@ -31,6 +31,9 @@ export class ToolCollector {
   #stopped = false;
 
   constructor(options: ToolCollectorOptions) {
+    if (!Number.isSafeInteger(options.maxRetainedEvents) || options.maxRetainedEvents < 1)
+      throw new RangeError("maxRetainedEvents must be a positive integer");
+    validateAgentTextSettings(options.settings);
     this.#options = options;
   }
 
@@ -46,10 +49,11 @@ export class ToolCollector {
     const started = state === undefined;
     if (state === undefined) {
       if (this.#states.size >= this.#options.maxRetainedEvents) {
+        this.#model.release([event]);
         this.#options.onCapacity();
         return;
       }
-      const id = event.toolCallId ?? `anonymous-tool-${this.#sequence++}`;
+      const id = event.toolCallId === undefined ? `anonymous:${this.#sequence++}` : `identified:${event.toolCallId}`;
       const scheduler = new PublicationScheduler(
         this.#options.settings,
         () => this.#options.sink.flush(id, { ...event }),

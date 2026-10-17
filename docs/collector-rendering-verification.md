@@ -14,6 +14,16 @@ rendering is identical. Subsequent report-only changes do not alter code/tests.
 Automated fixtures, actual Matrix outcomes and coordinator follow-up are recorded
 separately.
 
+## Fresh itemized CODE.md audit
+
+The [collector item-by-item review](pr-28-collector-code-review.md) checks all
+56 evaluative CODE.md items/sub-items against feature revision `e3d6626` and its
+full PR base diff, with the four bibliography entries separate. It records tool
+ID isolation, rejected-model cleanup, constructor guards, card rollover/cleanup
+and cleaned-empty legacy thought fixes, regression evidence and explicit qualifications. Its validation
+applies to those audit changes; earlier automated/live results below retain their
+original revisions. No new complete live Matrix or real Pi pass is claimed.
+
 ## Coordinator review
 
 Independent review reproduced a whitespace-only thought regression: an identified
@@ -84,9 +94,10 @@ terminal contract.
 
 Guard clauses, functional modules, local settings/helpers and content-free failure
 diagnostics follow CODE.md. Private mutation in accumulators, schedulers and queues
-is deliberate bounded streaming state; publication records are readonly. No known
-CODE.md issue remains. Existing bridge prompt/ID-less compatibility remains outside
-the identified collector path.
+is deliberate bounded streaming state; publication records are readonly. This
+original refactor assessment is superseded by the [fresh 56-item audit](pr-28-collector-code-review.md),
+including its fixes and qualifications. Existing bridge prompt/ID-less compatibility
+remains outside the identified collector path.
 
 ## Developer automated evidence
 

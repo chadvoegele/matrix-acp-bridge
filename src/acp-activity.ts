@@ -13,7 +13,6 @@ export interface BoundedText {
 
 export interface AcpThoughtActivity {
   readonly type: "thought";
-  readonly messageId?: string;
   text: string;
   cut: boolean;
 }

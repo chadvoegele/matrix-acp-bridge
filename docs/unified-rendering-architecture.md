@@ -82,4 +82,6 @@ Sources: [dispatcher](../src/session-output.ts), [text collector](../src/text-co
 [scheduler](../src/publication-scheduler.ts), [tool collector](../src/tool-collector.ts),
 [cards](../src/activity-card-collector.ts), [renderers](../src/acp-activity-rendering.ts),
 [sender](../src/matrix-output-sender.ts), [queue](../src/conversation-publication.ts).
-SVGs are self-contained editable sources without external assets.
+SVGs are self-contained editable sources without external assets. See the
+[itemized collector CODE.md audit](pr-28-collector-code-review.md) for current
+per-guideline findings, remediation and validation limits.

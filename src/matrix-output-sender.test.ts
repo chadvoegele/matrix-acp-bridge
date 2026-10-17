@@ -3,11 +3,11 @@ import test from "node:test";
 import { ConversationPublication } from "./conversation-publication.js";
 import { MatrixOutputSender, type MatrixOutputPublication } from "./matrix-output-sender.js";
 
-function part(body: string) {
+function createPart(body: string) {
   return { body, formattedBody: `<p>${body}</p>` };
 }
 
-function gate() {
+function createGate() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
     release = resolve;
@@ -17,8 +17,8 @@ function gate() {
 
 void test("equal IDs on subscriptions are isolated; finish waits for in-flight original and final edits", async () => {
   const calls: MatrixOutputPublication[] = [];
-  const blocked = gate();
-  const started = gate();
+  const blocked = createGate();
+  const started = createGate();
   const queue = new ConversationPublication(10, () => assert.fail("publication failed"));
   const publish = async (publication: MatrixOutputPublication) => {
     calls.push(publication);
@@ -65,11 +65,11 @@ void test("older IDs stay live; continuation growth/shrinkage reuses originals a
       return `$event-${calls.length}`;
     },
   });
-  sender.flush("old", [part("one"), part("two")]);
+  sender.flush("old", [createPart("one"), createPart("two")]);
   await queue.waitForIdle();
-  sender.flush("new", [part("new")]);
+  sender.flush("new", [createPart("new")]);
   await queue.waitForIdle();
-  sender.flush("old", [part("final")]);
+  sender.flush("old", [createPart("final")]);
   sender.finish("old");
   await queue.waitForIdle();
   assert.deepEqual(
@@ -80,7 +80,7 @@ void test("older IDs stay live; continuation growth/shrinkage reuses originals a
     ],
   );
   assert.equal(sender.liveCount, 1);
-  sender.flush("new", [part("new")]);
+  sender.flush("new", [createPart("new")]);
   await queue.waitForIdle();
   assert.equal(calls.length, 5);
   queue.stop();
@@ -89,7 +89,7 @@ void test("older IDs stay live; continuation growth/shrinkage reuses originals a
 
 void test("required first flush survives pending coalescing and finish without an empty original", async () => {
   const queue = new ConversationPublication(10, () => assert.fail("publication failed"));
-  const blocked = gate();
+  const blocked = createGate();
   queue.enqueue({}, () => blocked.promise);
   const calls: MatrixOutputPublication[] = [];
   const sender = new MatrixOutputSender({
@@ -121,7 +121,7 @@ void test("failure and capacity discard mappings and prevent in-flight callbacks
   for (const failure of ["delivery", "capacity"]) {
     const failures: string[] = [];
     const queue = new ConversationPublication(1, (reason) => failures.push(reason));
-    const blocked = gate();
+    const blocked = createGate();
     const sender = new MatrixOutputSender({
       queue,
       maxMatrixMessageBytes: 4096,
@@ -145,8 +145,8 @@ void test("failure and capacity discard mappings and prevent in-flight callbacks
 
 void test("finish during an in-flight edit retains mappings and later identities until delivery completes", async () => {
   const queue = new ConversationPublication(10, () => assert.fail("publication failed"));
-  const blocked = gate();
-  const started = gate();
+  const blocked = createGate();
+  const started = createGate();
   const calls: MatrixOutputPublication[] = [];
   const sender = new MatrixOutputSender({
     queue,
@@ -160,13 +160,13 @@ void test("finish during an in-flight edit retains mappings and later identities
       return `$event-${calls.length}`;
     },
   });
-  sender.flush("a", [part("initial")]);
+  sender.flush("a", [createPart("initial")]);
   await queue.waitForIdle();
-  sender.flush("a", [part("edit")]);
+  sender.flush("a", [createPart("edit")]);
   await started.promise;
-  sender.flush("a", [part("final")]);
+  sender.flush("a", [createPart("final")]);
   sender.finish("a");
-  sender.flush("b", [part("next")]);
+  sender.flush("b", [createPart("next")]);
   assert.equal(sender.liveCount, 2);
   blocked.release();
   await queue.waitForIdle();
@@ -189,7 +189,7 @@ void test("sequential explicit finishes retain no historical sender mappings", a
   const queue = new ConversationPublication(2, () => assert.fail("publication failed"));
   const sender = new MatrixOutputSender({ queue, maxMatrixMessageBytes: 4096, publish: async () => "$original" });
   for (let index = 0; index < 100; index++) {
-    sender.flush(String(index), [part("text")]);
+    sender.flush(String(index), [createPart("text")]);
     sender.finish(String(index));
     assert.equal(sender.liveCount, 1);
     await queue.waitForIdle();

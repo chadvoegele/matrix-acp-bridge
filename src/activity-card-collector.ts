@@ -7,7 +7,7 @@ export interface ActivityCard {
   readonly collapsed: boolean;
 }
 
-export interface ActivityCardLimits {
+interface ActivityCardLimits {
   readonly maxEvents: number;
   readonly maxMessageBytes: number;
   readonly measure: (card: ActivityCard) => number;
@@ -51,6 +51,10 @@ export class ActivityCardCollector {
   #closed = false;
 
   constructor(options: ActivityCardCollectorOptions) {
+    if (!Number.isSafeInteger(options.limits.maxEvents) || options.limits.maxEvents < 1)
+      throw new RangeError("maxEvents must be a positive integer");
+    if (!Number.isSafeInteger(options.limits.maxMessageBytes) || options.limits.maxMessageBytes < 1)
+      throw new RangeError("maxMessageBytes must be a positive integer");
     if (!Number.isSafeInteger(options.maxRetainedEvents) || options.maxRetainedEvents < 1)
       throw new RangeError("maxRetainedEvents must be a positive integer");
     this.#options = options;
@@ -110,10 +114,6 @@ export class ActivityCardCollector {
   }
 
   #add(index: Map<string, CardEntry>, id: string, content: AcpActivity): CardEntry | undefined {
-    if (this.retainedEvents >= this.#options.maxRetainedEvents) {
-      this.#options.onCapacity();
-      return;
-    }
     let card = this.#current;
     if (card !== undefined) {
       const events = [...card.entries.map((entry) => entry.content), content];
@@ -125,6 +125,11 @@ export class ActivityCardCollector {
         this.#collapse(card);
         card = undefined;
       }
+    }
+    if (this.#closed) return;
+    if (this.retainedEvents >= this.#options.maxRetainedEvents) {
+      this.#options.onCapacity();
+      return;
     }
     if (card === undefined) {
       card = { id: `card-${this.#sequence++}`, entries: [], collapsed: false, published: false };
@@ -148,11 +153,13 @@ export class ActivityCardCollector {
   #collapse(card: CardState): void {
     if (card.collapsed) return;
     card.collapsed = true;
+    if (this.#current === card) this.#current = undefined;
     this.#emit(card);
     this.#release(card);
   }
 
   #emit(card: CardState): void {
+    if (this.#closed) return;
     const events = card.entries
       .map((entry) => entry.content)
       .filter((event) => event.type === "tool" || event.text.trim().length > 0);
@@ -161,11 +168,11 @@ export class ActivityCardCollector {
       card.published = true;
       this.#options.sink.flush(card.id, { events, collapsed: false });
     } else if (!card.collapsed) this.#options.sink.flush(card.id, { events, collapsed: false });
-    if (card.collapsed) this.#options.sink.flush(card.id, { events, collapsed: true });
+    if (card.collapsed && !this.#closed) this.#options.sink.flush(card.id, { events, collapsed: true });
   }
 
   #release(card: CardState): void {
-    if (!card.collapsed || card.entries.some((entry) => !entry.finished)) return;
+    if (this.#closed || !card.collapsed || card.entries.some((entry) => !entry.finished)) return;
     this.#options.sink.finish(card.id);
     for (const entry of card.entries) {
       (entry.content.type === "thought" ? this.#thoughts : this.#tools).delete(entry.id);

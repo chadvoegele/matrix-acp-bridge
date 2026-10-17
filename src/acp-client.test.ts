@@ -11,6 +11,7 @@ import {
 } from "./acp-client.js";
 import { AcpToolModel } from "./acp-activity.js";
 import { TextCollector } from "./text-collector.js";
+import { OUTPUT_TRUNCATION_MARKER } from "./response-rendering.js";
 import { renderAcpActivity } from "./acp-activity-rendering.js";
 import { createCancellationController } from "./cancellation.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
@@ -657,8 +658,11 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   assert.equal(tool.type, "tool");
   assert.equal(many.type, "tool");
   if (thought.type === "thought") {
-    assert.ok(Buffer.byteLength(thought.text, "utf8") <= 8192);
-    assert.ok(thought.text.startsWith("a".repeat(8100)));
+    assert.equal(Buffer.byteLength(thought.text, "utf8"), 8192);
+    assert.equal(
+      thought.text,
+      "a".repeat(8192 - Buffer.byteLength(OUTPUT_TRUNCATION_MARKER)) + OUTPUT_TRUNCATION_MARKER,
+    );
   }
   if (tool.type === "tool")
     assert.equal(tool.content?.[0]?.type === "content" && tool.content[0].text, "b".repeat(8190));

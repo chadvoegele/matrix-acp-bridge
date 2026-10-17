@@ -6,13 +6,13 @@ import { ActivityCardCollector, type ActivityCard } from "./activity-card-collec
 import { renderActivityCard } from "./acp-activity-rendering.js";
 import { matrixHtmlEditContentBytes } from "./matrix-message-content.js";
 
-function fixture(maxEvents = 2, maxRetainedEvents = 20) {
+function createFixture(maxEvents = 2, maxRetainedEvents = 20, maxMessageBytes = 4096) {
   const records: { id: string; card?: ActivityCard }[] = [];
   const failures: string[] = [];
   const cards = new ActivityCardCollector({
     limits: {
       maxEvents,
-      maxMessageBytes: 4096,
+      maxMessageBytes,
       measure: (card) =>
         matrixHtmlEditContentBytes(renderActivityCard(card, Number.MAX_SAFE_INTEGER, matrixHtmlEditContentBytes)),
     },
@@ -25,7 +25,7 @@ function fixture(maxEvents = 2, maxRetainedEvents = 20) {
 }
 
 void test("rollover preserves old entry destinations and cumulative snapshots replace", () => {
-  const f = fixture(1);
+  const f = createFixture(1);
   f.thought("a", "first");
   f.thought("b", "second");
   f.thought("a", "first updated");
@@ -46,7 +46,7 @@ void test("rollover preserves old entry destinations and cumulative snapshots re
 });
 
 void test("a reserved thought prevents retirement until its delayed flush and finish", () => {
-  const f = fixture();
+  const f = createFixture();
   f.cards.openThought("pending");
   f.cards.collapse();
   assert.equal(f.records.length, 0);
@@ -62,7 +62,7 @@ void test("a reserved thought prevents retirement until its delayed flush and fi
 });
 
 void test("closed cards release sequential source state without historical growth", () => {
-  const f = fixture();
+  const f = createFixture();
   for (let index = 0; index < 100; index++) {
     f.thought(String(index), "text");
     f.cards.finishThought(String(index));
@@ -73,9 +73,63 @@ void test("closed cards release sequential source state without historical growt
   assert.equal(new Set(f.records.map(({ id }) => id)).size, 100);
 });
 
+void test("rollover releases completed cards before applying retention capacity", () => {
+  const f = createFixture(1, 1);
+  for (let index = 0; index < 20; index++) {
+    f.thought(String(index), `thought ${index}`);
+    f.cards.finishThought(String(index));
+    assert.deepEqual(f.failures, []);
+    assert.equal(f.cards.retainedEvents, 1);
+    assert.equal(f.cards.retainedCards, 1);
+    const latest = f.records.at(-1)!;
+    assert.equal(latest.card?.collapsed, false);
+    assert.equal(latest.card?.events[0]?.type === "thought" && latest.card.events[0].text, `thought ${index}`);
+  }
+  f.cards.collapse();
+  assert.equal(f.cards.retainedEvents, 0);
+  assert.equal(f.cards.retainedCards, 0);
+  assert.equal(new Set(f.records.map(({ id }) => id)).size, 20);
+});
+
+void test("closing during card publication cannot repopulate state or emit after cleanup", () => {
+  for (const phase of ["rollover", "finished-rollover", "deferred"]) {
+    const records: ActivityCard[] = [];
+    const cards = new ActivityCardCollector({
+      limits: { maxEvents: 1, maxMessageBytes: 4096, measure: () => 0 },
+      maxRetainedEvents: 2,
+      onCapacity: () => assert.fail("unexpected capacity"),
+      sink: {
+        flush: (_id, card) => {
+          records.push(card);
+          if (phase === "deferred" || card.collapsed) cards.close();
+        },
+        finish: () => assert.fail("closed card finished"),
+      },
+    });
+    if (phase === "deferred") {
+      cards.openThought("a");
+      cards.collapse();
+      cards.flushThought("a", { text: "delayed first snapshot", cut: false });
+    } else {
+      cards.flushThought("a", { text: "first", cut: false });
+      if (phase === "finished-rollover") cards.finishThought("a");
+      cards.flushThought("b", { text: "must be abandoned", cut: false });
+    }
+    assert.equal(records.length, phase === "deferred" ? 1 : 2);
+    assert.equal(cards.retainedEvents, 0);
+    assert.equal(cards.retainedCards, 0);
+    cards.flushThought("c", { text: "late", cut: false });
+    assert.equal(records.length, phase === "deferred" ? 1 : 2);
+  }
+});
+
 void test("card capacity is explicit, close clears state, and invalid limits fail early", () => {
-  assert.throws(() => fixture(2, 0), /maxRetainedEvents/u);
-  const f = fixture(1, 1);
+  for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => createFixture(2, invalid), /maxRetainedEvents/u);
+    assert.throws(() => createFixture(invalid), /maxEvents/u);
+    assert.throws(() => createFixture(2, 20, invalid), /maxMessageBytes/u);
+  }
+  const f = createFixture(1, 1);
   f.thought("a", "one");
   f.thought("b", "two");
   assert.deepEqual(f.failures, ["capacity"]);
@@ -86,7 +140,7 @@ void test("card capacity is explicit, close clears state, and invalid limits fai
 });
 
 void test("byte budgets roll cards before event count and rendering includes escaped wrappers and thread envelope", () => {
-  const f = fixture(10);
+  const f = createFixture(10);
   f.thought("a", "<&😀".repeat(300));
   f.thought("b", "<&😀".repeat(300));
   assert.equal(f.cards.retainedCards, 2);
@@ -107,7 +161,7 @@ void test("byte budgets roll cards before event count and rendering includes esc
 });
 
 void test("thought Markdown is safe inside trusted card wrappers and tool output stays literal", () => {
-  const f = fixture();
+  const f = createFixture();
   f.thought(
     "a",
     "**Heading**\n\nSome **bold** and [safe](https://example.org) <details><script>bad</script> [bad](javascript:evil)",

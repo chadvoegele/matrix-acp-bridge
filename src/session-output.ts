@@ -146,8 +146,8 @@ export class SessionOutput {
       if (update.messageId) this.#messages.append(update.messageId, update.text);
       return;
     }
+    const text = cleanActivityText(update.text);
     if (update.messageId) {
-      const text = cleanActivityText(update.text);
       if (!this.#hasIdentifiedThought && !text.trim()) return;
       this.#finishLegacyThought();
       if (!this.#hasIdentifiedThought) {
@@ -158,11 +158,11 @@ export class SessionOutput {
       return;
     }
     if (this.#legacyId === undefined) {
-      if (!update.text.trim()) return;
+      if (!text.trim()) return;
       this.#legacyId = `legacy-thought-${this.#sequence++}`;
       this.#cards.openThought(`legacy:${this.#legacyId}`);
     }
-    this.#legacyThoughts.append(this.#legacyId, cleanActivityText(update.text), update.textCut);
+    this.#legacyThoughts.append(this.#legacyId, text, update.textCut);
   }
 
   #createThoughtSink(prefix: string): OutputSink<TextSnapshot> {

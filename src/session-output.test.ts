@@ -6,7 +6,7 @@ import type { MatrixOutputPublication } from "./matrix-output-sender.js";
 import { SessionOutput } from "./session-output.js";
 import { FakeClock } from "./test-support/fake-clock.js";
 
-function fixture(maxRetainedEvents = 20) {
+function createFixture(maxRetainedEvents = 20) {
   const clock = new FakeClock();
   const calls: (MatrixOutputPublication & { kind: string })[] = [];
   const failures: string[] = [];
@@ -61,9 +61,10 @@ function fixture(maxRetainedEvents = 20) {
   };
 }
 
-void test("leading blank identified thoughts reserve no card entry or timer and do not reduce tool capacity", async () => {
-  const f = fixture(2);
+void test("leading blank or control-only thoughts reserve no card entry or timer and do not reduce tool capacity", async () => {
+  const f = createFixture(2);
   f.thought("a", "\n\n");
+  f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "\u001B[31m\n\n\u001B[0m" });
   assert.equal(f.output.retainedEvents, 0);
   assert.equal(f.output.retainedCards, 0);
   assert.equal(f.clock.pendingTimerCount, 0);
@@ -84,7 +85,7 @@ void test("leading blank identified thoughts reserve no card entry or timer and 
 });
 
 void test("alternating same-response thoughts and text retain both destinations across collapse", async () => {
-  const f = fixture();
+  const f = createFixture();
   f.thought("a", "First");
   f.clock.advanceBy(100);
   await f.queue.waitForIdle();
@@ -108,7 +109,7 @@ void test("alternating same-response thoughts and text retain both destinations 
 });
 
 void test("pending thought prevents card finish when its last tool ends", async () => {
-  const f = fixture();
+  const f = createFixture();
   f.thought("a", "pending thought");
   f.tool("tool");
   f.text("a", "text");
@@ -126,7 +127,7 @@ void test("pending thought prevents card finish when its last tool ends", async 
 });
 
 void test("parallel old cards receive final updates and expanded/collapse barriers survive blocked sends", async () => {
-  const f = fixture();
+  const f = createFixture();
   let release!: () => void;
   f.queue.enqueue(
     {},
@@ -156,7 +157,7 @@ void test("parallel old cards receive final updates and expanded/collapse barrie
 });
 
 void test("tool message metadata cannot finish either response collector; status-only intermediate updates are paced", async () => {
-  const f = fixture();
+  const f = createFixture();
   f.thought("a", "thought");
   f.text("a", "text");
   f.tool("tool");
@@ -182,7 +183,7 @@ void test("tool message metadata cannot finish either response collector; status
 });
 
 void test("ID-less thoughts retain whitespace and legacy message/tool boundaries", async () => {
-  const f = fixture();
+  const f = createFixture();
   const thought = (text: string) => f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text });
   thought("**Plan**");
   thought("\n\n");
@@ -196,7 +197,7 @@ void test("ID-less thoughts retain whitespace and legacy message/tool boundaries
 });
 
 void test("capacity and lifecycle stop cancel timers and prevent obsolete publications", async () => {
-  const f = fixture(2);
+  const f = createFixture(2);
   f.tool("one");
   f.tool("two");
   f.tool("three");
@@ -204,7 +205,7 @@ void test("capacity and lifecycle stop cancel timers and prevent obsolete public
   assert.ok(f.failures.includes("capacity"));
   assert.equal(f.output.retainedEvents, 0);
   assert.equal(f.clock.pendingTimerCount, 0);
-  const other = fixture();
+  const other = createFixture();
   other.thought("a", "buffered");
   other.text("a", "buffered");
   other.queue.stop();
@@ -215,7 +216,7 @@ void test("capacity and lifecycle stop cancel timers and prevent obsolete public
 });
 
 void test("ID-less thought identities cannot collide with adapter-provided thought IDs", async () => {
-  const f = fixture();
+  const f = createFixture();
   f.thought("legacy-thought-0", "identified thought");
   f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "legacy thought" });
   f.clock.advanceBy(100);
@@ -229,4 +230,28 @@ void test("ID-less thought identities cannot collide with adapter-provided thoug
   f.clock.advanceBy(100);
   await f.queue.waitForIdle();
   assert.ok(f.calls.some((call) => call.body.includes("identified thought resumed") && call.targetEventId));
+});
+
+void test("ID-less tool identities cannot replace or finish an identified tool with a generated-looking ID", async () => {
+  for (const toolId of ["anonymous-tool-0", "anonymous:0"]) {
+    const f = createFixture();
+    f.tool(toolId);
+    f.output.accept({ sessionId: "session", kind: "tool_call", title: "anonymous result", status: "completed" });
+    await f.queue.waitForIdle();
+    assert.equal(f.output.retainedEvents, 2);
+    const latest = f.calls.at(-1)!;
+    assert.ok(latest.body.includes(`[running] 🔧 Tool(${toolId})`));
+    assert.match(latest.body, /\[completed\].*anonymous result/u);
+    f.text("answer", "collapse");
+    await f.queue.waitForIdle();
+    assert.equal(f.output.retainedCards, 1);
+    f.terminal(toolId);
+    await f.queue.waitForIdle();
+    assert.equal(f.output.retainedEvents, 0);
+    assert.equal(f.output.retainedCards, 0);
+    assert.equal(f.calls.at(-1)?.targetEventId, latest.targetEventId ?? "$event-1");
+    assert.ok(f.calls.at(-1)!.body.includes(`[completed] 🔧 Tool(${toolId})`));
+    assert.match(f.calls.at(-1)!.body, /anonymous result/u);
+    f.queue.stop();
+  }
 });
