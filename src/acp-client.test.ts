@@ -1117,13 +1117,14 @@ for (const timing of ["before", "during"] as const) {
           update: {
             sessionUpdate: "agent_message_chunk",
             content: { type: "text", text: banner },
+            messageId: "answer",
             _meta: { piAcp: { notify: "not a notification marker" } },
           },
         }),
       );
       // eslint-disable-next-line unicorn/no-array-push-push -- ordered protocol frames
       input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
-      assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn", text: banner });
+      assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn" });
     }
     assert.deepEqual(
       updates,
@@ -1131,6 +1132,7 @@ for (const timing of ["before", "during"] as const) {
         sessionId,
         kind: "agent_message_chunk",
         text: banner,
+        messageId: "answer",
       })),
     );
     assert.deepEqual(
@@ -1585,12 +1587,13 @@ void test("healthy steering errors distinguish method-not-found, preserve the pr
         update: {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "intact" },
+          messageId: "intact",
         },
       }),
     );
     // eslint-disable-next-line unicorn/no-array-push-push -- distinct ordered ACP frames
     input.push(rpcResponse(promptFrame.id, { stopReason: "end_turn" }));
-    assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn", text: "intact" });
+    assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn" });
     // The same transport remains usable even when its extension was unavailable.
     assert.equal(await createSession(client, input, output), "session-1");
     await client.close();
@@ -1810,6 +1813,76 @@ void test("independent sessions can have simultaneous steering requests with rev
   assert.equal(clock.pendingTimerCount, 1);
   input.push(rpcResponse(firstFrame.id, { outcome: "injected" }));
   assert.deepEqual(await first, { kind: "steering", outcome: "injected" });
+  assert.equal(clock.pendingTimerCount, 0);
+  await client.close();
+});
+
+void test("eagerly rejects every invalid assistant ID before listeners during and outside prompts", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const diagnostics: unknown[] = [];
+  const clock = new FakeClock();
+  const client = newClient(input, output, {
+    clock,
+    diagnostics: {
+      ...createDiagnostics(),
+      emit(level: string, event: string, fields: unknown) {
+        diagnostics.push({ level, event, fields });
+      },
+    },
+  });
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const updates: unknown[] = [];
+  client.onUpdate((update) => updates.push(update));
+  const reject = () => {
+    for (const messageId of [undefined, "", " \t\n", null, 42, {}, []]) {
+      input.push(
+        rpcNotification("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId,
+            content: { type: "text", text: "private rejected" },
+          },
+        }),
+      );
+    }
+  };
+  reject();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates, []);
+  assert.equal(diagnostics.length, 7);
+  assert.equal(clock.pendingTimerCount, 0);
+  const prompt = client.prompt(sessionId, "private prompt", createCancellationController().signal);
+  const frame = await output.nextFrame();
+  reject();
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: { sessionUpdate: "agent_message_chunk", messageId: "valid", content: { type: "text", text: "before " } },
+    }),
+  );
+  reject();
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: { sessionUpdate: "agent_message_chunk", messageId: "valid", content: { type: "text", text: "after" } },
+    }),
+  );
+  // eslint-disable-next-line unicorn/no-array-push-push -- distinct ordered ACP frames
+  input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+  assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn" });
+  reject();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates, [
+    { sessionId, kind: "agent_message_chunk", messageId: "valid", text: "before " },
+    { sessionId, kind: "agent_message_chunk", messageId: "valid", text: "after" },
+  ]);
+  assert.deepEqual(
+    diagnostics,
+    Array.from({ length: 28 }, () => ({ level: "warn", event: "agent-text-missing-id", fields: {} })),
+  );
   assert.equal(clock.pendingTimerCount, 0);
   await client.close();
 });

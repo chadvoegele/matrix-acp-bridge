@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { AcpUpdate } from "./acp-activity-update.js";
 import { ConversationPublication } from "./conversation-publication.js";
 import type { MatrixOutputPublication } from "./matrix-output-sender.js";
 import { SessionOutput } from "./session-output.js";
@@ -254,4 +255,54 @@ void test("ID-less tool identities cannot replace or finish an identified tool w
     assert.match(f.calls.at(-1)!.body, /anonymous result/u);
     f.queue.stop();
   }
+});
+
+void test("invalid assistant IDs create no collector state, timers or publication", async () => {
+  const f = createFixture();
+  for (const messageId of [undefined, "", " \t\n", null, 42, {}, []]) {
+    f.output.accept({
+      sessionId: "session",
+      kind: "agent_message_chunk",
+      messageId,
+      text: "private rejected",
+    } as AcpUpdate);
+    assert.equal(f.output.retainedEvents, 0);
+    assert.equal(f.output.retainedCards, 0);
+    assert.equal(f.output.hasPendingText, false);
+    assert.equal(f.clock.pendingTimerCount, 0);
+  }
+  f.clock.advanceBy(30_000);
+  await f.queue.waitForIdle();
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.failures, []);
+  f.queue.stop();
+});
+
+void test("rejected text neither closes legacy thoughts nor collapses cards or contaminates valid text", async () => {
+  const f = createFixture();
+  const thought = (text: string) => f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text });
+  thought("legacy ");
+  const timers = f.clock.pendingTimerCount;
+  f.output.accept({ sessionId: "session", kind: "agent_message_chunk", text: "private boundary" });
+  assert.equal(f.clock.pendingTimerCount, timers);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.output.retainedEvents, 1);
+  thought("thought");
+  f.clock.advanceBy(100);
+  await f.queue.waitForIdle();
+  assert.equal(f.calls.length, 1);
+  assert.match(f.calls[0]!.body, /legacy thought/);
+  assert.doesNotMatch(f.calls[0]!.formattedBody, /Past agent events/);
+  f.text("answer", "before ");
+  f.output.accept({ sessionId: "session", kind: "agent_message_chunk", messageId: " ", text: "private mixed" });
+  f.text("answer", "after");
+  f.clock.advanceBy(100);
+  await f.queue.waitForIdle();
+  const messages = f.calls.filter((call) => call.kind === "text");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0]!.body, "before after");
+  assert.doesNotMatch(JSON.stringify(f.calls), /private/);
+  assert.deepEqual(f.failures, []);
+  f.queue.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
 });

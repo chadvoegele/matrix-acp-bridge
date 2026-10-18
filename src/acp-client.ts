@@ -26,7 +26,7 @@ import {
 import { createCancellationController } from "./cancellation.js";
 import { systemClock } from "./clock.js";
 import type { Clock } from "./clock.js";
-import { isAcpUpdateNotification, normalizeAcpUpdateNotification } from "./acp-activity-update.js";
+import { isAcpUpdateNotification, isUsableMessageId, normalizeAcpUpdateNotification } from "./acp-activity-update.js";
 import type { AcpSessionId, AcpUpdate, AcpUpdateListener } from "./acp-activity-update.js";
 import { createStderrDiagnosticSink } from "./diagnostics.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
@@ -79,8 +79,6 @@ export interface AcpProtocolError {
 export interface AcpTurnOutcome {
   readonly kind: "turn";
   readonly stopReason: AcpStopReason;
-  /** Compatibility text from ID-less chunks only; identified text belongs to session updates. */
-  readonly text?: string;
 }
 
 export type AcpFailure = AcpMethodError | AcpTransportError | AcpProtocolError;
@@ -206,10 +204,6 @@ type RequestOperation = Exclude<AcpTransportError["operation"], "close">;
 interface PendingPermission {
   readonly controller: ReturnType<typeof createCancellationController>;
   readonly completion: Promise<RequestPermissionResponse>;
-}
-
-interface PromptText {
-  text: string;
 }
 
 function noop(): void {
@@ -339,8 +333,6 @@ export class InheritedStdioAcpClient implements AcpClient {
   readonly #fatalListeners = new Set<FatalErrorListener>();
 
   readonly #pendingPermissions = new Map<string, PendingPermission>();
-
-  readonly #activeTurns = new Map<string, PromptText>();
 
   readonly #startupInfoBySession = new Map<string, string>();
 
@@ -536,8 +528,6 @@ export class InheritedStdioAcpClient implements AcpClient {
       return error;
     }
 
-    const collected: PromptText = { text: "" };
-    this.#activeTurns.set(sessionId, collected);
     const removeCancellation = cancellation.onCancel(() => {
       void this.cancel(sessionId).catch(() => {});
     });
@@ -561,7 +551,6 @@ export class InheritedStdioAcpClient implements AcpClient {
       const outcome: AcpTurnOutcome = {
         kind: "turn",
         stopReason: reason,
-        ...(collected.text.length === 0 ? {} : { text: collected.text }),
       };
       return outcome;
     } catch (error) {
@@ -571,9 +560,6 @@ export class InheritedStdioAcpClient implements AcpClient {
       return this.#classifyFailure("session_prompt", error, false);
     } finally {
       removeCancellation();
-      if (this.#activeTurns.get(sessionId) === collected) {
-        this.#activeTurns.delete(sessionId);
-      }
     }
   }
 
@@ -953,8 +939,10 @@ export class InheritedStdioAcpClient implements AcpClient {
         this.#startupInfoBySession.delete(sessionId);
         return;
       }
-      const collected = this.#activeTurns.get(sessionId);
-      if (collected !== undefined && !messageId) collected.text += text;
+      if (!isUsableMessageId(messageId)) {
+        this.#diagnostic("warn", "agent-text-missing-id", {});
+        return;
+      }
     }
 
     this.#notifyUpdate(update);

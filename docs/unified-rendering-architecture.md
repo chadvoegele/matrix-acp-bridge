@@ -11,7 +11,7 @@ output received after prompt completion. The collector refactor in PR #28 implem
 ![Session routing, collectors, renderers and sender subscriptions](unified-rendering-overview.svg)
 
 One normalized ACP listener in `BridgeCoordinator` applies authorization, live
-session, loading/replay and lifecycle guards. It dispatches through
+session, loading/replay and lifecycle guards. It forwards through
 `SessionOutput.accept(update)` without requiring an active prompt. Session stores
 preserve room/thread routes; rendered output and Matrix event mappings are ephemeral.
 
@@ -69,9 +69,20 @@ cancel timers, clear subscriptions and reject obsolete callbacks under the exist
 abandonment policy. No historical/tombstone map or Matrix history reconstruction
 is added. Restart preserves only durable routing and delivery bookkeeping.
 
-Solicited ID-less assistant text keeps the legacy prompt path. Unsolicited ID-less
-text emits one bounded diagnostic. A compatibility text collector groups ID-less
-thoughts at message/tool boundaries without inventing ACP response identity.
+All assistant-message chunks require a string ID with at least one non-whitespace
+character. The canonical ACP client drops invalid IDs after startup/UI filtering
+and before listener dispatch, warning on every rejection with empty fields.
+The bridge guards alternate clients before `SessionOutput.accept`; a canonical
+rejection never reaches it, so warnings are not duplicated. The dispatcher ignores
+invalid assistant IDs before collector, thought-boundary or card changes.
+
+Prompt outcomes carry no text. Prompt-final fallback, assistant-text compatibility
+collectors, drain timers/caps, closed-ID history and warn-once state are removed.
+Successful completion emits no final assistant copy or empty-response placeholder;
+non-text statuses, typing, cancellation and durable completion remain. Legacy
+ID-less thoughts still group at accepted message/tool boundaries, and tool patches
+retain their existing handling. Rejected assistant text cannot close those thoughts,
+collapse cards, schedule publication or receive a guessed identity.
 
 The Pi adapter must supply stable sequential response IDs shared by thoughts and
 text, including unsolicited output. Adapter implementation/validation remains a

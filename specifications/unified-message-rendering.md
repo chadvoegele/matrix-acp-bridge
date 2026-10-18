@@ -95,7 +95,7 @@ Continuous low-volume output must also flush within a configured maximum interva
 
 Require integer values and `agent_text_quiet_ms <= agent_text_max_interval_ms`. Count new unpublished UTF-8 bytes, not total block size. A message-ID transition is an unconditional flush trigger, not another configuration setting. Interval pacing and coalescing must prevent repeated size-threshold crossings from bypassing Matrix rate control.
 
-Keep `max_output_bytes` and `max_matrix_message_bytes` as output/event-size limits, not publication triggers. Remove prompt-scoped text draining, including `QUIET_DRAIN_MS` and `STREAMING_DRAIN_CAP_MS`, from the identified-message path. The quiet-period setting replaces the former text-drain timing role; there is no post-prompt drain deadline. Complete prompt bookkeeping when its ACP response arrives, independently of buffered text publication. These changes must not introduce another equivalent drain configuration.
+Keep `max_output_bytes` and `max_matrix_message_bytes` as output/event-size limits, not publication triggers. Remove all prompt-scoped text draining, including `QUIET_DRAIN_MS` and `STREAMING_DRAIN_CAP_MS`. The quiet-period setting replaces the former text-drain timing role; there is no post-prompt drain deadline. Complete prompt bookkeeping when its ACP response arrives, independently of buffered text publication. These changes must not introduce another equivalent drain configuration.
 
 A quiet timer must fire without another incoming update. A quiet-period, size, interval, or activity flush does not finalize or evict the current block: later chunks with the same ID continue updating it. A different assistant message ID closes the previous block under the non-interleaving contract. Neither silence nor a message-ID transition asserts that an unsolicited turn has ended.
 
@@ -147,7 +147,20 @@ On reset, deletion, disconnect, or shutdown, cancel timers and retire rendering 
 
 For messages with IDs, the new path is the sole owner of assistant-text publication. It must not coexist with a second prompt-final renderer that duplicates output.
 
-ACP permits missing message IDs. Preserve the existing prompt-scoped behavior for ID-less chunks during a solicited prompt. ID-less unsolicited text cannot be reliably grouped and is outside this feature's adapter contract; emit a bounded diagnostic instead of guessing an ID or a destination. Do not merge ID-less chunks into an identified block.
+ACP permits missing message IDs, but this bridge requires a nonempty, non-whitespace
+string ID for every assistant-message chunk. Eagerly reject any chunk without one,
+during or outside a prompt, and warn on every rejection without text, raw payloads,
+IDs or credentials. Do not retain warning deduplication state, infer an ID, collect
+rejected text or merge it into an identified block. The canonical client rejects
+before listener dispatch after startup/UI filtering; the bridge guards alternate
+clients without duplicate normal warnings. `SessionOutput.accept` remains the type
+dispatcher and rejects invalid assistant IDs before collector/card changes.
+
+This decision supersedes the earlier solicited ID-less compatibility path and
+unsolicited warn-once policy. Prompt outcomes carry no text and the bridge has no
+prompt-final fallback, text drain timers or closed-ID history. Successful prompt
+completion emits no assistant-text or empty-response copy. Legacy ID-less thoughts,
+tool patches and non-text error/timeout/stop responses retain their own contracts.
 
 Do not persist rendering state or change the stored conversation schema. A new Matrix block for a continuing agent message after restart is accepted behavior. Adapters that interleave assistant message IDs are outside this feature's contract; supporting them would require a separate design.
 
@@ -173,7 +186,10 @@ Do not persist rendering state or change the stored conversation schema. A new M
 - Reset, subprocess exit, and transport failure retire incomplete activity through explicit failure/cleanup behavior, without orphan mappings or false successful completion.
 - Markdown split across chunks renders safely throughout; long messages respect encoded size limits and preserve text up to explicit output caps.
 - Unknown/stale sessions and loading-history updates publish nothing. Reset, shutdown, output limits, and delivery failures leave no orphan timers or cross-session sends.
-- ID-less prompted output retains existing behavior; ID-less unsolicited output produces bounded diagnostics, not guessed grouping.
+- Every solicited/unsolicited ID-less assistant chunk is dropped eagerly with a
+  content-free warning. Mixed valid/rejected streams preserve only identified text;
+  rejected chunks allocate no collector/timer state or alter thoughts/tools.
+  Prompt outcomes contain no text and normal client/bridge flow warns once per rejection.
 
 ## References
 

@@ -130,11 +130,6 @@ export function joinTextAndStatus(text: string, status: string): string {
   return `${text}\n\n${status}`;
 }
 
-/** Join stream fragments without changing their byte-for-byte content. */
-export function joinCollectedText(chunks: readonly string[]): string {
-  return collectedText(chunks);
-}
-
 function codePointPrefix(value: string, maxBytes: number): string {
   let usedBytes = 0;
   let end = 0;
@@ -407,7 +402,7 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
   if (outcome.kind === "turn") {
     return {
       responseKind: stopReasonKind(outcome.stopReason),
-      agentText: collectedText(outcome.text),
+      agentText: "",
     };
   }
 

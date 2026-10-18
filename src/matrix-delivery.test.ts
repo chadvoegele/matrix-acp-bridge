@@ -11,7 +11,7 @@ function createParts(roomId = "!room:example.org", body = "hello") {
   return renderMatrixResponse({
     roomId,
     inboundEventId: "$input",
-    outcome: { kind: "turn", stopReason: "end_turn", text: body },
+    outcome: { kind: "agent", text: body },
     maxOutputBytes: 1000,
     maxMatrixMessageBytes: 64,
   });

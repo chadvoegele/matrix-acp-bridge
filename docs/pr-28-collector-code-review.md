@@ -7,6 +7,16 @@ all changes in PR #28 rather than only its latest refactor commit. It supersedes
 the current-code assessment in the [pre-refactor review](pr-28-code-review.md);
 that report and its verification results remain historical.
 
+The eager-rejection follow-up removes the earlier reachable ID-less assistant-text
+compatibility described in row 12. That row records the `d553581` audit; the current
+[architecture](unified-rendering-architecture.md) and
+[verification](collector-rendering-verification.md) supersede its compatibility claim.
+The follow-up removes turn groups/history/drain and prompt-result accumulation,
+uses one shared ID predicate at intake boundaries, and adds no component, output
+operation, configuration, persistence or retry owner. The eight-stage component
+map and flush/finish contracts still apply. Remaining legacy thoughts/tools are
+explicitly retained. The original 56-item findings below stay revision-qualified.
+
 ## Revisions and scope
 
 - Guideline source: `/home/chad/code/code.voegele.me/chad/agents/main/CODE.md`

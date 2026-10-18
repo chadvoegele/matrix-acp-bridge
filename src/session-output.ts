@@ -1,6 +1,6 @@
 import { ACTIVITY_RESULT_DETAIL_BYTES, cleanActivityText } from "./acp-activity.js";
 import { renderActivityCard } from "./acp-activity-rendering.js";
-import type { AcpUpdate } from "./acp-activity-update.js";
+import { isUsableMessageId, type AcpUpdate } from "./acp-activity-update.js";
 import { ActivityCardCollector } from "./activity-card-collector.js";
 import type { Clock } from "./clock.js";
 import type { AgentTextSettings } from "./config.js";
@@ -126,6 +126,7 @@ export class SessionOutput {
 
   accept(update: AcpUpdate): void {
     if (this.#closed) return;
+    if (update.kind === "agent_message_chunk" && !isUsableMessageId(update.messageId)) return;
     if (update.kind === "tool_call" || update.kind === "tool_call_update") {
       this.#finishLegacyThought();
       this.#tools.accept(update);

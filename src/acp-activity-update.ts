@@ -3,6 +3,10 @@ import { isRecord } from "./object-validation.js";
 
 export type AcpSessionId = string;
 
+export function isUsableMessageId(value: unknown): value is AcpMessageId {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export type AcpMessageId = string;
 
 export type AcpIgnoredUpdateKind =

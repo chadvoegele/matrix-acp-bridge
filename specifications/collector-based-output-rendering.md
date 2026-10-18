@@ -22,7 +22,7 @@ It replaces that design's collector-owned Matrix mappings and separate
 text/activity publication machinery. It also relaxes strict ordering between
 text and activity: Matrix placement follows first publication, with subsequent
 snapshots editing the same events. Session routing, unsolicited output,
-compatibility, encryption, failure policy and bounded retention remain required.
+legacy thought/tool compatibility, encryption, failure policy and bounded retention remain required.
 
 Pi can emit `thinking → text → thinking` within one assistant response. The
 current pi-acp maps text and thinking deltas to the same response-scoped
@@ -62,6 +62,32 @@ One ACP listener must dispatch normalized updates by type to session-scoped
 message, thought and tool collectors. Existing session authorization, load/replay
 filtering, extension-notification filtering and stale-generation guards remain
 upstream of collection. No active prompt is required for mapped live output.
+
+`SessionOutput.accept` is the type dispatcher; the bridge is the outer
+session/lifecycle/routing guard. The canonical ACP client must reject every
+normalized `agent_message_chunk` without a usable `messageId` before notifying
+listeners, after intentional startup-prelude and extension-UI filtering. A usable
+ID is a string containing at least one non-whitespace character; preserve valid
+IDs verbatim. Missing, empty, whitespace-only and non-string IDs are rejected.
+Each rejection emits `warn: agent-text-missing-id` with empty diagnostic fields;
+never include text, raw payloads, IDs or credentials. Keep no warn-once, deduplication
+or rate-limit state for this diagnostic.
+
+The bridge must guard alternate clients/test doubles before dispatch as well.
+Canonical-client rejections never reach that guard, so normal flow warns exactly
+once per rejected chunk. The dispatcher must also ignore invalid assistant IDs
+before any response transition, thought boundary, activity collapse or scheduling.
+Rejected text must allocate no collector/timer/publication state, receive no
+guessed ID, and never contaminate a valid stream. Legacy ID-less thoughts and tool
+patches retain their existing handling.
+
+Prompt outcomes contain only stop/error information, with no accumulated text.
+Remove prompt-result text fallback, prompt-final assistant accumulation, ID-less
+assistant-text collectors, drain quiet/cap timers and closed-message-ID history.
+Successful prompt completion publishes no final text or empty placeholder, even
+when no identified output arrived. Non-text error/timeout/stop statuses, typing,
+cancellation, queueing and durable terminal bookkeeping remain independent from
+collector publication.
 
 Message and thought collectors must be separate instances of the same text
 collector implementation. The same response ID can exist in both instances;
@@ -243,10 +269,10 @@ Diagnostics must exclude private text, tool arguments/results and credentials.
 Restart preserves only existing durable routing. Do not persist output snapshots,
 card IDs or Matrix event mappings, fetch history to rebuild them, or replay loaded
 history as live output. New live chunks may start fresh Matrix events. Preserve
-solicited ID-less text compatibility and bounded diagnosis of unsolicited ID-less
-text; preserve existing ID-less thought grouping at legacy boundaries rather than
-inventing stable ACP identity. That compatibility path must not duplicate the
-identified collectors' publication.
+eager rejection of all ID-less assistant text, whether solicited or unsolicited;
+preserve existing ID-less thought grouping at legacy boundaries rather than
+inventing stable ACP identity. Rejected assistant text must not close that thought
+group or collapse its activity card.
 
 ## Verification
 
@@ -257,6 +283,10 @@ identified collectors' publication.
 - `thought(A) → text(A) → thought(A)` preserves both accumulations and updates the
   original destinations. A subsequent response ID finishes both old text owners.
 - Prompt completion leaves both collectors live, with no duplicate final reply.
+- Invalid assistant IDs are rejected eagerly during and outside prompts. Each
+  rejection warns without private content, listener forwarding, collector/timer
+  state, thought/card transitions or guessed identity. Mixed streams publish only
+  valid deltas once. Canonical intake plus the bridge emits no duplicate warnings.
 - Multiple tools interleave independently; terminal output precedes the terminal
   indication and status-only changes remain observable.
 - A card with a pending thought flush cannot finish early when its last tool ends.
@@ -281,10 +311,13 @@ identified collectors' publication.
 
 ## Compatibility and rationale
 
-This supersedes the earlier design only for collection, publication identity,
-thought Markdown/pacing and cross-type ordering. Existing prompt/error behavior,
-ID-less compatibility, safe output limits, thread/encryption policy and activity
-layout remain. There is no stored-state migration or configuration rename.
+This supersedes the earlier design for collection, publication identity,
+thought Markdown/pacing, cross-type ordering and assistant-text compatibility.
+The approved eager-rejection decision replaces all prior solicited ID-less text
+fallback and unsolicited warn-once behavior. Only legacy thought/tool compatibility
+remains. Safe output limits, non-text prompt/error behavior, thread/encryption
+policy and activity layout remain. There is no stored-state migration or
+configuration rename.
 
 Sharing text collection and flush scheduling is required; a universal collector
 for text, tool patches and card layout is not. Pure rendering helpers should be
