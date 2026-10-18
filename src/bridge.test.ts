@@ -5315,3 +5315,86 @@ void test("alternate-client thought rejection warns per chunk without scheduling
   await f.bridge.stop();
   assert.equal(f.clock.pendingTimerCount, 0);
 });
+
+void test("reset prevents retired output waiting behind another thread's room send", { timeout: 2000 }, async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  const sessionStore = new InMemorySessionStore();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  matrix.htmlSend = async (message) => {
+    if (message.threadRootEventId === "$blocking-root") await blocked;
+    matrix.html.push(message);
+    return "$original";
+  };
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, clock, sessionStore });
+  try {
+    await bridge.handleTimelineEvent(event("$blocking-root"));
+    await bridge.handleTimelineEvent(event("$retiring-root"));
+    acp.emit({
+      sessionId: acp.promptCalls[0]!.sessionId,
+      kind: "agent_message_chunk",
+      messageId: "a",
+      text: "blocking",
+    });
+    clock.advanceBy(750);
+    await waitFor(() => matrix.attempts.length === 1);
+    acp.emit({
+      sessionId: acp.promptCalls[1]!.sessionId,
+      kind: "agent_message_chunk",
+      messageId: "b",
+      text: "obsolete",
+    });
+    clock.advanceBy(750);
+    await flush();
+    const reset = bridge.handleTimelineEvent(threadEvent("$retire", "$retiring-root", "/reset"));
+    await waitFor(
+      () =>
+        sessionStore.getConversationRecord({
+          kind: "thread",
+          roomId: ROOM_ONE,
+          threadRootEventId: "$retiring-root",
+        })?.sessionId === undefined,
+    );
+    release();
+    await reset;
+    assert.deepEqual(
+      matrix.html.map(({ body }) => body),
+      ["blocking"],
+    );
+  } finally {
+    release();
+    await bridge.stop();
+  }
+  assert.equal(clock.pendingTimerCount, 0);
+});
+
+void test("reset prevents retrying a retired session's output", { timeout: 2000 }, async () => {
+  const f = await createIdentifiedFixture();
+  f.matrix.htmlSend = async () => {
+    throw { status: 503 };
+  };
+  try {
+    f.text("obsolete");
+    f.clock.advanceBy(750);
+    await waitFor(() => f.matrix.attempts.length === 1);
+    f.finish();
+    await f.completion;
+    const reset = f.bridge.handleTimelineEvent(event("$retire-retry", ROOM_ONE, "/reset"));
+    await waitFor(() =>
+      f.diagnostics.some((record) => record.event === "agent-activity-abandoned" && record.fields.kind === "lifecycle"),
+    );
+    await reset;
+    assert.equal(f.clock.pendingTimerCount, 0);
+    f.clock.advanceBy(60_000);
+    await flush();
+    assert.equal(f.matrix.attempts.length, 1);
+  } finally {
+    f.finish();
+    await f.bridge.stop();
+  }
+  assert.equal(f.clock.pendingTimerCount, 0);
+});

@@ -1214,6 +1214,7 @@ export class BridgeCoordinator {
     if (existing !== undefined && !existing.queue.stopped) return existing;
     const routing = routingForEvent(event);
     const generation = randomUUID();
+    const cancellation = createCancellationController();
     let revision = 0;
     const queue = new ConversationPublication({
       maximumPending:
@@ -1225,14 +1226,17 @@ export class BridgeCoordinator {
         if (this.#renderingBySession.get(sessionId)?.queue !== queue || conversation.sessionId !== sessionId) return;
         this.#outboundOperations += 1;
         try {
-          return await this.#delivery.sendLive({
-            ...routing,
-            roomId: conversation.identity.roomId,
-            transactionId: `matrix-acp-${kind}-${generation}-${revision++}`,
-            body: rendered.body,
-            formattedBody: rendered.formattedBody as MatrixSafeHtml,
-            ...(rendered.targetEventId === undefined ? {} : { targetEventId: rendered.targetEventId }),
-          });
+          return await this.#delivery.sendLive(
+            {
+              ...routing,
+              roomId: conversation.identity.roomId,
+              transactionId: `matrix-acp-${kind}-${generation}-${revision++}`,
+              body: rendered.body,
+              formattedBody: rendered.formattedBody as MatrixSafeHtml,
+              ...(rendered.targetEventId === undefined ? {} : { targetEventId: rendered.targetEventId }),
+            },
+            cancellation.signal,
+          );
         } finally {
           this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
           this.#resolveIdleWaiters();
@@ -1240,6 +1244,7 @@ export class BridgeCoordinator {
         }
       },
     });
+    queue.onStop(() => cancellation.cancel());
     const output = new SessionOutput({
       settings: this.#config.matrix,
       maxOutputBytes: this.#config.limits.maxOutputBytes,

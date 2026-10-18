@@ -1,5 +1,6 @@
 import { systemClock, clampTimerMilliseconds, type Clock, type TimerHandle } from "./clock.js";
 import type { DiagnosticFields, DiagnosticSink } from "./diagnostics.js";
+import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
 import { classifyDeliveryFailure, calculateRetryDelay } from "./matrix-retry.js";
 import type { MatrixBridgeAdapter, MatrixEventId, MatrixHtmlMessage, MatrixRoomId } from "./matrix-client.js";
 import type { RenderedMatrixPart } from "./response-rendering.js";
@@ -41,15 +42,15 @@ export class MatrixDelivery {
     this.#diagnostics = options.diagnostics;
   }
 
-  sendLive(message: MatrixHtmlMessage): Promise<MatrixEventId | undefined> {
-    if (this.#matrix.sendHtmlMessage === undefined || !this.#canSend()) {
+  sendLive(message: MatrixHtmlMessage, cancellation?: CancellationSignal): Promise<MatrixEventId | undefined> {
+    if (this.#matrix.sendHtmlMessage === undefined || !this.#canSend() || cancellation?.cancelled) {
       // eslint-disable-next-line unicorn/no-useless-undefined -- resolve an absent Matrix event ID
       return Promise.resolve(undefined);
     }
     return this.#serializeRoom(message.roomId, async () => {
       let attempt = 0;
       for (;;) {
-        if (!this.#canSend()) return;
+        if (!this.#canSend() || cancellation?.cancelled) return;
         try {
           return await this.#matrix.sendHtmlMessage!(message);
         } catch (error) {
@@ -65,7 +66,7 @@ export class MatrixDelivery {
             });
             return;
           }
-          if (!(await this.#waitForRetry(calculateRetryDelay(failure, attempt++, this.#random)))) return;
+          if (!(await this.#waitForRetry(calculateRetryDelay(failure, attempt++, this.#random), cancellation))) return;
         }
       }
     });
@@ -123,19 +124,24 @@ export class MatrixDelivery {
     return result;
   }
 
-  #waitForRetry(delayMs: number): Promise<boolean> {
-    if (!this.#canSend()) return Promise.resolve(false);
+  #waitForRetry(delayMs: number, cancellation?: CancellationSignal): Promise<boolean> {
+    if (!this.#canSend() || cancellation?.cancelled) return Promise.resolve(false);
     return new Promise<boolean>((resolve) => {
+      // eslint-disable-next-line prefer-const -- onCancel may notify synchronously before returning its unsubscribe.
+      let unsubscribe: Unsubscribe | undefined;
       const cancel = (): void => {
+        unsubscribe?.();
         this.#clock.clearTimeout(timer);
         this.#retryWaits.delete(cancel);
         resolve(false);
       };
       const timer: TimerHandle = this.#clock.setTimeout(() => {
+        unsubscribe?.();
         this.#retryWaits.delete(cancel);
         resolve(true);
       }, clampTimerMilliseconds(delayMs));
       this.#retryWaits.add(cancel);
+      unsubscribe = cancellation?.onCancel(cancel);
     });
   }
 

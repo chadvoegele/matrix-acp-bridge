@@ -6,6 +6,8 @@ import {
   assertSteeringIdleNotices,
   assertSteeringDeviceBaseline,
   selectEventsSinceInput,
+  collectAgentMessages,
+  effectiveMatrixReplies,
 } from "./steering-observations.mjs";
 
 test("startup guard rejects session creation even before a prompt starts", () => {
@@ -83,4 +85,72 @@ test("reset observation excludes delayed older notices without hiding new idle n
   assert.throws(() => selectEventsSinceInput([notice], {}), /controlled input/u);
   assert.throws(() => selectEventsSinceInput([{}], input), /observed event/u);
   assert.throws(() => assertSteeringHealthy([{ direction: "in", frame: { error: {} } }], current, "bridge"));
+});
+
+test("steering observations accumulate response IDs across tools, thoughts, prompt completion and sessions", () => {
+  // eslint-disable-next-line unicorn/consistent-function-scoping -- Local wire fixture.
+  const chunk = (sessionId, sessionUpdate, messageId, text) => ({
+    direction: "in",
+    frame: {
+      method: "session/update",
+      params: { sessionId, update: { sessionUpdate, messageId, content: { type: "text", text } } },
+    },
+  });
+  const frames = [
+    chunk("first", "agent_message_chunk", "shared", "before "),
+    chunk("first", "agent_thought_chunk", "shared", "thought"),
+    {
+      direction: "in",
+      frame: { method: "session/update", params: { sessionId: "first", update: { sessionUpdate: "tool_call" } } },
+    },
+    { direction: "in", frame: { id: 1, result: { stopReason: "end_turn" } } },
+    chunk("second", "agent_message_chunk", "shared", "independent"),
+    chunk("first", "agent_message_chunk", "shared", "after\n"),
+    chunk("first", "agent_message_chunk", "next", "next response"),
+  ];
+  assert.deepEqual(collectAgentMessages(frames), [
+    { sessionId: "first", messageId: "shared", text: "before after\n" },
+    { sessionId: "first", messageId: "next", text: "next response" },
+    { sessionId: "second", messageId: "shared", text: "independent" },
+  ]);
+  for (const kind of ["agent_message_chunk", "agent_thought_chunk"]) {
+    for (const id of [undefined, "", "\u0000 ", 4])
+      assert.throws(() => collectAgentMessages([chunk("first", kind, id, "private")]), /usable response ID/u);
+  }
+});
+
+test("steering observations assess final replacements while retaining original routing and raw wire events", () => {
+  // eslint-disable-next-line unicorn/consistent-function-scoping -- Local Matrix fixture.
+  const content = (body) => ({ msgtype: "m.text", body, "m.relates_to": { rel_type: "m.thread", event_id: "$root" } });
+  const original = { eventId: "$original", content: content("before"), isEncrypted: true };
+  const replacement = (id, target, body) => ({
+    eventId: id,
+    content: {
+      body: `* ${body}`,
+      "m.new_content": content(body),
+      "m.relates_to": { rel_type: "m.replace", event_id: target },
+    },
+    isEncrypted: true,
+  });
+  const events = [
+    original,
+    replacement("$edit1", "$original", "before after"),
+    replacement("$edit2", "$original", "final"),
+    original,
+  ];
+  assert.deepEqual(effectiveMatrixReplies(events), [{ ...original, content: content("final") }]);
+  assert.equal(events.length, 4);
+  assert.equal(original.content.body, "before");
+  assert.throws(
+    () => effectiveMatrixReplies([original, replacement("$wrong", "$edit1", "bad")]),
+    /unobserved original/u,
+  );
+  assert.throws(
+    () =>
+      effectiveMatrixReplies([
+        original,
+        { eventId: "$bad", content: { "m.relates_to": { rel_type: "m.replace", event_id: "$original" } } },
+      ]),
+    /effective content/u,
+  );
 });

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ACP_ACTIVITY_UPDATE_MAX_BYTES,
   isAcpUpdateNotification,
+  isUsableMessageId,
   normalizeAcpUpdateNotification,
   type AcpToolCallUpdate,
 } from "./acp-activity-update.js";
@@ -86,7 +87,7 @@ void test("accepts only text chunks and leaves ordinary messages unbounded", () 
   );
 });
 
-void test("bounds thoughts with one Unicode-safe budget including the message ID", () => {
+void test("bounds thought text with a Unicode-safe budget without changing identity", () => {
   const result = normalize({
     sessionUpdate: "agent_thought_chunk",
     messageId: "id",
@@ -94,7 +95,7 @@ void test("bounds thoughts with one Unicode-safe budget including the message ID
   });
   assert.equal(result?.kind, "agent_thought_chunk");
   if (result?.kind !== "agent_thought_chunk") return;
-  assert.equal(Buffer.byteLength(result.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 4);
+  assert.equal(Buffer.byteLength(result.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES);
   assert.equal(result.messageId, "id");
   assert.equal(result.textCut, true);
   assert.doesNotMatch(result.text, /�/u);
@@ -111,7 +112,10 @@ void test("bounds thoughts with one Unicode-safe budget including the message ID
     content: { type: "text", text: "" },
   });
   assert.equal(idOnly?.kind, "agent_thought_chunk");
-  if (idOnly?.kind === "agent_thought_chunk") assert.equal(idOnly.textCut, true);
+  if (idOnly?.kind === "agent_thought_chunk") {
+    assert.equal(idOnly.messageId?.length, ACP_ACTIVITY_UPDATE_MAX_BYTES + 1);
+    assert.equal(idOnly.textCut, undefined);
+  }
 });
 
 void test("shares the tool budget across identifiers, locations, content, terminal metadata, and raw input", () => {
@@ -263,4 +267,21 @@ void test("preserves collection/depth/key bounds and independent cut flags", () 
   });
   assert.equal(large.contentCut, true);
   assert.equal(large.activityCut, true);
+});
+
+void test("thought identities remain verbatim and distinct beyond the text budget", () => {
+  const prefix = " ".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES);
+  for (const suffix of ["a", "b"]) {
+    const id = prefix + suffix;
+    const result = normalize({
+      sessionUpdate: "agent_thought_chunk",
+      messageId: id,
+      content: { type: "text", text: "plan" },
+    });
+    assert.equal(result?.messageId === id, true, "normalization changed a valid identity");
+    assert.equal(isUsableMessageId(result?.messageId), true);
+    assert.ok(result?.kind === "agent_thought_chunk");
+    assert.equal(result.text, "plan");
+    assert.equal(result.textCut, undefined);
+  }
 });

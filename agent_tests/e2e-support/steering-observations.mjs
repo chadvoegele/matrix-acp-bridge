@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { isUsableMessageId } from "../../dist/acp-activity-update.js";
 
 export function assertSteeringBaseline(frames) {
   assert.equal(
@@ -61,4 +62,45 @@ export function selectEventsSinceInput(events, input) {
     assert.ok(Number.isFinite(event.originServerTs), "observed event requires a server timestamp");
   }
   return events.filter((event) => event.originServerTs >= input.originServerTs);
+}
+
+export function collectAgentMessages(frames) {
+  const sessions = new Map();
+  for (const { direction, frame } of frames) {
+    const update = frame.params?.update;
+    if (
+      direction !== "in" ||
+      frame.method !== "session/update" ||
+      update?.content?.type !== "text" ||
+      typeof update.content.text !== "string"
+    )
+      continue;
+    if (!["agent_message_chunk", "agent_thought_chunk"].includes(update.sessionUpdate)) continue;
+    if (update._meta?.piAcp?.notify && typeof update._meta.piAcp.notify === "object") continue;
+    assert.ok(isUsableMessageId(update.messageId), "real agent emitted text or thought without a usable response ID");
+    if (update.sessionUpdate === "agent_thought_chunk") continue;
+    const sessionId = frame.params.sessionId;
+    const messages = sessions.get(sessionId) ?? new Map();
+    sessions.set(sessionId, messages);
+    const message = messages.get(update.messageId) ?? { sessionId, messageId: update.messageId, text: "" };
+    message.text += update.content.text;
+    messages.set(update.messageId, message);
+  }
+  return [...sessions.values()].flatMap((messages) => [...messages.values()]).filter((message) => message.text.trim());
+}
+
+export function effectiveMatrixReplies(events) {
+  const originals = new Map();
+  for (const event of events) {
+    const relation = event.content?.["m.relates_to"];
+    if (relation?.rel_type !== "m.replace") {
+      if (!originals.has(event.eventId)) originals.set(event.eventId, event);
+      continue;
+    }
+    const original = originals.get(relation.event_id);
+    assert.ok(original, "replacement targets an unobserved original reply");
+    assert.ok(event.content["m.new_content"], "replacement has no effective content");
+    originals.set(original.eventId, { ...original, content: event.content["m.new_content"] });
+  }
+  return [...originals.values()];
 }

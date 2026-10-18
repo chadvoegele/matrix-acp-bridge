@@ -72,8 +72,10 @@ and default steering with msg1 starting a prompt and msg2/msg3 injected serially
 The injected event must become durable while the original prompt is pending;
 converted inputs must reach the completed-event ledger. Thread mode additionally
 checks a new top-level steering conversation gets a
-separate session. Replies retain their thread roots, including separate text groups around thought
-or tool activity. Identical replies from different turns are counted per
+separate session. Replies retain their thread roots. Text is accumulated by response ID across
+thought/tool updates and prompt completion; final replacement content is checked
+against that cumulative text. Every observed message and thought chunk must carry
+a usable response ID. Identical replies from different responses are counted per
 conversation, without requiring a particular model response. Encrypted mode checks raw
 `m.room.encrypted` event types and authenticated decryption. RPC outcomes are
 asserted independently of whether the model follows a correction. Tool use is

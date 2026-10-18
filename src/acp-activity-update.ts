@@ -314,14 +314,13 @@ export function normalizeAcpUpdateNotification(parameters: unknown): AcpUpdate |
       };
     }
     const budget = new ActivityBudget();
-    const activityMessageId = boundedString(id, budget);
     const text = budget.take(content.text);
     return {
       sessionId,
       kind,
       text,
       ...(budget.cut ? { textCut: true } : {}),
-      ...(activityMessageId === undefined ? {} : { messageId: activityMessageId }),
+      ...(id === undefined ? {} : { messageId: id }),
     };
   }
 

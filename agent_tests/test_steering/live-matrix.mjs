@@ -12,6 +12,8 @@ import {
   assertSteeringHealthy,
   assertSteeringIdleNotices,
   assertSteeringDeviceBaseline,
+  collectAgentMessages,
+  effectiveMatrixReplies,
 } from "../e2e-support/steering-observations.mjs";
 import { assertReusableAdapterFingerprints } from "../e2e-support/auth.mjs";
 import { cryptoPaths } from "../test_encrypted_message/lib.mjs";
@@ -106,8 +108,6 @@ let successSummary;
 let phase = "startup";
 const pending = new Map();
 const completed = [];
-const activeText = new Map();
-const agentOutputs = [];
 const suffix = randomBytes(6).toString("hex");
 const check = async (predicate, label, timeout = 180_000) => {
   await waitFor(predicate, label, timeout, pair);
@@ -117,32 +117,10 @@ function outbound(frame) {
   frames.push({ direction: "out", frame, phase, time: Date.now() });
   if (frame.method) console.log(JSON.stringify({ rpc: frame.method }));
   if (frame.method === "session/prompt" || frame.method === "_session/steering") pending.set(frame.id, frame);
-  if (frame.method === "session/prompt") activeText.set(frame.params.sessionId, { id: frame.id, text: "" });
 }
 
 function inbound(frame) {
   frames.push({ direction: "in", frame, phase, time: Date.now() });
-  const update = frame.params?.update;
-  if (
-    update?.sessionUpdate === "tool_call" ||
-    (update?.sessionUpdate === "agent_thought_chunk" && update.content?.text?.trim())
-  ) {
-    const active = activeText.get(frame.params.sessionId);
-    if (active?.text.trim()) {
-      agentOutputs.push({ sessionId: frame.params.sessionId, text: active.text.trim() });
-      active.text = "";
-    }
-  }
-  if (frame.params?.update?.sessionUpdate === "agent_message_chunk") {
-    const active = activeText.get(frame.params.sessionId);
-    if (active) active.text += frame.params.update.content?.text ?? "";
-  }
-  for (const [sessionId, active] of activeText) {
-    if (frame.id === active.id) {
-      if (active.text.trim()) agentOutputs.push({ sessionId, text: active.text.trim() });
-      activeText.delete(sessionId);
-    }
-  }
   if (pending.has(frame.id)) {
     completed.push({ request: pending.get(frame.id), response: frame });
     console.log(
@@ -311,25 +289,24 @@ try {
     const state = await snapshot();
     return sent.every((event) => state.completedEventIds[environment.roomId]?.includes(event.eventId));
   }, "all tracked and injected inputs durably complete");
+  const agentOutputs = collectAgentMessages(frames);
+  assert.ok(agentOutputs.length > 0, "real agent produced no identified reply");
+  const replyEvents = () =>
+    events.filter(
+      (event) =>
+        event.sender === environment.bridge.userId &&
+        event.content?.msgtype === "m.text" &&
+        event.originServerTs >= sent[0].originServerTs,
+    );
   await check(
     () =>
       agentOutputs.every((output) =>
-        events.some(
-          (event) =>
-            event.sender === environment.bridge.userId &&
-            event.content?.body === output.text &&
-            event.originServerTs >= sent[0].originServerTs,
-        ),
+        effectiveMatrixReplies(replyEvents()).some((event) => event.content.body === output.text),
       ),
     "all real agent replies delivered",
   );
   phase = "Matrix output and encrypted wire verification";
-  const replies = events.filter(
-    (event) =>
-      event.sender === environment.bridge.userId &&
-      event.content?.msgtype === "m.text" &&
-      event.originServerTs >= sent[0].originServerTs,
-  );
+  const replies = effectiveMatrixReplies(replyEvents());
   assert.ok(replies.length > 0);
   assertSteeringIdleNotices(replies, responseMode);
   for (const output of agentOutputs) {
@@ -380,7 +357,7 @@ try {
   }
   if (transport === "encrypted") {
     const token = await readToken(environment.sender.tokenFile);
-    for (const event of [...sent, ...replies]) {
+    for (const event of [...sent, ...replyEvents()]) {
       const response = await fetch(
         `${environment.homeserver}/_matrix/client/v3/rooms/${encodeURIComponent(environment.roomId)}/event/${encodeURIComponent(event.eventId)}`,
         { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) },

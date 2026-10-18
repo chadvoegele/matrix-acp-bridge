@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createCancellationController } from "./cancellation.js";
 import { MatrixDelivery } from "./matrix-delivery.js";
 import { StderrDiagnosticSink, type DiagnosticRecord } from "./diagnostics.js";
 import type { MatrixBridgeAdapter, MatrixHtmlMessage } from "./matrix-client.js";
@@ -245,4 +246,46 @@ void test("shutdown prevents queued responses and remaining parts from starting 
   assert.equal(await first, false);
   assert.equal(await queued, false);
   assert.equal(attempts, 1);
+});
+
+void test("cancelling one live retry leaves another session's retry intact", { timeout: 1000 }, async () => {
+  const clock = new FakeClock();
+  const retired = createCancellationController();
+  const active = createCancellationController();
+  const attempts: string[] = [];
+  const delivery = new MatrixDelivery({
+    clock,
+    canSend: () => true,
+    matrix: createAdapter(
+      async () => {},
+      async (message) => {
+        attempts.push(message.roomId);
+        if (attempts.filter((roomId) => roomId === message.roomId).length === 1) throw { status: 503 };
+        return "$delivered";
+      },
+    ),
+  });
+  const message: MatrixHtmlMessage = {
+    roomId: "!retired:example.org",
+    transactionId: "retired",
+    body: "text",
+    formattedBody: matrixHtml`<p>text</p>`,
+  };
+  const first = delivery.sendLive(message, retired.signal);
+  const second = delivery.sendLive(
+    { ...message, roomId: "!active:example.org", transactionId: "active" },
+    active.signal,
+  );
+  await flush();
+  assert.equal(clock.pendingTimerCount, 2);
+  retired.cancel();
+  assert.equal(await first, undefined);
+  assert.equal(clock.pendingTimerCount, 1);
+  clock.advanceBy(60_000);
+  assert.equal(await second, "$delivered");
+  assert.deepEqual(attempts, ["!retired:example.org", "!active:example.org", "!active:example.org"]);
+  assert.equal(clock.pendingTimerCount, 0);
+  active.cancel();
+  assert.equal(await delivery.sendLive(message, retired.signal), undefined);
+  assert.equal(attempts.length, 3);
 });

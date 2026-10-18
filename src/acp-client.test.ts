@@ -783,7 +783,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
         messageId: "plan",
         content: {
           type: "text",
-          text: "😀".repeat((ACP_ACTIVITY_UPDATE_MAX_BYTES - 4) / 4),
+          text: "😀".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES / 4),
         },
       },
     }),
@@ -797,7 +797,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
         messageId: "plan",
         content: {
           type: "text",
-          text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 5)}😀`,
+          text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 1)}😀`,
         },
       },
     }),
@@ -841,9 +841,9 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   );
   assert.equal(raw.activityCut, true);
   assert.doesNotMatch(rawOutput.text, /�/u);
-  assert.equal(Buffer.byteLength(thoughts[0]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 4);
+  assert.equal(Buffer.byteLength(thoughts[0]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES);
   assert.equal(thoughts[0]!.textCut, undefined);
-  assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 5);
+  assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 1);
   assert.equal(thoughts[1]!.textCut, true);
   assert.doesNotMatch(thoughts[1]!.text, /�/u);
   const model = new AcpToolModel();
