@@ -91,4 +91,5 @@ failed delivery, history/restart, output limits, retention and timer cleanup.
 Neither command establishes a live encrypted Matrix pass or Pi adapter support.
 The installed Pi adapter lacks required assistant IDs; implementing and validating
 that prerequisite remains outside this repository. See the
-[verification report](../../docs/unified-message-rendering-verification.md).
+[collector specification](../../specifications/collector-based-output-rendering.md)
+for the rendering contract and interface diagram.

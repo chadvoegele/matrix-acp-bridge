@@ -10,7 +10,7 @@ This records the first PR #28 design. Its collection, mapping ownership, thought
 formatting/timing and strict text-before-activity rules are superseded by
 [Collector-based output rendering](collector-based-output-rendering.md).
 The diagram below illustrates that original design; use the
-[current component map](../docs/unified-rendering-architecture.md) for implementation.
+[collector diagram](collector-based-output-rendering.svg) for the current implementation.
 Routing, compatibility, delivery and resource requirements still apply.
 
 ## Purpose
@@ -25,7 +25,7 @@ This specification replaces the agent-text portion of **Eager Message Rendering*
 
 ## Design overview
 
-![Unified message rendering: solicited and unsolicited output shares a session-scoped block and buffered Matrix send/edit path.](diagrams/unified-message-rendering.svg)
+![Unified message rendering: solicited and unsolicited output shares a session-scoped block and buffered Matrix send/edit path.](unified-message-rendering.svg)
 
 Both sources deliver the same identified text chunks. The bridge routes by session, appends to the current message block, and buffers publication through an ordered conversation queue. The first flush sends a Matrix message; later flushes edit it in place. A different assistant message ID retires the previous block after delivery. Prompt completion remains separate from rendering.
 

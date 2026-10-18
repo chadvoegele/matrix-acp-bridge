@@ -10,8 +10,8 @@ last_update = 2026-10-17
 
 Give streamed messages and thoughts the same accumulation and flush behavior,
 keep tool/card state separate from presentation, and make the Matrix sender the
-sole owner of logical-ID-to-Matrix-event mappings. This design is implemented on the PR #28 feature branch. See the
-[current verification evidence](../docs/collector-rendering-verification.md) for tested revisions and limits.
+sole owner of logical-ID-to-Matrix-event mappings. This design is implemented on
+the PR #28 feature branch.
 
 Chad's Agent
 
@@ -48,7 +48,7 @@ remain sequential under the existing adapter contract.
 
 ## Design overview
 
-![Implemented collectors, shared Markdown rendering, activity composition and sender-owned identity](diagrams/collector-based-output-rendering.svg)
+![Implemented collectors, shared Markdown rendering, activity composition and sender-owned identity](collector-based-output-rendering.svg)
 
 The diagram describes the implementation. Collectors
 hold domain state, renderers produce safe plain-text/HTML payloads, and the sender
@@ -294,6 +294,5 @@ guessing from unrelated output.
 
 ## References
 
-- [Current implementation component map](../docs/unified-rendering-architecture.md)
 - [Unified message rendering](unified-message-rendering.md)
 - [Existing activity presentation](verbose-acp-output.md)
