@@ -3,6 +3,10 @@ import { isRecord } from "./object-validation.js";
 
 export type AcpSessionId = string;
 
+export function isUsableMessageId(value: unknown): value is AcpMessageId {
+  return typeof value === "string" && /[^\s\p{Cc}]/u.test(value);
+}
+
 export type AcpMessageId = string;
 
 export type AcpIgnoredUpdateKind =
@@ -310,14 +314,13 @@ export function normalizeAcpUpdateNotification(parameters: unknown): AcpUpdate |
       };
     }
     const budget = new ActivityBudget();
-    const activityMessageId = boundedString(id, budget);
     const text = budget.take(content.text);
     return {
       sessionId,
       kind,
       text,
       ...(budget.cut ? { textCut: true } : {}),
-      ...(activityMessageId === undefined ? {} : { messageId: activityMessageId }),
+      ...(id === undefined ? {} : { messageId: id }),
     };
   }
 

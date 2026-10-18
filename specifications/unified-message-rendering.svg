@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="920" viewBox="0 0 1120 920" role="img" aria-labelledby="title desc">
-  <title id="title">Unified solicited and unsolicited message rendering</title>
+  <title id="title">Historical first PR 28 design: unified message rendering</title>
   <desc id="desc">User-prompted and extension-triggered Pi output share one ACP session-update path. The bridge routes by session ID and retains the current assistant message by message ID. Buffered flushes create or edit Matrix messages. A new message ID retires the preceding block after publication. Prompt responses control bookkeeping, not text rendering.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
@@ -16,7 +16,7 @@
     </style>
   </defs>
   <rect width="1120" height="920" fill="white"/>
-  <text x="40" y="42" class="heading">One rendering path for every assistant message</text>
+  <text x="40" y="42" class="heading">Original design — see collector diagram for current ownership</text>
 
   <rect x="40" y="70" width="340" height="85" class="box blue"/>
   <text x="60" y="103" class="label">User-prompted Pi work</text>

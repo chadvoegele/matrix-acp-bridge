@@ -1,9 +1,15 @@
 import { randomBytes } from "node:crypto";
+import { getEffectiveContent } from "./unified-observations.mjs";
 import { assertThreadResponse } from "./thread-sessions.mjs";
 import { installLiveDecryptionFailureHandler } from "../test_encrypted_message/decryption-failure-gate.mjs";
 
 export async function runSenderHarness({ readEnvironment, readToken, createAdapter, threadMode = false }) {
-  if (!threadMode && (process.argv.includes("--thread-root") || process.argv.includes("--expect-thread"))) {
+  if (
+    !threadMode &&
+    (process.argv.includes("--thread-root") ||
+      process.argv.includes("--expect-thread") ||
+      process.argv.includes("--expect-fallback"))
+  ) {
     throw new Error("room sender does not accept thread options");
   }
 
@@ -21,11 +27,14 @@ export async function runSenderHarness({ readEnvironment, readToken, createAdapt
       ? process.argv[process.argv.indexOf("--thread-root") + 1]
       : undefined;
   const expectThread = threadMode;
+  const expectedFallback =
+    threadMode && process.argv.includes("--expect-fallback") ? argument("--expect-fallback") : undefined;
   const adapter = await createAdapter(environment, "sender");
   const token = await readToken(environment.sender.tokenFile);
   const timeoutMs = 180_000;
   let promptEvent;
   const responseEvents = [];
+  const observed = new Map();
   let resolveExchange;
   let rejectExchange;
   const exchange = new Promise((resolve, reject) => {
@@ -42,7 +51,8 @@ export async function runSenderHarness({ readEnvironment, readToken, createAdapt
     if (batch.phase === "initial") return;
     for (const room of batch.rooms) {
       for (const event of room.timeline) {
-        const body = typeof event.content?.body === "string" ? event.content.body : undefined;
+        observed.set(event.eventId, event);
+        const body = getEffectiveContent(event)?.body;
         if (event.sender === environment.sender.userId && body === prompt) promptEvent = event;
         if (promptEvent !== undefined && event.sender === environment.bridge.userId && body === expected) {
           responseEvents.push(event);
@@ -100,6 +110,10 @@ export async function runSenderHarness({ readEnvironment, readToken, createAdapt
     const responseEvent = responseEvents[0];
     assertEncrypted(promptEvent, "prompt");
     assertEncrypted(responseEvent, "response");
+    const target = responseEvent.content?.["m.relates_to"];
+    const original = target?.rel_type === "m.replace" ? observed.get(target.event_id) : responseEvent;
+    assertEncrypted(original, "response original");
+    if (original.sender !== environment.bridge.userId) throw new Error("response original was not sent by the bridge");
     if (threadRootEventId !== undefined) {
       const relation = promptEvent.content?.["m.relates_to"];
       if (
@@ -112,13 +126,19 @@ export async function runSenderHarness({ readEnvironment, readToken, createAdapt
     }
     if (expectThread) {
       const expectedRoot = threadRootEventId ?? promptEvent.eventId;
-      assertThreadResponse(responseEvent.content, expectedRoot, promptEvent.eventId);
+      assertThreadResponse(original.content, expectedRoot, expectedFallback ?? promptEvent.eventId);
+      assertThreadResponse(getEffectiveContent(responseEvent), expectedRoot, expectedFallback ?? promptEvent.eventId);
     }
-    const [promptWireType, responseWireType] = await Promise.all([
+    const [promptWireType, responseWireType, originalWireType] = await Promise.all([
       rawEventType(promptEvent.eventId),
       rawEventType(responseEvent.eventId),
+      rawEventType(original.eventId),
     ]);
-    if (promptWireType !== "m.room.encrypted" || responseWireType !== "m.room.encrypted") {
+    if (
+      promptWireType !== "m.room.encrypted" ||
+      responseWireType !== "m.room.encrypted" ||
+      originalWireType !== "m.room.encrypted"
+    ) {
       throw new Error("prompt or response was plaintext on the wire");
     }
     process.stdout.write(

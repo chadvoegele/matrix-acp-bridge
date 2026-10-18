@@ -12,7 +12,8 @@ if (process.env.E2E_LIVE_LOCK_HELD !== "1")
 const environmentPath = process.argv[2];
 if (!environmentPath) throw new Error("usage: node run.mjs ENVIRONMENT");
 const environment = await readEnvironment(environmentPath);
-assert.equal(environment.transport, "encrypted");
+assert.ok(["plaintext", "encrypted"].includes(environment.transport), "unknown outage-test transport");
+const wireType = environment.transport === "encrypted" ? "m.room.encrypted" : "m.room.message";
 const id = randomBytes(6).toString("hex").toUpperCase();
 const expectations = [1, 2, 3].map((index) => `OUTAGE_${id}_${index}`);
 const flag = join(dirname(environmentPath), "outage.flag");
@@ -20,8 +21,10 @@ const preload = pathToFileURL(join(repoRoot, "agent_tests/test_matrix_outage/htt
 const senderPath = join(
   repoRoot,
   environment.responseMode === "thread"
-    ? "agent_tests/test_thread_sessions/encrypted-sender.mjs"
-    : "agent_tests/test_encrypted_message/sender.mjs",
+    ? `agent_tests/test_thread_sessions/${environment.transport}-sender.mjs`
+    : environment.transport === "encrypted"
+      ? "agent_tests/test_encrypted_message/sender.mjs"
+      : "agent_tests/test_unencrypted_message/sender.mjs",
 );
 const promptCounts = new Map();
 let arm = false;
@@ -65,10 +68,10 @@ try {
     const prompt = `Reply with exactly: ${expected}`;
     const result = await runSender({ environmentPath, senderPath, args: ["--prompt", prompt, "--expect", expected] });
     assert.equal(result.responseCount, 1);
-    assert.equal(result.promptWireType, "m.room.encrypted");
-    assert.equal(result.responseWireType, "m.room.encrypted");
+    assert.equal(result.promptWireType, wireType);
+    assert.equal(result.responseWireType, wireType);
     assert.equal(promptCounts.get(prompt), 1);
-    process.stdout.write(`Encrypted exchange ${index + 1} passed.\n`);
+    process.stdout.write(`${environment.transport} exchange ${index + 1} passed.\n`);
   }
   assert.ok(outageStart);
   await restore;

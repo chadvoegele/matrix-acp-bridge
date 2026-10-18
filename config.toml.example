@@ -9,6 +9,10 @@ allowed_rooms = ["!private-room:matrix.example.org"]
 allowed_senders = ["@operator:matrix.example.org"]
 response_mode = "room"    # or "thread"; defaults to room
 default_message_delivery = "prompt" # or "steer"; defaults to prompt
+# Shared message/thought publication controls; intermediate tool updates reuse pacing.
+agent_text_flush_bytes = 2048 # unpublished UTF-8 bytes; 256–16384
+agent_text_quiet_ms = 750 # 100–5000; must not exceed max interval
+agent_text_max_interval_ms = 2000 # 250–10000
 encryption = "disabled"     # or "required"
 
 [acp]

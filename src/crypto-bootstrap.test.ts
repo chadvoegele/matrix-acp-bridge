@@ -30,6 +30,9 @@ const CONFIG_BASE: Omit<BridgeConfig, "stateDir"> = {
     encryption: "required",
     responseMode: "room",
     defaultMessageDelivery: "prompt",
+    agentTextFlushBytes: 2048,
+    agentTextQuietMs: 750,
+    agentTextMaxIntervalMs: 2000,
   },
   acp: { cwd: "/unused" },
   limits: {

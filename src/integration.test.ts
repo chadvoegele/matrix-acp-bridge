@@ -69,6 +69,9 @@ const MATRIX_CONFIG: MatrixConfig = {
   encryption: "disabled",
   responseMode: "room",
   defaultMessageDelivery: "prompt",
+  agentTextFlushBytes: 2048,
+  agentTextQuietMs: 750,
+  agentTextMaxIntervalMs: 2000,
 };
 
 const CONFIG: BridgeConfig = {
@@ -182,6 +185,10 @@ class FakeAcpPeer {
     }
     this.#inputClosed = true;
     this.#inputController?.close();
+  }
+
+  notify(sessionId: string, update: Readonly<Record<string, unknown>>): void {
+    this.#push({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
   }
 
   #consumeFrames(): void {
@@ -718,6 +725,7 @@ interface IntegrationRig {
 }
 
 interface IntegrationRigOptions {
+  readonly diagnostics?: DiagnosticSink;
   readonly advertiseLoadSession?: boolean;
   readonly advertiseSteering?: boolean;
   readonly staleSessionIds?: readonly string[];
@@ -739,7 +747,7 @@ function createRig(config: BridgeConfig = CONFIG, options: IntegrationRigOptions
     cwd: config.acp.cwd,
     input: peer.input,
     output: peer.output,
-    diagnostics: SILENT_DIAGNOSTICS,
+    diagnostics: options.diagnostics ?? SILENT_DIAGNOSTICS,
   });
   const matrix = createMatrixClientAdapter(config.matrix, "integration-access-token", {
     client: matrixSdk,
@@ -761,7 +769,7 @@ function createRig(config: BridgeConfig = CONFIG, options: IntegrationRigOptions
     loadedConfiguration: loaded,
     dependencies: {
       clock,
-      diagnostics: SILENT_DIAGNOSTICS,
+      diagnostics: options.diagnostics ?? SILENT_DIAGNOSTICS,
       installSignals: false,
       createAcpClient: () => acp,
       createMatrixClient: () => matrix,
@@ -954,7 +962,7 @@ async function completePrompt(rig: IntegrationRig, call: PromptCall, reply: stri
   await flushMany(2);
   call.respond();
   await waitFor(() => rig.bridge.unresolvedPromptCount === 0, `ACP response for ${call.text}`);
-  rig.clock.advanceBy(300);
+  rig.clock.advanceBy(750);
   await waitFor(
     () => rig.matrixSdk.sent.some((attempt) => attempt.content.body === reply),
     `Matrix delivery for ${call.text}`,
@@ -976,7 +984,7 @@ async function completeAbandonedPrompt(
   await flushMany(2);
   call.respond();
   await waitFor(() => rig.bridge.unresolvedPromptCount === 0, `ACP response for abandoned ${call.text}`);
-  rig.clock.advanceBy(300);
+  rig.clock.advanceBy(750);
   await waitFor(
     () => rig.matrixSdk.attempts.length >= expectedAttempts && !rig.bridge.isRoomActive(ROOM_ONE),
     `permanent Matrix abandonment for ${call.text}`,
@@ -1042,7 +1050,7 @@ void test("integration suppresses the complete first sync, delivers live text, a
       format: "org.matrix.custom.html",
       formatted_body: "<p>live reply</p>",
     });
-    assert.match(liveSend.transactionId ?? "", /^matrix-acp-live-[0-9a-f]{64}$/u);
+    assert.match(liveSend.transactionId ?? "", /^matrix-acp-text-[0-9a-f-]{36}-[0-9]+$/u);
     assert.equal(
       rig.peer.prompts.some((prompt) => prompt.text === "must be suppressed"),
       false,
@@ -1137,7 +1145,7 @@ void test("integration keeps same-room order, isolates sessions, and permits bou
       call.respond();
     }
     await waitFor(() => rig.bridge.unresolvedPromptCount === 0, "cross-room ACP responses");
-    rig.clock.advanceBy(300);
+    rig.clock.advanceBy(750);
     await waitFor(
       () =>
         rig.matrixSdk.sent.some((attempt) => attempt.content.body === "cross reply 1") &&
@@ -1197,7 +1205,7 @@ void test("integration reconnects Matrix, retries transient sends with one trans
     await flushMany(2);
     retryCall.respond();
     await waitFor(() => rig.bridge.unresolvedPromptCount === 0, "retry ACP response");
-    rig.clock.advanceBy(300);
+    rig.clock.advanceBy(750);
     await waitFor(() => rig.matrixSdk.attempts.length === 1, "first transient Matrix attempt");
     assert.equal(rig.matrixSdk.sent.length, 0);
     const retryTransactionId = rig.matrixSdk.attempts[0]?.transactionId;
@@ -1223,8 +1231,7 @@ void test("integration reconnects Matrix, retries transient sends with one trans
     const permanentCall = rig.peer.prompts[1]!;
     await completeAbandonedPrompt(rig, permanentCall, "abandoned reply", 3);
     const permanentAttempts = rig.matrixSdk.attempts.filter((attempt) => attempt.content.body === "abandoned reply");
-    assert.equal(permanentAttempts.length, 2);
-    assert.notEqual(permanentAttempts[0]?.transactionId, permanentAttempts[1]?.transactionId);
+    assert.equal(permanentAttempts.length, 1);
 
     rig.matrixSdk.emitInbound(
       sdkEvent({
@@ -1517,7 +1524,7 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
       call.respond();
     }
     await waitFor(() => seed!.bridge.unresolvedPromptCount === 0, "seed room responses");
-    seed.clock.advanceBy(300);
+    seed.clock.advanceBy(750);
     await waitFor(
       () => seed!.matrixSdk.sent.filter((attempt) => attempt.content.body?.toString().startsWith("seed ")).length === 2,
       "seed Matrix responses",
@@ -1581,7 +1588,7 @@ void test("M2 scenario 4: a successful loaded session preserves room context", a
       restart.peer.prompts[index]!.respond();
     }
     await waitFor(() => restart!.bridge.unresolvedPromptCount === 0, "restored room responses");
-    restart.clock.advanceBy(300);
+    restart.clock.advanceBy(750);
     await waitFor(
       () =>
         restart!.matrixSdk.sent.filter(
@@ -1643,7 +1650,7 @@ void test("M2 scenario 5: a stale mapping and /reset each create a fresh isolate
       call.respond();
     }
     await waitFor(() => seed!.bridge.unresolvedPromptCount === 0, "reset seed responses");
-    seed.clock.advanceBy(300);
+    seed.clock.advanceBy(750);
     await waitFor(
       () =>
         seed!.matrixSdk.sent.filter((attempt) => attempt.content.body?.toString().startsWith("seed reply")).length ===
@@ -1771,7 +1778,7 @@ void test("M2 scenario 6: typing spans only an active ACP turn", async () => {
       [true, true, false, true, false],
     );
     assert.ok(
-      rig.matrixSdk.operations.indexOf("message:typing one response") < rig.matrixSdk.operations.indexOf("typing:off"),
+      rig.matrixSdk.operations.indexOf("typing:off") < rig.matrixSdk.operations.indexOf("message:typing one response"),
     );
   } finally {
     await stopRig(rig, run);
@@ -1944,7 +1951,7 @@ void test("M2 scenario 9: completion precedes a lost Matrix response and ACP is 
     await flushMany(2);
     call.respond();
     await waitFor(() => first!.bridge.unresolvedPromptCount === 0, "response-loss ACP completion");
-    first.clock.advanceBy(300);
+    first.clock.advanceBy(750);
     await waitFor(() => !first!.bridge.isRoomActive(ROOM_ONE), "response-loss bridge completion");
 
     const saved = JSON.parse(await readFile(join(stateDir, "bridge-state.json"), "utf8")) as Record<string, unknown>;
@@ -2333,7 +2340,7 @@ void test("encrypted thread steering routes silent injection, method errors and 
     first.respond();
     independent.respond();
     await waitFor(() => rig!.bridge.unresolvedPromptCount === 0, "both thread prompt responses");
-    rig.clock.advanceBy(300);
+    rig.clock.advanceBy(750);
     await waitFor(() => rig!.peer.prompts.length === 3, "thread fallback prompt");
     assert.equal(rig.peer.prompts[2]!.sessionId, first.sessionId);
     assert.equal(rig.peer.prompts[2]!.text, "queued");
@@ -2659,3 +2666,265 @@ void test("M3 scenario 11: missing or replaced crypto state fails closed without
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+void test("identified unsolicited continuations use the mapped SDK room or encrypted thread after prompt completion", async () => {
+  for (const responseMode of ["room", "thread"] as const) {
+    for (const encryption of ["disabled", "required"] as const) {
+      const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-unsolicited-"));
+      const base = encryption === "required" ? requiredConfig(stateDir) : { ...CONFIG, stateDir };
+      const settings: BridgeConfig = { ...base, matrix: { ...base.matrix, responseMode } };
+      let rig: IntegrationRig | undefined;
+      let run: Promise<DaemonExitCode> | undefined;
+      try {
+        if (encryption === "required") await prepareVerifiedCryptoState(settings);
+        rig = createRig(settings, encryption === "required" ? { cryptoAdapter: new HermeticCrypto() } : {});
+        ({ run } = await startRig(rig));
+        const root = "$unsolicited-root:example.org";
+        rig.matrixSdk.emitInbound(
+          sdkEvent({
+            eventId: root,
+            encrypted: encryption === "required",
+            ...(encryption === "required" ? { clearContent: { msgtype: "m.text", body: "start" } } : { body: "start" }),
+          }),
+        );
+        rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "unsolicited-cursor" });
+        await waitFor(() => rig!.peer.prompts.length === 1, "mapped session prompt");
+        const call = rig.peer.prompts[0]!;
+        await completePrompt(rig, call, "prefix");
+        call.update(" continuation", `message-${call.index}`);
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(() => rig!.matrixSdk.sent.length === 2, "unsolicited replacement");
+        const edit = rig.matrixSdk.sent[1]!;
+        assert.equal(edit.roomId, ROOM_ONE);
+        assert.equal(edit.wireEncrypted === true, encryption === "required");
+        assert.deepEqual(edit.content["m.relates_to"], { rel_type: "m.replace", event_id: "$sent-1:example.org" });
+        const replacement = edit.content["m.new_content"] as Record<string, unknown>;
+        assert.equal(replacement.body, "prefix continuation");
+        if (responseMode === "thread") {
+          assert.equal((replacement["m.relates_to"] as { event_id: string }).event_id, root);
+        }
+        call.update("background message", "unsolicited-new-id");
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(() => rig!.matrixSdk.sent.length === 3, "unsolicited new message");
+        assert.equal(rig.matrixSdk.sent[2]?.content.body, "background message");
+        assert.equal(rig.peer.prompts.length, 1);
+        assert.equal(rig.peer.frames.filter((frame) => frame.method === "session/prompt").length, 1);
+      } finally {
+        if (rig !== undefined && run !== undefined) await stopRig(rig, run);
+        await rm(stateDir, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+void test("post-prompt parallel tools and same-ID text stay isolated across SDK rooms and encrypted threads", async () => {
+  for (const responseMode of ["room", "thread"] as const) {
+    for (const encryption of ["disabled", "required"] as const) {
+      const stateDir = await mkdtemp(join(tmpdir(), "matrix-acp-unified-isolation-"));
+      const base = encryption === "required" ? requiredConfig(stateDir) : { ...CONFIG, stateDir };
+      const settings: BridgeConfig = { ...base, matrix: { ...base.matrix, responseMode } };
+      let rig: IntegrationRig | undefined;
+      let run: Promise<DaemonExitCode> | undefined;
+      try {
+        if (encryption === "required") await prepareVerifiedCryptoState(settings);
+        rig = createRig(settings, encryption === "required" ? { cryptoAdapter: new HermeticCrypto() } : {});
+        ({ run } = await startRig(rig));
+        const roots = ["$unified-a:example.org", "$unified-b:example.org"];
+        for (const [index, eventId] of roots.entries()) {
+          rig.matrixSdk.emitInbound(
+            sdkEvent({
+              eventId,
+              roomId: responseMode === "room" && index === 1 ? ROOM_TWO : ROOM_ONE,
+              encrypted: encryption === "required",
+              ...(encryption === "required"
+                ? { clearContent: { msgtype: "m.text", body: `start-${index}` } }
+                : { body: `start-${index}` }),
+            }),
+          );
+        }
+        rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "unified-isolation" });
+        await waitFor(() => rig!.peer.prompts.length === 2, "independent mapped sessions");
+        const calls = rig.peer.prompts;
+        assert.notEqual(calls[0]!.sessionId, calls[1]!.sessionId);
+        for (const [index, call] of calls.entries()) {
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "agent_thought_chunk",
+            messageId: "shared-answer",
+            content: { type: "text", text: `plan-${index}` },
+          });
+          call.update(`prefix-${index}`, "shared-answer");
+          call.respond();
+        }
+        await waitFor(() => rig!.bridge.unresolvedPromptCount === 0, "both prompt responses");
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(
+          () => rig!.matrixSdk.sent.filter((sent) => String(sent.content.body).startsWith("prefix-")).length === 2,
+          "two text originals",
+        );
+        for (const [index, call] of calls.entries()) {
+          for (const toolCallId of ["shared-first", "shared-second"]) {
+            rig.peer.notify(call.sessionId, {
+              sessionUpdate: "tool_call",
+              toolCallId,
+              title: `tool-${index}-${toolCallId}`,
+              status: "in_progress",
+            });
+          }
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "agent_thought_chunk",
+            messageId: "shared-answer",
+            content: { type: "text", text: " **resumed**" },
+          });
+          call.update(" after tools", "shared-answer");
+          call.update(`next-${index}`, "shared-next");
+        }
+        await flushMany();
+        rig.clock.advanceBy(750);
+        await waitFor(
+          () => rig!.matrixSdk.sent.filter((sent) => String(sent.content.body).startsWith("next-")).length === 2,
+          "new assistant identities",
+        );
+        for (const call of calls) {
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-second",
+            status: "failed",
+          });
+          rig.peer.notify(call.sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "shared-first",
+            status: "completed",
+          });
+        }
+        await flushMany(40);
+        const originals = rig.matrixSdk.sent.filter(
+          (sent) => (sent.content["m.relates_to"] as { rel_type?: string } | undefined)?.rel_type !== "m.replace",
+        );
+        for (const [index, root] of roots.entries()) {
+          const expectedRoom = responseMode === "room" && index === 1 ? ROOM_TWO : ROOM_ONE;
+          const initial: number = rig.matrixSdk.sent.findIndex((sent) => sent.content.body === `prefix-${index}`);
+          assert.ok(initial !== -1);
+          const target: string = `$sent-${initial + 1}:example.org`;
+          const continuation: MatrixSendAttempt | undefined = rig.matrixSdk.sent.find(
+            (sent) =>
+              (sent.content["m.new_content"] as { body?: string } | undefined)?.body === `prefix-${index} after tools`,
+          );
+          assert.equal((continuation?.content["m.relates_to"] as { event_id: string }).event_id, target);
+          const thoughtOriginal = rig.matrixSdk.sent.findIndex((sent) => sent.content.body === `💭 plan-${index}`);
+          assert.ok(thoughtOriginal !== -1);
+          const thoughtEdit: MatrixSendAttempt | undefined = rig.matrixSdk.sent.find(
+            (sent) =>
+              (sent.content["m.new_content"] as { body?: string } | undefined)?.body === `💭 plan-${index} **resumed**`,
+          );
+          assert.equal(
+            (thoughtEdit?.content["m.relates_to"] as { event_id?: string } | undefined)?.event_id,
+            `$sent-${thoughtOriginal + 1}:example.org`,
+          );
+          assert.match(
+            String((thoughtEdit?.content["m.new_content"] as { formatted_body?: string } | undefined)?.formatted_body),
+            /Past agent events.*<strong>resumed<\/strong>/su,
+          );
+          const own: MatrixSendAttempt[] = rig.matrixSdk.sent.filter((sent) => {
+            const content = (sent.content["m.new_content"] ?? sent.content) as { body: string };
+            return (
+              content.body.includes(`prefix-${index}`) ||
+              content.body.includes(`plan-${index}`) ||
+              content.body === `next-${index}` ||
+              content.body.includes(`tool-${index}-`)
+            );
+          });
+          assert.ok(own.length >= 5);
+          for (const sent of own) {
+            assert.equal(sent.roomId, expectedRoom);
+            assert.equal(sent.wireEncrypted === true, encryption === "required");
+            const content = (sent.content["m.new_content"] ?? sent.content) as Record<string, unknown>;
+            const relation = content["m.relates_to"] as { event_id: string } | undefined;
+            assert.equal(relation?.event_id, responseMode === "thread" ? root : undefined);
+          }
+          const terminal = own.map(
+            (sent) => (sent.content["m.new_content"] ?? sent.content) as { body: string; formatted_body: string },
+          );
+          assert.ok(
+            terminal.some(
+              (content) =>
+                content.body.includes("[completed]") &&
+                content.body.includes(`tool-${index}-shared-first`) &&
+                content.formatted_body.includes("Past agent events"),
+            ),
+          );
+          assert.ok(
+            terminal.some(
+              (content) => content.body.includes("[failed]") && content.body.includes(`tool-${index}-shared-second`),
+            ),
+          );
+        }
+        assert.equal(originals.filter((sent) => String(sent.content.body).startsWith("prefix-")).length, 2);
+        assert.equal(rig.peer.prompts.length, 2);
+      } finally {
+        if (rig !== undefined && run !== undefined) await stopRig(rig, run);
+        await rm(stateDir, { recursive: true, force: true, maxRetries: 3 });
+      }
+    }
+  }
+});
+
+for (const kind of ["agent_message_chunk", "agent_thought_chunk"] as const) {
+  void test(`canonical ${kind} rejection warns once per chunk across the bridge boundary and never publishes rejected text`, async () => {
+    const diagnostics: Array<{ level: string; event: string; fields: unknown }> = [];
+    const sink: DiagnosticSink = {
+      ...SILENT_DIAGNOSTICS,
+      emit(level, event, fields) {
+        diagnostics.push({ level, event, fields });
+      },
+    };
+    const rig = createRig(CONFIG, { diagnostics: sink });
+    const { run } = await startRig(rig);
+    try {
+      rig.matrixSdk.emitInbound(sdkEvent({ eventId: `$idless-${kind}`, body: "idless regression" }));
+      rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "idless-cursor" });
+      await waitFor(() => rig.peer.prompts.length === 1, "prompt admission");
+      const prompt = rig.peer.prompts[0]!;
+      const rejected = () =>
+        rig.peer.notify(prompt.sessionId, {
+          sessionUpdate: kind,
+          content: { type: "text", text: "private rejected text" },
+        });
+      const warnings = () =>
+        diagnostics.filter(
+          (record) =>
+            record.event === (kind === "agent_message_chunk" ? "agent-text-missing-id" : "agent-thought-missing-id"),
+        );
+      const timers = rig.clock.pendingTimerCount;
+      rejected();
+      rejected();
+      await waitFor(() => warnings().length >= 2, "solicited rejection");
+      assert.equal(warnings().length, 2);
+      assert.equal(rig.clock.pendingTimerCount, timers);
+      assert.equal(rig.matrixSdk.sent.length, 0);
+      prompt.update("before ", "valid");
+      rejected();
+      prompt.update("after", "valid");
+      prompt.respond();
+      await waitFor(
+        () => rig.bridge.unresolvedPromptCount === 0 && !rig.bridge.isRoomActive(ROOM_ONE),
+        "prompt completion",
+      );
+      assert.equal(rig.matrixSdk.sent.length, 0);
+      rejected();
+      rejected();
+      await waitFor(() => warnings().length >= 5, "unsolicited rejection");
+      assert.equal(warnings().length, 5);
+      assert.ok(warnings().every((record) => record.level === "warn" && JSON.stringify(record.fields) === "{}"));
+      rig.clock.advanceBy(750);
+      await waitFor(() => rig.matrixSdk.sent.length === 1, "valid publication");
+      assert.equal(rig.matrixSdk.sent[0]?.content.body, "before after");
+      assert.doesNotMatch(JSON.stringify([diagnostics, rig.matrixSdk.sent]), /private rejected/);
+      assert.equal(rig.lifecycle.fatalError, undefined);
+    } finally {
+      await stopRig(rig, run);
+    }
+  });
+}

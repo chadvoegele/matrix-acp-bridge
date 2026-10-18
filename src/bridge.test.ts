@@ -13,7 +13,13 @@ import { matrixHtmlContent, matrixHtmlContentBytes } from "./matrix-message-cont
 import { openBridgeStateStore } from "./bridge-state.js";
 import type { BridgeConfig } from "./config.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
-import type { DiagnosticSink, FatalError, FatalErrorListener } from "./diagnostics.js";
+import {
+  StderrDiagnosticSink,
+  type DiagnosticRecord,
+  type DiagnosticSink,
+  type FatalError,
+  type FatalErrorListener,
+} from "./diagnostics.js";
 import { FakeClock } from "./test-support/fake-clock.js";
 import type {
   AcpClient,
@@ -51,6 +57,9 @@ function config(overrides: Partial<BridgeConfig["limits"]> = {}): BridgeConfig {
       encryption: "disabled",
       responseMode: "room",
       defaultMessageDelivery: "prompt",
+      agentTextFlushBytes: 2048,
+      agentTextQuietMs: 750,
+      agentTextMaxIntervalMs: 2000,
     },
     acp: { cwd: "/tmp" },
     limits: {
@@ -174,6 +183,23 @@ class FakeMatrix implements MatrixClientAdapter {
     return this.send(part);
   }
 
+  async sendHtmlMessage(message: MatrixHtmlMessage): Promise<string> {
+    const { roomId, transactionId, body, formattedBody, threadRootEventId, threadInReplyToEventId } = message;
+    await this.sendMessage({
+      roomId,
+      inboundEventId: threadInReplyToEventId ?? "$fixture-input",
+      responseKind: "agent",
+      partNumber: 1,
+      partCount: 1,
+      transactionId,
+      content: { msgtype: "m.text", body },
+      formattedBody,
+      ...(threadRootEventId === undefined ? {} : { threadRootEventId }),
+      ...(threadInReplyToEventId === undefined ? {} : { threadInReplyToEventId }),
+    });
+    return message.targetEventId ?? `$fixture-output-${this.sent.length}`;
+  }
+
   async sendTyping(roomId: string, isTyping: boolean, timeoutMs: number): Promise<void> {
     this.typing.push({ roomId, isTyping, timeoutMs });
     this.operationOrder.push(`typing:${isTyping ? "on" : "off"}`);
@@ -200,7 +226,7 @@ class FakeLiveMatrix extends FakeMatrix {
     return message.targetEventId ?? `$live-${this.html.length}:example.org`;
   };
 
-  sendHtmlMessage(message: MatrixHtmlMessage): Promise<string> {
+  override sendHtmlMessage(message: MatrixHtmlMessage): Promise<string> {
     this.attempts.push(message);
     return this.htmlSend(message);
   }
@@ -279,6 +305,11 @@ class FakeAcp implements AcpClient {
     }
   }
 
+  answer(sessionId: string, text: string, stopReason: "end_turn" | "cancelled" = "end_turn"): AcpOutcome {
+    this.emit({ sessionId, kind: "agent_message_chunk", messageId: `answer-${this.promptCalls.length}`, text });
+    return { kind: "turn", stopReason };
+  }
+
   emitFatal(error: FatalError): void {
     for (const listener of this.fatal) {
       listener(error);
@@ -290,11 +321,7 @@ void test("records valid IDs before policy, silently ignores missing IDs, and ev
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
-  acp.promptImpl = async () => ({
-    kind: "turn",
-    stopReason: "end_turn",
-    text: "reinserted",
-  });
+  acp.promptImpl = async (sessionId) => acp.answer(sessionId, "reinserted");
   const bridge = new BridgeCoordinator({
     config: config({ maxConcurrentPrompts: 1 }),
     acp,
@@ -316,7 +343,8 @@ void test("records valid IDs before policy, silently ignores missing IDs, and ev
   const reinserted = bridge.handleTimelineEvent(event("$duplicate:example.org"));
   await flush();
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await reinserted;
   assert.equal(bridge.deduplicatedEventCount, 10_000);
   assert.equal(acp.promptCalls.length, 1);
@@ -356,9 +384,10 @@ void test("buffers startup events within active-plus-waiting capacity and recove
   });
   await flush();
   assert.equal(acp.promptCalls.length, 2);
-  promptResults.shift()!({ kind: "turn", stopReason: "end_turn", text: "two" });
+  promptResults.shift()!(acp.answer(acp.promptCalls[1]!.sessionId, "two", "end_turn"));
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await Promise.all([first, second]);
   assert.equal(
     matrix.sent.some((part) => part.content.body === "[agent error]"),
@@ -371,7 +400,7 @@ void test("buffers startup events within active-plus-waiting capacity and recove
   await bridge.stop();
 });
 
-void test("keeps room sessions isolated and releases the prompt permit before drain", async () => {
+void test("keeps room sessions isolated and releases the prompt permit before publication", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
@@ -390,87 +419,58 @@ void test("keeps room sessions isolated and releases the prompt permit before dr
   assert.equal(acp.promptCalls.length, 1);
   assert.equal(acp.promptCalls[0]?.text, "room one");
 
-  resolvers.shift()!({
-    kind: "turn",
-    stopReason: "end_turn",
-    text: "answer one",
-  });
+  resolvers.shift()!(acp.answer(acp.promptCalls[0].sessionId, "answer one"));
   await flush();
   assert.equal(acp.promptCalls.length, 2);
   assert.equal(acp.promptCalls[1]?.text, "room two");
   assert.notEqual(acp.promptCalls[0]?.sessionId, acp.promptCalls[1]?.sessionId);
-  resolvers.shift()!({
-    kind: "turn",
-    stopReason: "end_turn",
-    text: "answer two",
-  });
+  resolvers.shift()!(acp.answer(acp.promptCalls[1].sessionId, "answer two"));
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await Promise.all([first, second]);
   assert.deepEqual(matrix.sent.map((part) => part.content.body).sort(), ["answer one", "answer two"]);
   await bridge.stop();
 });
 
-void test("correlates message IDs, drains trailing output, and ignores stale chunks", async () => {
+void test("identified chunks remain session-scoped across prompt completion and sequential IDs", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
-  const matrix = new FakeMatrix();
-  let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () =>
-    new Promise<AcpOutcome>((resolve) => {
-      resolvePrompt = resolve;
-    });
-  const bridge = new BridgeCoordinator({
-    config: config(),
-    acp,
-    matrix,
-    clock,
-  });
-
-  const completion = bridge.handleTimelineEvent(event("$turn:example.org"));
-  await flush();
-  const sessionId = acp.promptCalls[0]?.sessionId;
-  assert.ok(sessionId);
-  acp.emit({
-    sessionId,
-    kind: "agent_message_chunk",
-    messageId: "message-a",
-    text: "one",
-  });
-  resolvePrompt({ kind: "turn", stopReason: "end_turn" });
-  await flush();
-  acp.emit({
-    sessionId,
-    kind: "agent_message_chunk",
-    messageId: "message-b",
-    text: "two",
-  });
-  clock.advanceBy(300);
-  await completion;
-  assert.equal(matrix.sent[0]?.content.body, "one\n\ntwo");
-
-  let secondResolve!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () =>
-    new Promise<AcpOutcome>((resolve) => {
-      secondResolve = resolve;
-    });
-  const second = bridge.handleTimelineEvent(event("$turn-two:example.org"));
-  await flush();
-  acp.emit({
-    sessionId,
-    kind: "agent_message_chunk",
-    messageId: "message-a",
-    text: "stale",
-  });
-  secondResolve({ kind: "turn", stopReason: "end_turn", text: "fresh" });
-  await flush();
-  clock.advanceBy(300);
+  const matrix = new FakeLiveMatrix();
+  const pending = heldPrompts(acp);
+  const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+  const first = bridge.handleTimelineEvent(event("$turn:example.org", ROOM_ONE, "first"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "a", text: "one" });
+  pending.get("first")?.({ kind: "turn", stopReason: "end_turn" });
+  await first;
+  assert.equal(matrix.html.length, 0);
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "b", text: "two" });
+  clock.advanceBy(750);
+  await waitFor(() => matrix.html.length === 2);
+  assert.deepEqual(
+    matrix.html.map((message) => message.body),
+    ["one", "two"],
+  );
+  const second = bridge.handleTimelineEvent(event("$turn-two:example.org", ROOM_ONE, "second"));
+  await waitFor(() => acp.promptCalls.length === 2);
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "b", text: " continued" });
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "c", text: "fresh" });
+  pending.get("second")?.({ kind: "turn", stopReason: "end_turn" });
   await second;
-  assert.equal(matrix.sent.at(-1)?.content.body, "fresh");
+  clock.advanceBy(750);
+  await waitFor(() => matrix.html.length === 4);
+  assert.equal(matrix.html[2]?.body, "two continued");
+  assert.equal(matrix.html[2]?.targetEventId, "$live-2:example.org");
+  assert.equal(matrix.html[3]?.body, "fresh");
+  assert.equal(matrix.html[3]?.targetEventId, undefined);
+  assert.equal(matrix.sent.length, 0);
   await bridge.stop();
+  assert.equal(clock.pendingTimerCount, 0);
 });
 
-void test("turn deadlines cancel once and render a timeout without waiting for the normal drain", async () => {
+void test("turn deadlines cancel once and render a separate timeout status", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
@@ -491,11 +491,11 @@ void test("turn deadlines cancel once and render a timeout without waiting for t
   await flush();
   clock.advanceBy(1000);
   assert.equal(acp.cancelCalls.length, 1);
-  resolvePrompt({ kind: "turn", stopReason: "cancelled", text: "partial" });
+  resolvePrompt(acp.answer(acp.promptCalls[0]!.sessionId, "partial", "cancelled"));
   await flush();
   await completion;
   assert.equal(matrix.sent[0]?.responseKind, "timeout");
-  assert.equal(matrix.sent[0]?.content.body, "partial\n\n[agent timed out]");
+  assert.equal(matrix.sent[0]?.content.body, "[agent timed out]");
   await bridge.stop();
 });
 
@@ -516,42 +516,25 @@ void test("session creation failure sends one generic response before fatal shut
   await bridge.stop();
 });
 
-void test("fatal drain-cap output never gets attributed to a Matrix response", async () => {
-  const clock = new FakeClock();
-  const acp = new FakeAcp();
-  const matrix = new FakeMatrix();
-  let resolvePrompt!: (outcome: AcpOutcome) => void;
-  acp.promptImpl = () =>
-    new Promise<AcpOutcome>((resolve) => {
-      resolvePrompt = resolve;
-    });
-  const bridge = new BridgeCoordinator({
-    config: config(),
-    acp,
-    matrix,
-    clock,
-  });
-  const fatal: FatalError[] = [];
-  bridge.onFatalError((error) => fatal.push(error));
-
-  const completion = bridge.handleTimelineEvent(event("$drain-cap:example.org"));
-  await flush();
-  const sessionId = acp.promptCalls[0]?.sessionId;
-  assert.ok(sessionId);
-  resolvePrompt({ kind: "turn", stopReason: "end_turn" });
-  await flush();
-  clock.advanceBy(29_900);
-  acp.emit({
-    sessionId,
-    kind: "agent_message_chunk",
-    messageId: "changing",
-    text: "first",
-  });
-  clock.advanceBy(100);
-  await completion;
-  assert.equal(fatal[0]?.code, "acp_protocol");
-  assert.equal(matrix.sent.length, 0);
-  await bridge.stop();
+void test("rejected ID-less text cannot delay prompt completion or create a drain deadline", async () => {
+  const f = await createIdentifiedFixture();
+  const timers = f.clock.pendingTimerCount;
+  for (let index = 0; index < 20; index++) {
+    f.acp.emit({ sessionId: f.sessionId, kind: "agent_message_chunk", text: "private rejected text" });
+    assert.equal(f.clock.pendingTimerCount, timers);
+  }
+  assert.equal(f.diagnostics.filter((record) => record.event === "agent-text-missing-id").length, 20);
+  f.finish();
+  await f.completion;
+  assert.equal(f.clock.pendingTimerCount, 0);
+  f.clock.advanceBy(30_000);
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_message_chunk", text: "private trailing text" });
+  assert.equal(f.clock.pendingTimerCount, 0);
+  assert.equal(f.bridge.fatalError, undefined);
+  assert.equal(f.matrix.html.length, 0);
+  assert.equal(f.matrix.sent.length, 0);
+  assert.doesNotMatch(JSON.stringify(f.diagnostics), /private/);
+  await f.bridge.stop();
 });
 
 void test("retries transient Matrix failures with stable transaction IDs and never retries ACP", async () => {
@@ -570,11 +553,7 @@ void test("retries transient Matrix failures with stable transaction IDs and nev
     }
     matrix.sent.push(part);
   };
-  acp.promptImpl = async () => ({
-    kind: "turn",
-    stopReason: "end_turn",
-    text: "answer",
-  });
+  acp.promptImpl = async (sessionId) => acp.answer(sessionId, "answer");
   const bridge = new BridgeCoordinator({
     config: config(),
     acp,
@@ -586,14 +565,15 @@ void test("retries transient Matrix failures with stable transaction IDs and nev
   const completion = bridge.handleTimelineEvent(event("$retry:example.org"));
   await flush();
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await flush();
   clock.advanceBy(0);
   await flush();
   await completion;
   assert.equal(acp.promptCalls.length, 1);
   assert.equal(attempts, 2);
-  assert.equal(matrix.sent[0]?.transactionId.startsWith("mab1_"), true);
+  assert.equal(matrix.sent[0]?.transactionId.startsWith("matrix-acp-text-"), true);
   assert.deepEqual(new Set(attemptedTransactionIds).size, 1);
   await bridge.stop();
 });
@@ -602,11 +582,7 @@ void test("typing spans only an active turn and receipts acknowledge authorized 
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
-  acp.promptImpl = async () => ({
-    kind: "turn",
-    stopReason: "end_turn",
-    text: "answer",
-  });
+  acp.promptImpl = async (sessionId) => acp.answer(sessionId, "answer");
   const bridge = new BridgeCoordinator({
     config: config(),
     acp,
@@ -621,14 +597,15 @@ void test("typing spans only an active turn and receipts acknowledge authorized 
     isTyping: true,
     timeoutMs: 30_000,
   });
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   assert.equal(matrix.typing.at(-1)?.isTyping, false);
   assert.deepEqual(matrix.receipts, [{ roomId: ROOM_ONE, eventId: "$typing:example.org" }]);
   await bridge.stop();
 });
 
-void test("typing refreshes every 10 seconds through output drain and stops before delivery", async () => {
+void test("typing refreshes every 10 seconds during the prompt and stops before delivery", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
@@ -668,7 +645,8 @@ void test("typing refreshes every 10 seconds through output drain and stops befo
   finishPrompt();
   await flush();
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
 
   assert.deepEqual(
@@ -695,7 +673,7 @@ void test("typing survives one missed refresh before the server timeout", async 
   };
   acp.promptImpl = async (_sessionId) =>
     new Promise<AcpOutcome>((resolve) => {
-      finishPrompt = () => resolve({ kind: "turn", stopReason: "end_turn", text: "answer" });
+      finishPrompt = () => resolve(acp.answer(acp.promptCalls[0]!.sessionId, "answer", "end_turn"));
     });
   const bridge = new BridgeCoordinator({
     config: config(),
@@ -722,7 +700,8 @@ void test("typing survives one missed refresh before the server timeout", async 
   finishPrompt();
   await flush();
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   assert.deepEqual(
     matrix.typing.map(({ isTyping }) => isTyping),
@@ -1111,11 +1090,7 @@ void test("queued, semaphore-blocked, loading, and omitted catch-up events never
 void test("exact reset is queued as a control and the next prompt creates a fresh session", async () => {
   const acp = new FakeAcp();
   const matrix = new FakeMatrix();
-  acp.promptImpl = async () => ({
-    kind: "turn",
-    stopReason: "end_turn",
-    text: "fresh",
-  });
+  acp.promptImpl = async (sessionId) => acp.answer(sessionId, "fresh");
   const bridge = new BridgeCoordinator({ config: config(), acp, matrix });
 
   await bridge.handleTimelineEvent(event("$reset:example.org", ROOM_ONE, "/reset"));
@@ -1456,11 +1431,7 @@ void test("restores a durable room session before its first prompt", async () =>
     await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "saved-session");
     const acp = new FakeAcp();
-    acp.promptImpl = async () => ({
-      kind: "turn",
-      stopReason: "end_turn",
-      text: "loaded answer",
-    });
+    acp.promptImpl = async (sessionId) => acp.answer(sessionId, "loaded answer");
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: config(),
@@ -1473,7 +1444,8 @@ void test("restores a durable room session before its first prompt", async () =>
 
     const completion = bridge.handleTimelineEvent(event("$loaded:example.org"));
     await flush();
-    clock.advanceBy(300);
+    clock.advanceBy(750);
+    await flush();
     await completion;
     assert.deepEqual(acp.loadCalls, ["saved-session"]);
     assert.equal(acp.promptCalls[0]?.sessionId, "saved-session");
@@ -1499,11 +1471,7 @@ void test("discards unsupported durable mappings and never persists a newly-crea
     await store.establishInitialBaseline([]);
     await store.setSessionMapping(ROOM_ONE, "old-session");
     const acp = new FakeAcp();
-    acp.promptImpl = async () => ({
-      kind: "turn",
-      stopReason: "end_turn",
-      text: "new answer",
-    });
+    acp.promptImpl = async (sessionId) => acp.answer(sessionId, "new answer");
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: config(),
@@ -1516,7 +1484,8 @@ void test("discards unsupported durable mappings and never persists a newly-crea
 
     const completion = bridge.handleTimelineEvent(event("$unsupported-load:example.org"));
     await waitFor(() => acp.promptCalls.length === 1);
-    clock.advanceBy(300);
+    clock.advanceBy(750);
+    await flush();
     await completion;
 
     assert.deepEqual(acp.loadCalls, []);
@@ -1606,7 +1575,8 @@ void test("persists a new mapping before the first prompt and phase-gates every 
 
     finishLoad();
     await waitFor(() => acp.promptCalls.length === 1);
-    clock.advanceBy(300);
+    clock.advanceBy(750);
+    await flush();
     await completion;
     assert.equal(matrix.sent.at(-1)?.content.body, "after load");
     await bridge.stop();
@@ -1651,11 +1621,7 @@ void test("replaces a stale mapping after a healthy load method error and warns 
         fatal: false,
       } as unknown as AcpSession;
     };
-    acp.promptImpl = async () => ({
-      kind: "turn",
-      stopReason: "end_turn",
-      text: "replacement",
-    });
+    acp.promptImpl = async (sessionId) => acp.answer(sessionId, "replacement");
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: config(),
@@ -1669,7 +1635,8 @@ void test("replaces a stale mapping after a healthy load method error and warns 
 
     const completion = bridge.handleTimelineEvent(event("$stale-session:example.org"));
     await waitFor(() => acp.promptCalls.length === 1);
-    clock.advanceBy(300);
+    clock.advanceBy(750);
+    await flush();
     await completion;
 
     assert.deepEqual(acp.loadCalls, ["stale-session"]);
@@ -1752,11 +1719,7 @@ void test("prunes removed-room mappings and keeps restored sessions isolated by 
     await store.setSessionMapping(ROOM_ONE, "room-one-session");
     await store.setSessionMapping(ROOM_TWO, "removed-room-session");
     const acp = new FakeAcp();
-    acp.promptImpl = async (_sessionId, text) => ({
-      kind: "turn",
-      stopReason: "end_turn",
-      text,
-    });
+    acp.promptImpl = async (sessionId, text) => acp.answer(sessionId, text);
     const matrix = new FakeMatrix();
     const bridge = new BridgeCoordinator({
       config: {
@@ -1772,7 +1735,8 @@ void test("prunes removed-room mappings and keeps restored sessions isolated by 
 
     const completion = bridge.handleTimelineEvent(event("$isolated-room:example.org", ROOM_ONE, "room one"));
     await waitFor(() => acp.promptCalls.length === 1);
-    clock.advanceBy(300);
+    clock.advanceBy(750);
+    await flush();
     await completion;
     assert.equal(store.getSessionMapping(ROOM_TWO), undefined);
     assert.equal(acp.promptCalls[0]?.sessionId, "room-one-session");
@@ -1804,19 +1768,22 @@ void test("streamed thought paragraphs stay separate and unbolded through Matrix
   acp.emit({
     sessionId,
     kind: "agent_thought_chunk",
+    messageId: "plan",
     text: "**First heading**",
   });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "plan", text: "\n\n" });
   acp.emit({
     sessionId,
     kind: "agent_thought_chunk",
+    messageId: "plan",
     text: "**Second heading**",
   });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Second heading")));
   const current = matrix.html.at(-1);
   assert.equal(current?.body, "💭 First heading\n\n💭 Second heading");
   assert.equal(current?.formattedBody, "<p>💭 First heading</p>\n<p>💭 Second heading</p>");
-  acp.emit({ sessionId, kind: "agent_message_chunk", text: "Done" });
+  acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "Done" });
   await waitFor(() => matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")));
   const archived = [...matrix.html]
     .reverse()
@@ -1824,12 +1791,13 @@ void test("streamed thought paragraphs stay separate and unbolded through Matrix
   assert.match(archived?.formattedBody ?? "", /<p>💭 First heading<\/p>\n<p>💭 Second heading<\/p>/);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   await bridge.stop();
 });
 
-void test("agent text renders complete Markdown once when its message closes", async () => {
+void test("agent text renders complete Markdown at its own quiet flush", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -1864,7 +1832,8 @@ void test("agent text renders complete Markdown once when its message closes", a
   });
   await flush();
   assert.equal(matrix.html.length, 0);
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "A new thought" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "markdown", text: "A new thought" });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body === `**Wild${continuation}`));
   const latest = matrix.html.find((message) => message.body === `**Wild${continuation}`);
   assert.equal(latest?.targetEventId, undefined);
@@ -1877,14 +1846,15 @@ void test("agent text renders complete Markdown once when its message closes", a
   assert.doesNotMatch(latest?.formattedBody ?? "", /<script>/);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   assert.equal(matrix.sent.length, 0);
   assert.equal(matrix.html.filter((message) => message.body === latest?.body).length, 1);
   await bridge.stop();
 });
 
-void test("tool, thought, and distinct IDs close text in order without text edits", async () => {
+void test("rejected ID-less text leaves tool boundaries and independent identified flushes intact", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -1911,7 +1881,7 @@ void test("tool, thought, and distinct IDs close text in order without text edit
     toolCallId: "missing",
     status: "in_progress",
   });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "after-tool", text: "\n\n" });
   await flush();
   assert.equal(matrix.html.length, 0);
   acp.emit({
@@ -1922,9 +1892,9 @@ void test("tool, thought, and distinct IDs close text in order without text edit
     toolKind: "read",
     status: "pending",
   });
-  await waitFor(() => matrix.html.length >= 2);
-  assert.equal(matrix.html[0]?.body, "Before tool");
-  assert.match(matrix.html[1]?.body ?? "", /Read/);
+  await waitFor(() => matrix.html.length === 1);
+  assert.match(matrix.html[0]?.body ?? "", /Read/);
+  assert.doesNotMatch(JSON.stringify(matrix.html), /Before tool/);
 
   acp.emit({
     sessionId,
@@ -1938,10 +1908,11 @@ void test("tool, thought, and distinct IDs close text in order without text edit
     messageId: "after-tool",
     text: "tool",
   });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "after-tool", text: "\n\n" });
   await flush();
   assert.equal(matrix.html.filter((message) => message.body === "After tool").length, 0);
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "Thinking" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "after-tool", text: "Thinking" });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body === "After tool"));
   const thoughtIndex = matrix.html.findIndex((message) => message.body.includes("Thinking"));
   const textIndex = matrix.html.findIndex((message) => message.body === "After tool");
@@ -1960,16 +1931,11 @@ void test("tool, thought, and distinct IDs close text in order without text edit
     text: "Two",
   });
   await waitFor(() => matrix.html.some((message) => message.body === "One"));
-  acp.emit({
-    sessionId,
-    kind: "agent_message_chunk",
-    messageId: "first",
-    text: "stale",
-  });
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await completion;
+  await flush();
   assert.equal(matrix.html.filter((message) => message.body === "Two").length, 1);
   assert.equal(
     matrix.html.some(
@@ -2022,9 +1988,10 @@ void test("live mcpScript activity includes its ACP code input on send and resul
     sessionId,
     kind: "tool_call_update",
     toolCallId: "script",
-    status: "completed",
+    status: "in_progress",
     content: [{ type: "content", text: '{"probe":"done"}' }],
   });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body.includes("done")));
   assert.match(matrix.html.at(-1)?.formattedBody ?? "", /<pre><code>return \{ probe: &#39;&lt;sample&gt;&#39;/);
   assert.match(
@@ -2051,7 +2018,6 @@ void test("live mcpScript activity includes its ACP code input on send and resul
   );
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(30_000); // Tool-only turns drain at the cap, not the text quiet period.
   await completion;
   await bridge.stop();
 });
@@ -2146,8 +2112,9 @@ void test("live activity rolls over after ten events, archives at agent text, an
   );
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await completion;
+  await flush();
   assert.equal(matrix.sent.length, 0);
   assert.equal(
     matrix.html.filter((message) => message.body === "Hello world!" && message.targetEventId === undefined).length,
@@ -2221,6 +2188,7 @@ void test("agent text collapses the latest activity after its first expanded sen
     messageId: "next",
     text: "newest",
   });
+  clock.advanceBy(750);
   await waitFor(
     () =>
       matrix.html.some((message) => message.body.includes("newest")) &&
@@ -2229,7 +2197,8 @@ void test("agent text collapses the latest activity after its first expanded sen
   assert.equal(matrix.html.at(-1)?.formattedBody.includes("Past agent events"), false);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   await bridge.stop();
 });
@@ -2272,6 +2241,7 @@ void test("rapid rollover and agent text never send a new batch already collapse
     messageId: "next",
     text: "newest",
   });
+  clock.advanceBy(750);
   await waitFor(
     () =>
       matrix.html.some((message) => message.formattedBody.includes("Past agent events (1)")) &&
@@ -2284,7 +2254,8 @@ void test("rapid rollover and agent text never send a new batch already collapse
   assert.match(prior.at(-1)?.formattedBody ?? "", /Past agent events \(1\)/);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   await bridge.stop();
 });
@@ -2328,6 +2299,7 @@ void test("live Matrix retry reuses the transaction ID and keeps rooms independe
     acp.emit({
       sessionId: call.sessionId,
       kind: "agent_message_chunk",
+      messageId: "answer",
       text: call.sessionId,
     });
     acp.emit({
@@ -2339,6 +2311,7 @@ void test("live Matrix retry reuses the transaction ID and keeps rooms independe
       status: "pending",
     });
   }
+  clock.advanceBy(750);
   await waitFor(() => matrix.attempts.length >= 2);
   clock.advanceBy(0);
   await waitFor(
@@ -2355,7 +2328,8 @@ void test("live Matrix retry reuses the transaction ID and keeps rooms independe
   );
   for (const resolve of resolvers) resolve({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await Promise.all([one, two]);
   await bridge.stop();
 });
@@ -2370,7 +2344,7 @@ void test("long live text splits at the Matrix limit without a duplicate final r
       resolvePrompt = resolve;
     });
   const bridge = new BridgeCoordinator({
-    config: config({ maxMatrixMessageBytes: 800 }),
+    config: { ...config({ maxMatrixMessageBytes: 800 }), matrix: { ...config().matrix, agentTextFlushBytes: 16_384 } },
     acp,
     matrix,
     clock,
@@ -2380,13 +2354,14 @@ void test("long live text splits at the Matrix limit without a duplicate final r
   const sessionId = acp.promptCalls[0]!.sessionId;
   const answer = "α&<>🦋".repeat(400);
   for (const chunk of [answer.slice(0, 499), answer.slice(499, 1201), answer.slice(1201)]) {
-    acp.emit({ sessionId, kind: "agent_message_chunk", text: chunk });
+    acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: chunk });
   }
   await flush();
   assert.equal(matrix.html.length, 0);
   resolvePrompt({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   assert.equal(matrix.html.length > 1, true);
   assert.equal(matrix.html.map((message) => message.body).join(""), answer);
@@ -2429,14 +2404,16 @@ void test("oversized activity truncates detail and rolls over before the encoded
     messageId: "two",
     text: "second thought",
   });
+  clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body.includes("second thought")));
   assert.equal(
     matrix.html.some((message) => message.body.includes("(truncated)")),
     true,
   );
-  resolvePrompt({ kind: "turn", stopReason: "end_turn", text: "done" });
+  resolvePrompt(acp.answer(acp.promptCalls[0]!.sessionId, "done", "end_turn"));
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await completion;
   for (const message of matrix.html) {
     assert.equal(matrixHtmlContentBytes(message, message.targetEventId) <= 800, true);
@@ -2448,7 +2425,7 @@ void test("oversized activity truncates detail and rolls over before the encoded
   await bridge.stop();
 });
 
-void test("live timeout keeps partial text once and rejects late chunks in the next turn", async () => {
+void test("live timeout reports status separately and retains identified continuation in the next turn", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const matrix = new FakeLiveMatrix();
@@ -2486,7 +2463,7 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
     sessionId,
     kind: "agent_message_chunk",
     messageId: "first",
-    text: "stale",
+    text: " continuation",
   });
   acp.emit({
     sessionId,
@@ -2501,12 +2478,13 @@ void test("live timeout keeps partial text once and rejects late chunks in the n
   );
   resolvers.shift()!({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await second;
+  await flush();
   assert.equal(matrix.html.filter((message) => message.body === "fresh").length, 1);
   assert.equal(
-    matrix.html.some((message) => message.body.includes("stale")),
-    false,
+    matrix.html.some((message) => message.body === "partial continuation" && message.targetEventId !== undefined),
+    true,
   );
   await bridge.stop();
 });
@@ -2616,8 +2594,9 @@ void test("validated thread routing survives eager text, activity retries and la
     await waitFor(() => matrix.html.length > 0);
     assert.deepEqual(matrix.attempts[0], matrix.attempts[1]);
     transactionIds.push(matrix.attempts[0]!.transactionId);
-    acp.emit({ sessionId, kind: "agent_message_chunk", text: "<&😀".repeat(200) });
-    acp.emit({ sessionId, kind: "agent_thought_chunk", text: "next thought" });
+    acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "<&😀".repeat(200) });
+    acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "next thought" });
+    clock.advanceBy(750);
     await waitFor(() => matrix.html.some((message) => message.body.startsWith("<&😀")));
     acp.emit({
       sessionId,
@@ -2632,7 +2611,8 @@ void test("validated thread routing survives eager text, activity retries and la
     assert.match(archived.formattedBody, /Past agent events/);
     resolvePrompt({ kind: "turn", stopReason: "end_turn" });
     await flush();
-    clock.advanceBy(300);
+    clock.advanceBy(750);
+    await flush();
     await completion;
     const text = matrix.html.filter((message) => /^(?:[<&]|😀)+$/u.test(message.body));
     assert.ok(text.length > 1);
@@ -3170,7 +3150,7 @@ void test("shutdown cancels active threads, drops their queues and never prompts
   assert.equal(bridge.snapshot.queuedTurns, 0);
 });
 
-void test("thread prompt permits release before output drain while typing waits for the last active thread", async () => {
+void test("thread prompt permits release before publication while typing waits for the last active thread", async () => {
   const clock = new FakeClock();
   const acp = new FakeAcp();
   const pending = heldPrompts(acp);
@@ -3179,11 +3159,12 @@ void test("thread prompt permits release before output drain while typing waits 
   const a = bridge.handleTimelineEvent(event("$drain-root-a", ROOM_ONE, "a"));
   const b = bridge.handleTimelineEvent(event("$drain-root-b", ROOM_ONE, "b"));
   await waitFor(() => acp.promptCalls.length === 1);
-  pending.get("a")?.({ kind: "turn", stopReason: "end_turn", text: "answer a" });
+  pending.get("a")?.(acp.answer(acp.promptCalls.find((call) => call.text === "a")!.sessionId, "answer a", "end_turn"));
   await waitFor(() => acp.promptCalls.length === 2);
   assert.equal(bridge.unresolvedPromptCount, 1);
   assert.equal(matrix.sent.length, 0);
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await a;
   assert.equal(matrix.sent[0]?.threadRootEventId, "$drain-root-a");
   assert.equal(
@@ -3192,9 +3173,10 @@ void test("thread prompt permits release before output drain while typing waits 
   );
   clock.advanceBy(10_000);
   assert.equal(matrix.typing.at(-1)?.isTyping, true);
-  pending.get("b")?.({ kind: "turn", stopReason: "end_turn", text: "answer b" });
+  pending.get("b")?.(acp.answer(acp.promptCalls.find((call) => call.text === "b")!.sessionId, "answer b", "end_turn"));
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await b;
   assert.equal(matrix.sent[1]?.threadRootEventId, "$drain-root-b");
   assert.equal(matrix.typing.at(-1)?.isTyping, false);
@@ -3457,7 +3439,9 @@ void test("thread timeout cancels only its prompt, retains retry routing and lea
     matrix.typing.some(({ isTyping }) => !isTyping),
     false,
   );
-  pending.get("a")?.({ kind: "turn", stopReason: "cancelled", text: "partial a" });
+  pending.get("a")?.(
+    acp.answer(acp.promptCalls.find((call) => call.text === "a")!.sessionId, "partial a", "cancelled"),
+  );
   await waitFor(() => timeoutAttempts.length === 1);
   await flush();
   clock.advanceBy(100);
@@ -3470,7 +3454,7 @@ void test("thread timeout cancels only its prompt, retains retry routing and lea
         threadRootEventId === "$timeout-root-a" && threadInReplyToEventId === "$timeout-root-a",
     ),
   );
-  assert.equal(matrix.sent[0]?.content.body, "partial a\n\n[agent timed out]");
+  assert.equal(matrix.sent[0]?.content.body, "[agent timed out]");
   assert.equal(
     matrix.typing.some(({ isTyping }) => !isTyping),
     false,
@@ -3550,9 +3534,12 @@ void test("steer-default live/catch-up batches preserve msg2/msg3 through dispat
     assert.deepEqual(completed, ["msg2", "msg3"]);
     assert.equal(bridge.unresolvedPromptCount, 1);
     assert.deepEqual(matrix.sent, []);
-    prompts.get("msg1")?.({ kind: "turn", stopReason: "end_turn", text: "done" });
+    prompts.get("msg1")?.(
+      acp.answer(acp.promptCalls.find((call) => call.text === "msg1")!.sessionId, "done", "end_turn"),
+    );
     await flush();
-    clock.advanceBy(300);
+    clock.advanceBy(750);
+    await flush();
     await batch[0];
     await bridge.waitForIdle();
     assert.deepEqual(completed, ["msg2", "msg3", "msg1"]);
@@ -4379,12 +4366,15 @@ void test("closed dispatch preserves pending steering; drain reevaluates first a
   assert.equal(acp.steeringCalls[0]?.text, "second");
   acp.steeringReplies[0]?.(injected);
   await second;
-  prompts.get("first")?.({ kind: "turn", stopReason: "end_turn", text: "done" });
+  prompts.get("first")?.(
+    acp.answer(acp.promptCalls.find((call) => call.text === "first")!.sessionId, "done", "end_turn"),
+  );
   await flush();
   const third = bridge.handleTimelineEvent(event("$drain-third", ROOM_ONE, "/steer third"));
   const fourth = bridge.handleTimelineEvent(event("$drain-fourth", ROOM_ONE, "/steer fourth"));
   assert.equal(acp.steeringCalls.length, 1);
-  clock.advanceBy(300);
+  clock.advanceBy(750);
+  await flush();
   await first;
   await flush();
   assert.equal(acp.promptCalls[1]?.text, "third");
@@ -4520,6 +4510,7 @@ void test("steering retains original text/activity collector and typing while in
     status: "pending",
     rawInput: { path: "/tmp/original" },
   });
+  clock.advanceBy(750);
   await flush();
   assert.ok(matrix.html.some((message) => message.body === "before after"));
   assert.ok(matrix.html.some((message) => message.body.includes("Read(/tmp/original)")));
@@ -4529,8 +4520,9 @@ void test("steering retains original text/activity collector and typing while in
   acp.emit({ kind: "agent_message_chunk", sessionId: "session-1", messageId: "final", text: "original final" });
   prompts.get("first")?.({ kind: "turn", stopReason: "end_turn" });
   await flush();
-  clock.advanceBy(300);
+  clock.advanceBy(750);
   await first;
+  await flush();
   assert.ok(matrix.html.some((message) => message.body === "original final"));
   assert.equal(matrix.sent.length, 0);
   assert.equal(matrix.typing.at(-1)?.isTyping, false);
@@ -4757,4 +4749,652 @@ void test("shutdown abandons response backoff immediately without spending the g
   assert.equal(clock.pendingTimerCount, 0);
   assert.equal(matrix.stopped, true);
   assert.equal(acp.closed, true);
+});
+
+async function createIdentifiedFixture(bridgeConfig = config(), matrix = new FakeLiveMatrix()) {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  let resolvePrompt!: (outcome: AcpOutcome) => void;
+  acp.promptImpl = () =>
+    new Promise((resolve) => {
+      resolvePrompt = resolve;
+    });
+  const diagnostics: DiagnosticRecord[] = [];
+  const sink = new StderrDiagnosticSink({
+    clock,
+    writeLine: (line) => {
+      diagnostics.push(JSON.parse(line) as DiagnosticRecord);
+    },
+  });
+  const bridge = new BridgeCoordinator({ config: bridgeConfig, acp, matrix, clock, diagnostics: sink });
+  const completion = bridge.handleTimelineEvent(event("$identified"));
+  await waitFor(() => acp.promptCalls.length === 1);
+  const sessionId = acp.promptCalls[0]!.sessionId;
+  const text = (value: string, messageId = "answer") =>
+    acp.emit({ sessionId, kind: "agent_message_chunk", messageId, text: value });
+  return {
+    clock,
+    acp,
+    matrix,
+    bridge,
+    completion,
+    sessionId,
+    text,
+    diagnostics,
+    finish: (outcome?: AcpOutcome) => resolvePrompt(outcome ?? { kind: "turn", stopReason: "end_turn" }),
+  };
+}
+
+void test("identified prompt completion is independent of quiet publication and later unsolicited continuation", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("hello");
+  f.finish();
+  await f.completion;
+  assert.equal(f.matrix.html.length, 0);
+  assert.equal(f.matrix.sent.length, 0);
+  assert.equal(f.bridge.snapshot.unresolvedPrompts, 0);
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  f.text(" world");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 2);
+  assert.equal(f.matrix.html[1]?.body, "hello world");
+  assert.equal(f.matrix.html[1]?.targetEventId, "$live-1:example.org");
+  f.text("background", "next");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 3);
+  assert.equal(f.matrix.html[2]?.targetEventId, undefined);
+  assert.equal(f.matrix.html[2]?.roomId, ROOM_ONE);
+  assert.equal(f.acp.promptCalls.length, 1);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("an empty identified transition flushes prior text without publishing an empty placeholder", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("preceding");
+  f.text("", "next");
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.equal(f.matrix.html[0]?.body, "preceding");
+  f.finish();
+  await f.completion;
+  f.clock.advanceBy(2000);
+  await flush();
+  assert.equal(f.matrix.html.length, 1);
+  f.text("new text", "next");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 2);
+  assert.equal(f.matrix.html[1]?.body, "new text");
+  assert.equal(f.matrix.html[1]?.targetEventId, undefined);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("early tool publishes independently and later text keeps its original mapping", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("before ");
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call", toolCallId: "tool", title: "read", status: "pending" });
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.match(f.matrix.html[0]?.body ?? "", /read/u);
+  assert.equal(
+    f.matrix.html.some((message) => message.body === "before "),
+    false,
+  );
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.some((message) => message.body === "before "));
+  f.text("after");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.some((message) => message.body === "before after"));
+  const edit = f.matrix.html.find((message) => message.body === "before after");
+  assert.equal(edit?.targetEventId, "$live-2:example.org");
+  f.finish();
+  await f.completion;
+  await f.bridge.stop();
+});
+
+void test("identified publication in flight coalesces continuation without delaying prompt completion", async () => {
+  const matrix = new FakeLiveMatrix();
+  let release!: () => void;
+  matrix.htmlSend = async (message) => {
+    if (matrix.html.length === 0)
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    matrix.html.push(message);
+    return message.targetEventId ?? "$slow";
+  };
+  const f = await createIdentifiedFixture(config(), matrix);
+  f.text("one");
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.attempts.length === 1);
+  f.text(" two");
+  f.clock.advanceBy(750);
+  f.text(" three");
+  f.clock.advanceBy(750);
+  f.finish();
+  await f.completion;
+  assert.equal(matrix.attempts.length, 1);
+  release();
+  await waitFor(() => matrix.html.length === 2);
+  assert.deepEqual(
+    matrix.html.map(({ body }) => body),
+    ["one", "one two three"],
+  );
+  assert.equal(matrix.html[1]?.targetEventId, "$slow");
+  await f.bridge.stop();
+});
+
+void test("sequential assistant IDs use bounded current state without suppressing repeated deltas", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("message 0", "id-0");
+  f.finish();
+  await f.completion;
+  for (let index = 0; index < 100; index++) {
+    if (index > 0) f.text(`message ${index}`, `id-${index}`);
+    f.clock.advanceBy(750);
+    await waitFor(() => f.matrix.html.length === index + 1);
+  }
+  f.text("!", "id-99");
+  f.text("!", "id-99");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 101);
+  assert.equal(f.matrix.html[100]?.body, "message 99!!");
+  assert.equal(f.matrix.html[100]?.targetEventId, "$live-100:example.org");
+  f.finish();
+  await f.completion;
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("reset drops buffered identified output and rejects unknown and retired sessions", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("published");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  f.finish();
+  await f.completion;
+  f.text(" buffered");
+  await f.bridge.handleTimelineEvent(event("$reset-identified", ROOM_ONE, "/reset"));
+  f.text(" obsolete");
+  f.acp.emit({ sessionId: "unknown", kind: "agent_message_chunk", messageId: "unknown", text: "unknown" });
+  f.clock.advanceBy(5000);
+  await flush();
+  assert.equal(f.matrix.html.length, 1);
+  assert.equal(f.clock.pendingTimerCount, 0);
+  await f.bridge.stop();
+});
+
+void test("restored sessions ignore replay and start continuing IDs from newly received text", async () => {
+  await withThreadState(async (store) => {
+    const identity = { kind: "thread", roomId: ROOM_ONE, threadRootEventId: "$restored" } as const;
+    await store.setConversationRecord({ ...identity, sessionId: "saved" });
+    const transactions: string[] = [];
+    for (let restart = 0; restart < 2; restart++) {
+      const clock = new FakeClock();
+      const acp = new FakeAcp();
+      const matrix = new FakeLiveMatrix();
+      acp.loadSessionImpl = async ({ sessionId }) => {
+        acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "same", text: "history" });
+        return { sessionId };
+      };
+      acp.promptImpl = async (sessionId) => {
+        acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "same", text: `live ${restart}` });
+        return { kind: "turn", stopReason: "end_turn" };
+      };
+      const bridge = new BridgeCoordinator({
+        config: threadConfig(),
+        acp,
+        matrix,
+        clock,
+        stateStore: store,
+        loadSession: true,
+      });
+      await bridge.handleTimelineEvent(threadEvent(`$restart-${restart}`, identity.threadRootEventId));
+      clock.advanceBy(750);
+      await waitFor(() => matrix.html.length === 1);
+      acp.emit({ sessionId: "saved", kind: "agent_message_chunk", messageId: "same", text: " unsolicited" });
+      clock.advanceBy(750);
+      await waitFor(() => matrix.html.length === 2);
+      assert.equal(matrix.html[0]?.body, `live ${restart}`);
+      assert.equal(matrix.html[0]?.targetEventId, undefined);
+      assert.equal(matrix.html[1]?.body, `live ${restart} unsolicited`);
+      assert.equal(matrix.html[1]?.threadRootEventId, "$restored");
+      transactions.push(matrix.html[0].transactionId);
+      await bridge.stop();
+      assert.equal(clock.pendingTimerCount, 0);
+    }
+    assert.notEqual(transactions[0], transactions[1]);
+  });
+});
+
+void test("identified text keeps prompt errors separate without duplicating the response text", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("partial");
+  f.finish({ kind: "method_error", operation: "session_prompt", fatal: false });
+  await f.completion;
+  assert.equal(f.matrix.sent.length, 1);
+  assert.equal(f.matrix.sent[0]?.responseKind, "error");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.equal(f.matrix.html[0]?.body, "partial");
+  f.text(" continued");
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 2);
+  assert.equal(f.matrix.html[1]?.body, "partial continued");
+  await f.bridge.stop();
+});
+
+void test("identified publication failures are observable and a new prompt can recover without fallback duplication", async () => {
+  const matrix = new FakeLiveMatrix();
+  matrix.htmlSend = async () => {
+    throw { httpStatus: 403 };
+  };
+  const f = await createIdentifiedFixture(config(), matrix);
+  f.text("lost");
+  f.finish();
+  await f.completion;
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.attempts.length === 1);
+  await flush();
+  assert.equal(f.bridge.fatalError, undefined);
+  assert.equal(matrix.sent.length, 0);
+  assert.ok(
+    f.diagnostics.some((record) => record.event === "agent-text-abandoned" && record.fields.kind === "delivery"),
+  );
+  assert.equal(JSON.stringify(f.diagnostics).includes("lost"), false);
+  matrix.htmlSend = async (message) => {
+    matrix.html.push(message);
+    return "$recovered";
+  };
+  const next = f.bridge.handleTimelineEvent(event("$recovered"));
+  await waitFor(() => f.acp.promptCalls.length === 2);
+  f.text("recovered", "next");
+  f.finish();
+  await next;
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.html.length === 1);
+  assert.equal(matrix.html[0]?.body, "recovered");
+  assert.equal(matrix.html[0]?.targetEventId, undefined);
+  assert.equal(matrix.sent.length, 0);
+  await f.bridge.stop();
+});
+
+void test("ID-less unsolicited chunks warn on every rejection and never attach to an identified block", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("identified");
+  f.finish();
+  await f.completion;
+  for (let index = 0; index < 100; index++) {
+    f.acp.emit({ sessionId: f.sessionId, kind: "agent_message_chunk", text: "private ID-less text" });
+  }
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.equal(f.matrix.html[0]?.body, "identified");
+  assert.equal(f.diagnostics.filter((record) => record.event === "agent-text-missing-id").length, 100);
+  assert.equal(JSON.stringify(f.diagnostics).includes("private"), false);
+  await f.bridge.stop();
+});
+
+void test("identified queue capacity failure stops intake observably and cancels timers", async () => {
+  const matrix = new FakeLiveMatrix();
+  let release!: () => void;
+  matrix.htmlSend = async () => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return "$in-flight";
+  };
+  const f = await createIdentifiedFixture(config({ maxActivityEventsPerMessage: 1 }), matrix);
+  f.text("first");
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.attempts.length === 1);
+  f.finish();
+  await f.completion;
+  f.text("second", "second");
+  f.text("third", "third");
+  f.text("fourth", "fourth");
+  assert.equal(f.bridge.fatalError?.code, "matrix_transport");
+  assert.match(
+    f.bridge.fatalError?.message ?? "",
+    /Reduce concurrent agent output.*limits\.max_activity_events_per_message.*restart/u,
+  );
+  const failure = f.diagnostics.find(
+    (record) => record.event === "agent-text-abandoned" && record.fields.kind === "capacity",
+  );
+  assert.equal(failure?.fields.maxActivityEventsPerMessage, 1);
+  assert.equal(failure?.fields.maxQueuedTurnsPerConversation, 1);
+  release();
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+  assert.equal(matrix.attempts.length, 1);
+});
+
+void test("activity capacity failure reports configuration and recovery steps without retaining tools", async () => {
+  const f = await createIdentifiedFixture(config({ maxActivityEventsPerMessage: 1 }));
+  f.text("answer");
+  f.finish();
+  await f.completion;
+  for (let index = 0; index < 3; index++) {
+    f.acp.emit({
+      sessionId: f.sessionId,
+      kind: "tool_call",
+      toolCallId: `tool-${index}`,
+      title: "private tool",
+      status: "in_progress",
+    });
+    await flush();
+  }
+  assert.equal(f.bridge.fatalError?.code, "matrix_transport");
+  assert.match(f.bridge.fatalError?.message ?? "", /Agent activity capacity exceeded.*restart/u);
+  const failure = f.diagnostics.find(
+    (record) => record.event === "agent-activity-abandoned" && record.fields.kind === "capacity",
+  );
+  assert.equal(failure?.fields.maxActivityEventsPerMessage, 1);
+  assert.equal(failure?.fields.maxQueuedTurnsPerConversation, 1);
+  assert.doesNotMatch(JSON.stringify(f.diagnostics), /private tool/u);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("thought grouping resumes after identified text without whitespace or tool updates flushing text", async () => {
+  const f = await createIdentifiedFixture();
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "first", text: "first thought" });
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  f.text("answer");
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "  " });
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call_update", toolCallId: "unknown", status: "completed" });
+  await flush();
+  assert.equal(
+    f.matrix.html.some((message) => message.body === "answer"),
+    false,
+  );
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "second", text: "second thought" });
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("second thought")));
+  const textIndex = f.matrix.html.findIndex((message) => message.body === "answer");
+  const thoughtIndex = f.matrix.html.findIndex((message) => message.body.includes("second thought"));
+  assert.ok(textIndex !== -1 && thoughtIndex !== -1);
+  assert.equal(f.matrix.html[thoughtIndex]?.body.includes("first thought"), false);
+  f.finish();
+  await f.completion;
+  await f.bridge.stop();
+});
+
+void test("unsolicited thoughts and parallel tools survive prompt completion and assistant ID transitions", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("prompt answer");
+  f.finish();
+  await f.completion;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "agent_thought_chunk",
+    messageId: "background-thought",
+    text: "background plan",
+  });
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call", toolCallId: "first", title: "first", status: "in_progress" });
+  f.text("background answer", "background");
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call",
+    toolCallId: "second",
+    title: "second",
+    status: "in_progress",
+  });
+  f.text("next answer", "next");
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("second")));
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "second",
+    status: "failed",
+    content: [{ type: "content", text: "second result" }],
+  });
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "first",
+    status: "completed",
+    content: [{ type: "content", text: "first result" }],
+  });
+  await waitFor(
+    () =>
+      f.matrix.html.some((message) => message.body.includes("first result")) &&
+      f.matrix.html.some((message) => message.body.includes("second result")),
+  );
+  assert.equal(f.acp.promptCalls.length, 1);
+  assert.equal(f.matrix.sent.length, 0);
+  assert.ok(f.matrix.html.some((message) => message.body.includes("background plan")));
+  for (const result of ["first result", "second result"]) {
+    const edit = f.matrix.html.find((message) => message.body.includes(result));
+    assert.ok(edit?.targetEventId);
+    assert.match(edit.formattedBody, /Past agent events/);
+    assert.equal(edit.roomId, ROOM_ONE);
+  }
+  const count = f.matrix.html.length;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "first",
+    status: "failed",
+    content: [{ type: "content", text: "obsolete" }],
+  });
+  await flush();
+  assert.equal(f.matrix.html.length, count);
+  await f.bridge.stop();
+});
+
+void test("reset retires unsolicited running tools and drops stale terminal updates", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("answer");
+  f.finish();
+  await f.completion;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call",
+    toolCallId: "background",
+    title: "background",
+    status: "in_progress",
+  });
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("background")));
+  await f.bridge.handleTimelineEvent(event("$reset-activity", ROOM_ONE, "/reset"));
+  const count = f.matrix.html.length;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call_update",
+    toolCallId: "background",
+    status: "completed",
+    content: [{ type: "content", text: "stale result" }],
+  });
+  await flush();
+  assert.equal(f.matrix.html.length, count);
+  assert.ok(f.diagnostics.some((record) => record.event === "agent-activity-abandoned"));
+  await f.bridge.stop();
+});
+
+void test("ACP subprocess failure abandons unsolicited running tools and ignores subsequent updates", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("answer");
+  f.finish();
+  await f.completion;
+  f.acp.emit({
+    sessionId: f.sessionId,
+    kind: "tool_call",
+    toolCallId: "background",
+    title: "background",
+    status: "in_progress",
+  });
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("background")));
+  f.acp.emitFatal({ code: "acp_transport", message: "ACP subprocess exited" });
+  await f.bridge.stop();
+  const count = f.matrix.html.length;
+  f.acp.emit({ sessionId: f.sessionId, kind: "tool_call_update", toolCallId: "background", status: "completed" });
+  await flush();
+  assert.equal(f.matrix.html.length, count);
+  assert.ok(f.diagnostics.some((record) => record.event === "agent-activity-abandoned"));
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("alternate-client legacy outcome text is ignored without a prompt-final fallback", async () => {
+  const f = await createIdentifiedFixture();
+  f.finish({ kind: "turn", stopReason: "end_turn", text: "private obsolete outcome" } as AcpOutcome);
+  await f.completion;
+  assert.equal(f.clock.pendingTimerCount, 0);
+  f.clock.advanceBy(30_000);
+  assert.equal(f.matrix.sent.length, 0);
+  assert.equal(f.matrix.html.length, 0);
+  assert.doesNotMatch(JSON.stringify(f.diagnostics), /private/);
+  await f.bridge.stop();
+});
+
+void test("alternate-client invalid IDs warn on each solicited rejection without disturbing valid output", async () => {
+  const f = await createIdentifiedFixture();
+  f.text("before ");
+  const timers = f.clock.pendingTimerCount;
+  for (const messageId of [undefined, "", " \t\n", null, 42, {}, []]) {
+    f.acp.emit({
+      sessionId: f.sessionId,
+      kind: "agent_message_chunk",
+      messageId,
+      text: "private rejected",
+    } as AcpUpdate);
+    assert.equal(f.clock.pendingTimerCount, timers);
+  }
+  assert.equal(f.diagnostics.filter((record) => record.event === "agent-text-missing-id").length, 7);
+  f.text("after");
+  f.finish();
+  await f.completion;
+  assert.equal(f.matrix.html.length, 0);
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  assert.equal(f.matrix.html[0]?.body, "before after");
+  assert.equal(f.matrix.html[0]?.targetEventId, undefined);
+  assert.doesNotMatch(JSON.stringify([f.matrix.html, f.matrix.sent, f.diagnostics]), /private/);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("alternate-client thought rejection warns per chunk without scheduling or changing identified destinations", async () => {
+  const f = await createIdentifiedFixture();
+  const reject = () => {
+    for (const messageId of [undefined, "", " \t\n", "\u0000\u001B", null, 42, {}, []]) {
+      for (const text of ["private rejected thought", "\u001B[31m\n\n\u001B[0m"]) {
+        f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId, text } as AcpUpdate);
+      }
+    }
+  };
+  const warnings = () => f.diagnostics.filter((record) => record.event === "agent-thought-missing-id");
+  const initialTimers = f.clock.pendingTimerCount;
+  reject();
+  assert.equal(warnings().length, 16);
+  assert.equal(f.clock.pendingTimerCount, initialTimers);
+  assert.equal(f.matrix.html.length, 0);
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "plan" });
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  const thoughtEvent = "$live-1:example.org";
+  f.text("before ");
+  const pendingTimers = f.clock.pendingTimerCount;
+  reject();
+  assert.equal(f.clock.pendingTimerCount, pendingTimers);
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_message_chunk", text: "private rejected text" });
+  f.text("after");
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "\n\ncontinued" });
+  f.finish();
+  await f.completion;
+  reject();
+  assert.equal(warnings().length, 48);
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("continued")));
+  const thoughts = f.matrix.html.filter((message) => message.body.includes("continued"));
+  assert.ok(thoughts.every((message) => message.targetEventId === thoughtEvent));
+  assert.equal(f.matrix.html.filter((message) => message.body === "before after").length, 1);
+  assert.ok(warnings().every((record) => record.level === "warn" && Object.keys(record.fields).length === 0));
+  assert.doesNotMatch(JSON.stringify([f.diagnostics, f.matrix.html]), /private rejected/u);
+  assert.equal(f.bridge.fatalError, undefined);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("reset prevents retired output waiting behind another thread's room send", { timeout: 2000 }, async () => {
+  const clock = new FakeClock();
+  const acp = new FakeAcp();
+  const matrix = new FakeLiveMatrix();
+  const sessionStore = new InMemorySessionStore();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  matrix.htmlSend = async (message) => {
+    if (message.threadRootEventId === "$blocking-root") await blocked;
+    matrix.html.push(message);
+    return "$original";
+  };
+  const bridge = new BridgeCoordinator({ config: threadConfig(), acp, matrix, clock, sessionStore });
+  try {
+    await bridge.handleTimelineEvent(event("$blocking-root"));
+    await bridge.handleTimelineEvent(event("$retiring-root"));
+    acp.emit({
+      sessionId: acp.promptCalls[0]!.sessionId,
+      kind: "agent_message_chunk",
+      messageId: "a",
+      text: "blocking",
+    });
+    clock.advanceBy(750);
+    await waitFor(() => matrix.attempts.length === 1);
+    acp.emit({
+      sessionId: acp.promptCalls[1]!.sessionId,
+      kind: "agent_message_chunk",
+      messageId: "b",
+      text: "obsolete",
+    });
+    clock.advanceBy(750);
+    await flush();
+    const reset = bridge.handleTimelineEvent(threadEvent("$retire", "$retiring-root", "/reset"));
+    await waitFor(
+      () =>
+        sessionStore.getConversationRecord({
+          kind: "thread",
+          roomId: ROOM_ONE,
+          threadRootEventId: "$retiring-root",
+        })?.sessionId === undefined,
+    );
+    release();
+    await reset;
+    assert.deepEqual(
+      matrix.html.map(({ body }) => body),
+      ["blocking"],
+    );
+  } finally {
+    release();
+    await bridge.stop();
+  }
+  assert.equal(clock.pendingTimerCount, 0);
+});
+
+void test("reset prevents retrying a retired session's output", { timeout: 2000 }, async () => {
+  const f = await createIdentifiedFixture();
+  f.matrix.htmlSend = async () => {
+    throw { status: 503 };
+  };
+  try {
+    f.text("obsolete");
+    f.clock.advanceBy(750);
+    await waitFor(() => f.matrix.attempts.length === 1);
+    f.finish();
+    await f.completion;
+    const reset = f.bridge.handleTimelineEvent(event("$retire-retry", ROOM_ONE, "/reset"));
+    await waitFor(() =>
+      f.diagnostics.some((record) => record.event === "agent-activity-abandoned" && record.fields.kind === "lifecycle"),
+    );
+    await reset;
+    assert.equal(f.clock.pendingTimerCount, 0);
+    f.clock.advanceBy(60_000);
+    await flush();
+    assert.equal(f.matrix.attempts.length, 1);
+  } finally {
+    f.finish();
+    await f.bridge.stop();
+  }
+  assert.equal(f.clock.pendingTimerCount, 0);
 });

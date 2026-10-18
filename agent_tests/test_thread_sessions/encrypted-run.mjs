@@ -13,9 +13,10 @@ const marker = randomBytes(6).toString("hex").toUpperCase();
 const monitor = new ThreadSessionMonitor(join(environment.bridge.stateDir, "e2e-session-ids.json"));
 let pair;
 
-async function exchange(prompt, expected, threadRootEventId) {
+async function exchange(prompt, expected, threadRootEventId, expectedFallback) {
   const args = ["--prompt", prompt, "--expect", expected, "--expect-thread"];
   if (threadRootEventId !== undefined) args.push("--thread-root", threadRootEventId);
+  if (expectedFallback !== undefined) args.push("--expect-fallback", expectedFallback);
   return runSender({ environmentPath, senderPath: join(testDir, "encrypted-sender.mjs"), args });
 }
 
@@ -36,7 +37,12 @@ try {
 
   process.stdout.write("Sending an encrypted follow-up to the same thread...\n");
   const followupPrompt = `Reply with exactly: ENCRYPTED_THREAD_FOLLOWUP_${marker}`;
-  const followup = await exchange(followupPrompt, `ENCRYPTED_THREAD_FOLLOWUP_${marker}`, first.promptEventId);
+  const followup = await exchange(
+    followupPrompt,
+    `ENCRYPTED_THREAD_FOLLOWUP_${marker}`,
+    first.promptEventId,
+    first.promptEventId,
+  );
   assert.equal(followup.promptWireType, "m.room.encrypted");
   assert.equal(followup.responseWireType, "m.room.encrypted");
   assert.equal(monitor.promptCount, 2, "expected two ACP prompts");

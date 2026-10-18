@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createCancellationController } from "./cancellation.js";
 import { MatrixDelivery } from "./matrix-delivery.js";
+import { StderrDiagnosticSink, type DiagnosticRecord } from "./diagnostics.js";
 import type { MatrixBridgeAdapter, MatrixHtmlMessage } from "./matrix-client.js";
 import { matrixHtml } from "./matrix-html.js";
 import { renderMatrixResponse } from "./response-rendering.js";
@@ -10,7 +12,7 @@ function createParts(roomId = "!room:example.org", body = "hello") {
   return renderMatrixResponse({
     roomId,
     inboundEventId: "$input",
-    outcome: { kind: "turn", stopReason: "end_turn", text: body },
+    outcome: { kind: "agent", text: body },
     maxOutputBytes: 1000,
     maxMatrixMessageBytes: 64,
   });
@@ -34,6 +36,43 @@ function createAdapter(
 async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
+
+void test("live failure diagnostics retain safe HTTP context without raw error content", async () => {
+  for (const status of [403, undefined, Number.NaN, 99, 600, 403.5]) {
+    const records: DiagnosticRecord[] = [];
+    const delivery = new MatrixDelivery({
+      canSend: () => true,
+      diagnostics: new StderrDiagnosticSink({
+        writeLine: (line) => {
+          records.push(JSON.parse(line) as DiagnosticRecord);
+        },
+      }),
+      matrix: createAdapter(
+        async () => {},
+        async () => {
+          throw { httpStatus: status, message: "private credential", errcode: "private error code" };
+        },
+      ),
+    });
+    assert.equal(
+      await delivery.sendLive({
+        roomId: "!room:example.org",
+        transactionId: "test",
+        body: "private output",
+        formattedBody: matrixHtml`<p>private output</p>`,
+      }),
+      undefined,
+    );
+    assert.equal(records[0]?.event, "matrix-live-abandoned");
+    assert.deepEqual(records[0]?.fields, {
+      kind: "delivery",
+      roomId: "!room:example.org",
+      attempts: 1,
+      httpStatus: status === 403 ? 403 : null,
+    });
+    assert.doesNotMatch(JSON.stringify(records), /private/u);
+  }
+});
 
 void test("delivery serializes a whole multipart response with live edits while other rooms progress", async () => {
   let finishFirst!: () => void;
@@ -207,4 +246,46 @@ void test("shutdown prevents queued responses and remaining parts from starting 
   assert.equal(await first, false);
   assert.equal(await queued, false);
   assert.equal(attempts, 1);
+});
+
+void test("cancelling one live retry leaves another session's retry intact", { timeout: 1000 }, async () => {
+  const clock = new FakeClock();
+  const retired = createCancellationController();
+  const active = createCancellationController();
+  const attempts: string[] = [];
+  const delivery = new MatrixDelivery({
+    clock,
+    canSend: () => true,
+    matrix: createAdapter(
+      async () => {},
+      async (message) => {
+        attempts.push(message.roomId);
+        if (attempts.filter((roomId) => roomId === message.roomId).length === 1) throw { status: 503 };
+        return "$delivered";
+      },
+    ),
+  });
+  const message: MatrixHtmlMessage = {
+    roomId: "!retired:example.org",
+    transactionId: "retired",
+    body: "text",
+    formattedBody: matrixHtml`<p>text</p>`,
+  };
+  const first = delivery.sendLive(message, retired.signal);
+  const second = delivery.sendLive(
+    { ...message, roomId: "!active:example.org", transactionId: "active" },
+    active.signal,
+  );
+  await flush();
+  assert.equal(clock.pendingTimerCount, 2);
+  retired.cancel();
+  assert.equal(await first, undefined);
+  assert.equal(clock.pendingTimerCount, 1);
+  clock.advanceBy(60_000);
+  assert.equal(await second, "$delivered");
+  assert.deepEqual(attempts, ["!retired:example.org", "!active:example.org", "!active:example.org"]);
+  assert.equal(clock.pendingTimerCount, 0);
+  active.cancel();
+  assert.equal(await delivery.sendLive(message, retired.signal), undefined);
+  assert.equal(attempts.length, 3);
 });

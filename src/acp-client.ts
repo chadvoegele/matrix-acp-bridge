@@ -26,7 +26,7 @@ import {
 import { createCancellationController } from "./cancellation.js";
 import { systemClock } from "./clock.js";
 import type { Clock } from "./clock.js";
-import { isAcpUpdateNotification, normalizeAcpUpdateNotification } from "./acp-activity-update.js";
+import { isAcpUpdateNotification, isUsableMessageId, normalizeAcpUpdateNotification } from "./acp-activity-update.js";
 import type { AcpSessionId, AcpUpdate, AcpUpdateListener } from "./acp-activity-update.js";
 import { createStderrDiagnosticSink } from "./diagnostics.js";
 import type { CancellationSignal, Unsubscribe } from "./cancellation.js";
@@ -79,7 +79,6 @@ export interface AcpProtocolError {
 export interface AcpTurnOutcome {
   readonly kind: "turn";
   readonly stopReason: AcpStopReason;
-  readonly text?: string;
 }
 
 export type AcpFailure = AcpMethodError | AcpTransportError | AcpProtocolError;
@@ -205,11 +204,6 @@ type RequestOperation = Exclude<AcpTransportError["operation"], "close">;
 interface PendingPermission {
   readonly controller: ReturnType<typeof createCancellationController>;
   readonly completion: Promise<RequestPermissionResponse>;
-}
-
-interface TextGroup {
-  readonly messageId?: string;
-  text: string;
 }
 
 function noop(): void {
@@ -339,8 +333,6 @@ export class InheritedStdioAcpClient implements AcpClient {
   readonly #fatalListeners = new Set<FatalErrorListener>();
 
   readonly #pendingPermissions = new Map<string, PendingPermission>();
-
-  readonly #activeTurns = new Map<string, TextGroup[]>();
 
   readonly #startupInfoBySession = new Map<string, string>();
 
@@ -536,8 +528,6 @@ export class InheritedStdioAcpClient implements AcpClient {
       return error;
     }
 
-    const groups: TextGroup[] = [];
-    this.#activeTurns.set(sessionId, groups);
     const removeCancellation = cancellation.onCancel(() => {
       void this.cancel(sessionId).catch(() => {});
     });
@@ -558,11 +548,9 @@ export class InheritedStdioAcpClient implements AcpClient {
         this.#reportFatal("protocol", "session_prompt");
         return error;
       }
-      const collected = groups.map((group) => group.text).join("\n\n");
       const outcome: AcpTurnOutcome = {
         kind: "turn",
         stopReason: reason,
-        ...(collected.length === 0 ? {} : { text: collected }),
       };
       return outcome;
     } catch (error) {
@@ -572,9 +560,6 @@ export class InheritedStdioAcpClient implements AcpClient {
       return this.#classifyFailure("session_prompt", error, false);
     } finally {
       removeCancellation();
-      if (this.#activeTurns.get(sessionId) === groups) {
-        this.#activeTurns.delete(sessionId);
-      }
     }
   }
 
@@ -934,7 +919,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     if (update === undefined) return;
 
     if (update.kind === "agent_message_chunk") {
-      const { sessionId, text, messageId } = update;
+      const { sessionId, text } = update;
       const metadata: unknown = parameters.update._meta;
       if (isRecord(metadata) && isRecord(metadata.piAcp) && isRecord(metadata.piAcp.notify)) {
         // pi-acp marks extension UI notifications separately from assistant text.
@@ -954,27 +939,20 @@ export class InheritedStdioAcpClient implements AcpClient {
         this.#startupInfoBySession.delete(sessionId);
         return;
       }
-      const groups = this.#activeTurns.get(sessionId);
-      if (groups === undefined) return;
-      this.#collectText(groups, text, messageId);
+    }
+    if (
+      (update.kind === "agent_message_chunk" || update.kind === "agent_thought_chunk") &&
+      !isUsableMessageId(update.messageId)
+    ) {
+      this.#diagnostic(
+        "warn",
+        update.kind === "agent_message_chunk" ? "agent-text-missing-id" : "agent-thought-missing-id",
+        {},
+      );
+      return;
     }
 
     this.#notifyUpdate(update);
-  }
-
-  #collectText(groups: TextGroup[], text: string, id: string | undefined): void {
-    const last = groups.at(-1);
-    if (last === undefined) {
-      groups.push(id === undefined ? { text } : { messageId: id, text });
-      return;
-    }
-
-    if (id !== undefined && last.messageId !== undefined && last.messageId !== id) {
-      groups.push({ messageId: id, text });
-      return;
-    }
-
-    last.text += text;
   }
 
   #notifyUpdate(update: AcpUpdate): void {

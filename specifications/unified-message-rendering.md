@@ -1,10 +1,19 @@
 +++
-status = "draft"
+status = "final"
 created = 2026-10-16
-last_update = 2026-10-16
+last_update = 2026-10-17
 +++
 
 # Unified solicited and unsolicited message rendering
+
+Chad's Agent
+
+This records the first PR #28 design. Its collection, mapping ownership, thought
+formatting/timing and strict text-before-activity rules are superseded by
+[Collector-based output rendering](collector-based-output-rendering.md).
+The diagram below illustrates that original design; use the
+[collector diagram](collector-based-output-rendering.svg) for the current implementation.
+Routing, compatibility, delivery and resource requirements still apply.
 
 ## Purpose
 
@@ -12,13 +21,13 @@ Display agent messages in Matrix through one session-scoped rendering path, whet
 
 ## Context
 
-The bridge currently collects output within an active prompt. An extension can trigger an unsolicited turn after that prompt completes; its text still arrives through ACP `session/update`, but no active prompt collector exists to display it.
+Before PR #28, the bridge collected output within an active prompt. An extension can trigger an unsolicited turn after that prompt completes; its text still arrives through ACP `session/update`, but no active prompt collector exists to display it.
 
 This specification replaces the agent-text portion of **Eager Message Rendering** in [Verbose ACP output](verbose-acp-output.md): identified messages may be sent incrementally and edited rather than sent only once at inferred completion. Existing thought/tool presentation remains unchanged unless needed to preserve routing and ordering.
 
 ## Design overview
 
-![Unified message rendering: solicited and unsolicited output shares a session-scoped block and buffered Matrix send/edit path.](diagrams/unified-message-rendering.svg)
+![Unified message rendering: solicited and unsolicited output shares a session-scoped block and buffered Matrix send/edit path.](unified-message-rendering.svg)
 
 Both sources deliver the same identified text chunks. The bridge routes by session, appends to the current message block, and buffers publication through an ordered conversation queue. The first flush sends a Matrix message; later flushes edit it in place. A different assistant message ID retires the previous block after delivery. Prompt completion remains separate from rendering.
 
@@ -41,7 +50,7 @@ Both sources deliver the same identified text chunks. The bridge routes by sessi
 
 ### Adapter prerequisite
 
-Assume pi-acp supplies ACP's optional `messageId` on every assistant text chunk, including unsolicited output. Implementing and validating that support belongs in a separate pi-acp change.
+Assume pi-acp supplies ACP's optional `messageId` on every assistant text and thought chunk, including unsolicited output. Implementing and validating that support belongs in a separate pi-acp change.
 
 All chunks of one logical assistant message must share an ID; distinct messages must have distinct IDs within a session. Chunks are ordered text deltas, not replacement snapshots. IDs must remain unambiguous for as long as a session can continue delivering updates, including after restoration.
 
@@ -88,7 +97,7 @@ Continuous low-volume output must also flush within a configured maximum interva
 
 Require integer values and `agent_text_quiet_ms <= agent_text_max_interval_ms`. Count new unpublished UTF-8 bytes, not total block size. A message-ID transition is an unconditional flush trigger, not another configuration setting. Interval pacing and coalescing must prevent repeated size-threshold crossings from bypassing Matrix rate control.
 
-Keep `max_output_bytes` and `max_matrix_message_bytes` as output/event-size limits, not publication triggers. Remove prompt-scoped text draining, including `QUIET_DRAIN_MS` and `STREAMING_DRAIN_CAP_MS`, from the identified-message path. The quiet-period setting replaces the former text-drain timing role; there is no post-prompt drain deadline. Complete prompt bookkeeping when its ACP response arrives, independently of buffered text publication. These changes must not introduce another equivalent drain configuration.
+Keep `max_output_bytes` and `max_matrix_message_bytes` as output/event-size limits, not publication triggers. Remove all prompt-scoped text draining, including `QUIET_DRAIN_MS` and `STREAMING_DRAIN_CAP_MS`. The quiet-period setting replaces the former text-drain timing role; there is no post-prompt drain deadline. Complete prompt bookkeeping when its ACP response arrives, independently of buffered text publication. These changes must not introduce another equivalent drain configuration.
 
 A quiet timer must fire without another incoming update. A quiet-period, size, interval, or activity flush does not finalize or evict the current block: later chunks with the same ID continue updating it. A different assistant message ID closes the previous block under the non-interleaving contract. Neither silence nor a message-ID transition asserts that an unsolicited turn has ended.
 
@@ -140,7 +149,22 @@ On reset, deletion, disconnect, or shutdown, cancel timers and retire rendering 
 
 For messages with IDs, the new path is the sole owner of assistant-text publication. It must not coexist with a second prompt-final renderer that duplicates output.
 
-ACP permits missing message IDs. Preserve the existing prompt-scoped behavior for ID-less chunks during a solicited prompt. ID-less unsolicited text cannot be reliably grouped and is outside this feature's adapter contract; emit a bounded diagnostic instead of guessing an ID or a destination. Do not merge ID-less chunks into an identified block.
+ACP permits missing message IDs, but this bridge requires a string ID containing
+at least one character other than whitespace or Unicode controls for every
+assistant-message and thought chunk. Eagerly reject any chunk without one,
+during or outside a prompt, and warn on every rejection without text, raw payloads,
+IDs or credentials. Do not retain warning deduplication state, infer an ID, collect
+rejected text or merge it into an identified block. The canonical client rejects
+before listener dispatch after startup/UI filtering; the bridge guards alternate
+clients without duplicate normal warnings. `SessionOutput.accept` remains the type
+dispatcher and rejects invalid message/thought IDs before collector/card changes.
+
+This decision supersedes the earlier solicited ID-less compatibility path and
+unsolicited warn-once policy. Prompt outcomes carry no text and the bridge has no
+prompt-final fallback, text drain timers or closed-ID history. Successful prompt
+completion emits no assistant-text or empty-response copy. ID-less thoughts have
+no collector, generated IDs or compatibility grouping. Identified thoughts, tool
+patches and non-text error/timeout/stop responses retain their own contracts.
 
 Do not persist rendering state or change the stored conversation schema. A new Matrix block for a continuing agent message after restart is accepted behavior. Adapters that interleave assistant message IDs are outside this feature's contract; supporting them would require a separate design.
 
@@ -166,7 +190,10 @@ Do not persist rendering state or change the stored conversation schema. A new M
 - Reset, subprocess exit, and transport failure retire incomplete activity through explicit failure/cleanup behavior, without orphan mappings or false successful completion.
 - Markdown split across chunks renders safely throughout; long messages respect encoded size limits and preserve text up to explicit output caps.
 - Unknown/stale sessions and loading-history updates publish nothing. Reset, shutdown, output limits, and delivery failures leave no orphan timers or cross-session sends.
-- ID-less prompted output retains existing behavior; ID-less unsolicited output produces bounded diagnostics, not guessed grouping.
+- Every solicited/unsolicited ID-less message or thought chunk is dropped eagerly with a
+  content-free warning. Mixed valid/rejected streams preserve only identified text/thoughts;
+  rejected chunks allocate no collector/timer state or alter thoughts/tools.
+  Prompt outcomes contain no text and normal client/bridge flow warns once per rejection.
 
 ## References
 

@@ -9,7 +9,9 @@ import {
   type AcpToolCallUpdate,
   type AcpAgentThoughtChunk,
 } from "./acp-client.js";
-import { AcpActivityModel } from "./acp-activity.js";
+import { AcpToolModel } from "./acp-activity.js";
+import { TextCollector } from "./text-collector.js";
+import { OUTPUT_TRUNCATION_MARKER } from "./response-rendering.js";
 import { renderAcpActivity } from "./acp-activity-rendering.js";
 import { createCancellationController } from "./cancellation.js";
 import type { DiagnosticSink, FatalError } from "./diagnostics.js";
@@ -362,7 +364,7 @@ void test("rejects a non-v1 negotiated version and emits one protocol fatal", as
   await client.close();
 });
 
-void test("maps text and ignored updates and joins distinct message IDs", async () => {
+void test("forwards identified text and activity without retaining prompt-final copies", async () => {
   const input = createFakeInput();
   const output = createFakeOutput();
   const client = newClient(input, output);
@@ -443,7 +445,6 @@ void test("maps text and ignored updates and joins distinct message IDs", async 
   assert.deepEqual(outcome, {
     kind: "turn",
     stopReason: "end_turn",
-    text: "hello world\n\nnext",
   });
   assert.deepEqual(updates, [
     {
@@ -572,8 +573,22 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   const client = newClient(input, output);
   await initialize(client, input, output);
   const sessionId = await createSession(client, input, output);
-  const model = new AcpActivityModel();
-  client.onUpdate((update) => model.accept(update));
+  const model = new AcpToolModel();
+  let thought: { type: "thought"; text: string; cut: boolean } | undefined;
+  const thoughts = new TextCollector({
+    settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
+    maxOutputBytes: 8192,
+    sink: {
+      flush: (_id, content) => {
+        thought = { type: "thought", ...content };
+      },
+      finish: () => {},
+    },
+  });
+  client.onUpdate((update) => {
+    if (update.kind === "tool_call" || update.kind === "tool_call_update") model.accept(update);
+    if (update.kind === "agent_thought_chunk") thoughts.append(update.messageId!, update.text, update.textCut);
+  });
   const prompt = client.prompt(sessionId, "hello", {
     cancelled: false,
     reason: undefined,
@@ -627,8 +642,10 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   });
   input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
   await prompt;
-  assert.equal(model.events.length, 3);
-  const [thought, tool, many] = model.events;
+  thoughts.flush();
+  thoughts.stop();
+  assert.equal(model.events.length, 2);
+  const [tool, many] = model.events;
   assert.ok(thought && tool && many);
   for (const event of [thought, tool, many]) {
     const rendered = renderAcpActivity(event);
@@ -641,7 +658,10 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   assert.equal(many.type, "tool");
   if (thought.type === "thought") {
     assert.equal(Buffer.byteLength(thought.text, "utf8"), 8192);
-    assert.ok(thought.text.startsWith("a".repeat(8190)));
+    assert.equal(
+      thought.text,
+      "a".repeat(8192 - Buffer.byteLength(OUTPUT_TRUNCATION_MARKER)) + OUTPUT_TRUNCATION_MARKER,
+    );
   }
   if (tool.type === "tool")
     assert.equal(tool.content?.[0]?.type === "content" && tool.content[0].text, "b".repeat(8190));
@@ -760,6 +780,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
       sessionId,
       update: {
         sessionUpdate: "agent_thought_chunk",
+        messageId: "plan",
         content: {
           type: "text",
           text: "😀".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES / 4),
@@ -773,6 +794,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
       sessionId,
       update: {
         sessionUpdate: "agent_thought_chunk",
+        messageId: "plan",
         content: {
           type: "text",
           text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 1)}😀`,
@@ -824,7 +846,7 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 1);
   assert.equal(thoughts[1]!.textCut, true);
   assert.doesNotMatch(thoughts[1]!.text, /�/u);
-  const model = new AcpActivityModel();
+  const model = new AcpToolModel();
   model.accept(small);
   assert.match(renderAcpActivity(model.events[0]!).body, /\(truncated\)/u);
   await client.close();
@@ -904,7 +926,7 @@ void test("malformed optional activity fields do not escape into updates or diag
   await client.close();
 });
 
-void test("ignores agent text updates before a prompt while preserving later prompt text", async () => {
+void test("forwards unsolicited agent text without including it in later prompt text", async () => {
   const input = createFakeInput();
   const output = createFakeOutput();
   const client = newClient(input, output);
@@ -924,7 +946,7 @@ void test("ignores agent text updates before a prompt while preserving later pro
     }),
   );
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(updates, []);
+  assert.equal(updates.length, 1);
 
   const prompt = client.prompt(sessionId, "hello", {
     cancelled: false,
@@ -950,9 +972,9 @@ void test("ignores agent text updates before a prompt while preserving later pro
   assert.deepEqual(await prompt, {
     kind: "turn",
     stopReason: "end_turn",
-    text: "answer",
   });
   assert.deepEqual(updates, [
+    { sessionId, kind: "agent_message_chunk", text: "startup history", messageId: "startup-message" },
     {
       sessionId,
       kind: "agent_message_chunk",
@@ -1020,7 +1042,6 @@ void test("suppresses a session startup prelude that races the first prompt", as
   assert.deepEqual(await prompt, {
     kind: "turn",
     stopReason: "end_turn",
-    text: "actual prompt text",
   });
   assert.deepEqual(updates, [
     {
@@ -1097,13 +1118,14 @@ for (const timing of ["before", "during"] as const) {
           update: {
             sessionUpdate: "agent_message_chunk",
             content: { type: "text", text: banner },
+            messageId: "answer",
             _meta: { piAcp: { notify: "not a notification marker" } },
           },
         }),
       );
       // eslint-disable-next-line unicorn/no-array-push-push -- ordered protocol frames
       input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
-      assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn", text: banner });
+      assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn" });
     }
     assert.deepEqual(
       updates,
@@ -1111,6 +1133,7 @@ for (const timing of ["before", "during"] as const) {
         sessionId,
         kind: "agent_message_chunk",
         text: banner,
+        messageId: "answer",
       })),
     );
     assert.deepEqual(
@@ -1468,7 +1491,7 @@ void test("steering replies concurrently on its own wire ID and preserves prompt
   cancellation.cancel("original turn cancelled");
   assert.deepEqual(await output.nextFrame(), { jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
   input.push(rpcResponse(promptFrame.id, { stopReason: "cancelled" }));
-  assert.deepEqual(await prompt, { kind: "turn", stopReason: "cancelled", text: "before after" });
+  assert.deepEqual(await prompt, { kind: "turn", stopReason: "cancelled" });
   assert.equal(updates.length, 3);
   assert.equal((updates[1] as { kind: string }).kind, "tool_call");
   assert.equal(fatal.errors.length, 0);
@@ -1565,12 +1588,13 @@ void test("healthy steering errors distinguish method-not-found, preserve the pr
         update: {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "intact" },
+          messageId: "intact",
         },
       }),
     );
     // eslint-disable-next-line unicorn/no-array-push-push -- distinct ordered ACP frames
     input.push(rpcResponse(promptFrame.id, { stopReason: "end_turn" }));
-    assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn", text: "intact" });
+    assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn" });
     // The same transport remains usable even when its extension was unavailable.
     assert.equal(await createSession(client, input, output), "session-1");
     await client.close();
@@ -1790,6 +1814,81 @@ void test("independent sessions can have simultaneous steering requests with rev
   assert.equal(clock.pendingTimerCount, 1);
   input.push(rpcResponse(firstFrame.id, { outcome: "injected" }));
   assert.deepEqual(await first, { kind: "steering", outcome: "injected" });
+  assert.equal(clock.pendingTimerCount, 0);
+  await client.close();
+});
+
+void test("eagerly rejects every invalid message and thought ID before listeners during and outside prompts", async () => {
+  const input = createFakeInput();
+  const output = createFakeOutput();
+  const diagnostics: unknown[] = [];
+  const clock = new FakeClock();
+  const client = newClient(input, output, {
+    clock,
+    diagnostics: {
+      ...createDiagnostics(),
+      emit(level: string, event: string, fields: unknown) {
+        diagnostics.push({ level, event, fields });
+      },
+    },
+  });
+  await initialize(client, input, output);
+  const sessionId = await createSession(client, input, output);
+  const updates: unknown[] = [];
+  client.onUpdate((update) => updates.push(update));
+  const reject = () => {
+    for (const sessionUpdate of ["agent_message_chunk", "agent_thought_chunk"]) {
+      for (const messageId of [undefined, "", " \t\n", "\u0000\u001B", null, 42, {}, []]) {
+        input.push(
+          rpcNotification("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate,
+              messageId,
+              content: { type: "text", text: "private rejected" },
+            },
+          }),
+        );
+      }
+    }
+  };
+  reject();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates, []);
+  assert.equal(diagnostics.length, 16);
+  assert.equal(clock.pendingTimerCount, 0);
+  const prompt = client.prompt(sessionId, "private prompt", createCancellationController().signal);
+  const frame = await output.nextFrame();
+  reject();
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: { sessionUpdate: "agent_message_chunk", messageId: "valid", content: { type: "text", text: "before " } },
+    }),
+  );
+  reject();
+  input.push(
+    rpcNotification("session/update", {
+      sessionId,
+      update: { sessionUpdate: "agent_message_chunk", messageId: "valid", content: { type: "text", text: "after" } },
+    }),
+  );
+  // eslint-disable-next-line unicorn/no-array-push-push -- distinct ordered ACP frames
+  input.push(rpcResponse(frame.id, { stopReason: "end_turn" }));
+  assert.deepEqual(await prompt, { kind: "turn", stopReason: "end_turn" });
+  reject();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates, [
+    { sessionId, kind: "agent_message_chunk", messageId: "valid", text: "before " },
+    { sessionId, kind: "agent_message_chunk", messageId: "valid", text: "after" },
+  ]);
+  assert.deepEqual(
+    diagnostics,
+    Array.from({ length: 4 }, () => [
+      ...Array.from({ length: 8 }, () => ({ level: "warn", event: "agent-text-missing-id", fields: {} })),
+      ...Array.from({ length: 8 }, () => ({ level: "warn", event: "agent-thought-missing-id", fields: {} })),
+    ]).flat(),
+  );
   assert.equal(clock.pendingTimerCount, 0);
   await client.close();
 });
