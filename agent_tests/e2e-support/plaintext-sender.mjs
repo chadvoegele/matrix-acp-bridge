@@ -1,8 +1,14 @@
 import { randomBytes } from "node:crypto";
+import { getEffectiveContent } from "./unified-observations.mjs";
 import { assertThreadResponse } from "./thread-sessions.mjs";
 
 export async function runSenderHarness({ readEnvironment, readToken, threadMode = false }) {
-  if (!threadMode && (process.argv.includes("--thread-root") || process.argv.includes("--expect-thread"))) {
+  if (
+    !threadMode &&
+    (process.argv.includes("--thread-root") ||
+      process.argv.includes("--expect-thread") ||
+      process.argv.includes("--expect-fallback"))
+  ) {
     throw new Error("room sender does not accept thread options");
   }
 
@@ -25,6 +31,7 @@ export async function runSenderHarness({ readEnvironment, readToken, threadMode 
   const expectedFormattedBody = optionalArgument("--expect-formatted-body");
   const threadRootEventId = threadMode ? optionalArgument("--thread-root") : undefined;
   const expectThread = threadMode;
+  const expectedFallback = threadMode ? optionalArgument("--expect-fallback") : undefined;
   const token = await readToken(environment.sender.tokenFile);
   const roomPath = encodeURIComponent(environment.roomId);
 
@@ -116,7 +123,7 @@ export async function runSenderHarness({ readEnvironment, readToken, threadMode 
       event?.type === "m.room.message" &&
       event.sender === environment.bridge.userId &&
       event.content?.msgtype === "m.text" &&
-      event.content.body === expected
+      getEffectiveContent(event)?.body === expected
     );
   }
 
@@ -143,11 +150,21 @@ export async function runSenderHarness({ readEnvironment, readToken, threadMode 
     rawEvent(promptEventId),
     rawEvent(responseEvents[0].event_id),
   ]);
+  const responseContent = getEffectiveContent(responseEvent);
+  const target = responseEvent.content?.["m.relates_to"];
+  const original = target?.rel_type === "m.replace" ? await rawEvent(target.event_id) : responseEvent;
+  if (original.type !== "m.room.message" || original.sender !== environment.bridge.userId) {
+    throw new Error("response original was not a plaintext bridge message");
+  }
   for (const [label, event, body] of [
     ["prompt", promptEvent, prompt],
     ["response", responseEvent, expected],
   ]) {
-    if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text" || event.content.body !== body) {
+    if (
+      event.type !== "m.room.message" ||
+      event.content?.msgtype !== "m.text" ||
+      getEffectiveContent(event)?.body !== body
+    ) {
       throw new Error(`${label} was not a plaintext m.room.message event`);
     }
   }
@@ -163,12 +180,12 @@ export async function runSenderHarness({ readEnvironment, readToken, threadMode 
   }
   if (expectThread) {
     const expectedRoot = threadRootEventId ?? promptEventId;
-    assertThreadResponse(responseEvent.content, expectedRoot, promptEventId);
+    assertThreadResponse(original.content, expectedRoot, expectedFallback ?? promptEventId);
+    assertThreadResponse(responseContent, expectedRoot, expectedFallback ?? promptEventId);
   }
   if (
     expectedFormattedBody !== undefined &&
-    (responseEvent.content?.format !== "org.matrix.custom.html" ||
-      responseEvent.content.formatted_body !== expectedFormattedBody)
+    (responseContent?.format !== "org.matrix.custom.html" || responseContent.formatted_body !== expectedFormattedBody)
   ) {
     throw new Error("response did not contain the expected Matrix formatted body");
   }

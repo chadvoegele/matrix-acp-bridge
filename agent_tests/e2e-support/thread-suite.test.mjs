@@ -57,7 +57,7 @@ test("room configs ignore inherited thread mode; dedicated configs select only t
 test("room senders reject thread flags before reading credentials or contacting Matrix", async () => {
   const previous = process.argv;
   try {
-    for (const flag of ["--thread-root", "--expect-thread"]) {
+    for (const flag of ["--thread-root", "--expect-thread", "--expect-fallback"]) {
       process.argv = ["node", "sender", flag, "$root"];
       for (const sender of [plainSender, encryptedSender]) {
         await assert.rejects(sender({ readEnvironment: () => assert.fail("environment read") }), /room sender/u);
