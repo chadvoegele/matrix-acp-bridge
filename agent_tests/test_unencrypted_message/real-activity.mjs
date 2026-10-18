@@ -29,7 +29,7 @@ const prompt =
   `read the file; edit beta to gamma; use bash to run cat -- ${path}; ` +
   "then briefly confirm completion. Do not inspect other files or run other commands.";
 const frames = [];
-const textFrames = [];
+const protocolFrames = [];
 let promptId;
 let finished = false;
 let pair;
@@ -62,12 +62,13 @@ async function cleanupScratch() {
 try {
   pair = await startBridgePair(environment, {
     onOutbound(frame) {
+      protocolFrames.push({ direction: "out", frame });
       if (frame.method === "session/prompt") promptId = frame.id;
     },
     onInbound(frame) {
+      protocolFrames.push({ direction: "in", frame });
       if (frame.method === "session/update") {
         frames.push(frame.params?.update);
-        textFrames.push({ direction: "in", frame });
       }
       if (promptId !== undefined && frame.id === promptId) finished = true;
     },
@@ -102,7 +103,7 @@ try {
   const bash = find("execute", (frame) => frame.title?.includes(`cat -- ${path}`));
   const updates = (frame) => changes.filter((change) => frame && change.toolCallId === frame.toolCallId);
   const has = {
-    identifiedMessage: collectAgentMessages(textFrames).length > 0,
+    identifiedMessage: collectAgentMessages(protocolFrames).length > 0,
     writeInput: Boolean(write),
     writeDiff: updates(write).some(
       (change) =>
