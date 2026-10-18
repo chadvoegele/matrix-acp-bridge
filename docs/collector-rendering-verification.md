@@ -14,6 +14,58 @@ rendering is identical. Subsequent report-only changes do not alter code/tests.
 Automated fixtures, actual Matrix outcomes and coordinator follow-up are recorded
 separately.
 
+## Current eager rejection of ID-less assistant text
+
+Implementation/code-test revision: `787e5a9`, based on `d079ece` (which removed
+README's entire `Streamed and background output` section; it stays absent).
+This decision supersedes all earlier assistant-text compatibility statements below,
+including the original audit's reachable ID-less turn path. Earlier automated/live
+results retain their named revisions and do not validate this follow-up.
+
+Every assistant-message chunk requires a string `messageId` with at least one
+non-whitespace character. The canonical client drops invalid IDs after intentional
+startup/UI filtering and before listener dispatch, logging `agent-text-missing-id`
+at warning level with empty fields on every rejection. The bridge guards alternate
+clients without duplicate normal warnings; `SessionOutput.accept` remains the type
+dispatcher and ignores invalid assistant IDs before state changes. No private text,
+raw update or guessed identity enters a warning or valid output.
+
+Removed: `AcpTurnOutcome.text`, `PromptText`/`#activeTurns` text accumulation,
+bridge outcome-text fallback, `TurnCollector`/`TextGroup`, text drain quiet/cap
+timers, closed-ID bookkeeping, legacy publication helpers and `warnedIdless`.
+Successful prompt completion sends no final text or empty-response copy and stays
+independent from publication. Non-text stop/error/timeout statuses, prompt/RPC and
+cancellation state, typing, routing, identified flush/finish/sender lifetimes and
+legacy ID-less thoughts/tool patches remain. Fakes emit identified `onUpdate`
+chunks through these same contracts.
+
+Validation at that code-test revision:
+
+- `timeout --kill-after=5s 60s node --test --test-timeout=7000 --test-reporter=tap`
+  with the text-collector, text-publication, activity-card-collector, session-output,
+  matrix-output-sender, tool-collector, acp-activity, acp-client, bridge, integration,
+  response-rendering and matrix-delivery compiled test files: **258 passed**, zero
+  failures/cancellations/skips; **1.152021654 seconds** test duration.
+- `timeout --kill-after=10s 240s npm run check`: formatting, lint, typecheck/build
+  and **601 tests passed**, zero failures/cancellations/skips; **103.452 seconds**
+  wall time / **89.43462708 seconds** test duration. Both slow real-SDK HTTPS
+  subprocess fixtures passed. These are hermetic loopback protocol fixtures.
+- New coverage exercises invalid/missing/empty/whitespace/non-string IDs before,
+  during and after prompts, per-rejection warning counts and privacy, no rejected
+  collector/timer/card state, mixed-stream isolation, ignored legacy outcome text,
+  preserved thought/tool behavior, and canonical-client/bridge warning isolation.
+  Existing queue, timeout/cancellation, typing, retry, routing, safety and cleanup
+  assertions remain exercised.
+- `git diff --check`, local Markdown links and `waap check` pass. Existing diagrams
+  already depict the retained components and flush/finish interfaces without the
+  removed compatibility path; no SVG changes were needed.
+
+No new live Matrix, credential/device, Pi adapter or production activity was run.
+Historical encrypted-thread HTTP 429 setup limits and the separate real-Pi adapter
+prerequisite remain unchanged. No push, integration, deployment or GitHub update
+was performed. Documentation evidence recorded after the code-test commit does not
+alter the validated implementation/tests.
+
 ## Fresh itemized CODE.md audit
 
 The [collector item-by-item review](pr-28-collector-code-review.md) checks all
@@ -75,7 +127,7 @@ no additional implementation behavior is introduced by those documentation edits
 | Shared safe Markdown in thoughts; markers/heading normalization, escaped raw HTML/tools and wrappers                          | Activity-card/rendering tests; SDK isolation asserts resumed Markdown in the original collapsed thought card               |
 | Full output/event/thread/edit budgets and explicit truncation                                                                 | Text publication, activity-card, bridge/Markdown packing tests                                                             |
 | Bounded queue, capacity/delivery failure, lifecycle cleanup and stale callbacks                                               | Sender, text publication, session output, conversation queue and bridge tests                                              |
-| Prompt-independent lifetime, room/thread routing, load/history/restart/ID-less compatibility, encryption boundary             | Bridge and integration suites; existing SDK HTTPS subprocess regressions remain separate from actual Matrix                |
+| Prompt-independent lifetime, room/thread routing, load/history/restart, eager ID-less rejection, encryption boundary          | Bridge and integration suites; existing SDK HTTPS subprocess regressions remain separate from actual Matrix                |
 
 ## CODE.md assessment
 
@@ -102,8 +154,8 @@ Guard clauses, functional modules, local settings/helpers and content-free failu
 diagnostics follow CODE.md. Private mutation in accumulators, schedulers and queues
 is deliberate bounded streaming state; publication records are readonly. This
 original refactor assessment is superseded by the [fresh 56-item audit](pr-28-collector-code-review.md),
-including its fixes and qualifications. Existing bridge prompt/ID-less compatibility
-remains outside the identified collector path.
+including its fixes and qualifications. Its earlier bridge prompt/ID-less
+compatibility assessment is superseded by the eager-rejection revision above.
 
 ## Developer automated evidence
 
