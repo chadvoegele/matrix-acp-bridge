@@ -24,7 +24,7 @@ import {
 } from "./authorization.js";
 import { conversationIdentityForEvent, conversationKey, type ConversationIdentity } from "./conversation-identity.js";
 import { InMemorySessionStore } from "./session-store.js";
-import { matrixHtmlContentBytes, type MatrixHtmlBody, type MatrixOutputRouting } from "./matrix-message-content.js";
+import type { MatrixOutputRouting } from "./matrix-message-content.js";
 import type { SessionStore } from "./session-store.js";
 import type { AcpClient, AcpOutcome, AcpSession, AcpSessionId, AcpUpdate } from "./acp-client.js";
 import {
@@ -1215,37 +1215,31 @@ export class BridgeCoordinator {
     const routing = routingForEvent(event);
     const generation = randomUUID();
     let revision = 0;
-    const queue = new ConversationPublication(
-      this.#config.limits.maxActivityEventsPerMessage + this.#config.limits.maxQueuedTurnsPerConversation,
-      (reason) => this.#reportRenderingAbandoned("text", reason),
-    );
-    const publish = async (
-      kind: "text" | "activity",
-      rendered: MatrixHtmlBody,
-      targetEventId?: MatrixEventId,
-    ): Promise<MatrixEventId | undefined> => {
-      if (this.#renderingBySession.get(sessionId)?.queue !== queue || conversation.sessionId !== sessionId) return;
-      if (
-        matrixHtmlContentBytes({ ...rendered, ...routing }, targetEventId) > this.#config.limits.maxMatrixMessageBytes
-      ) {
-        throw new RangeError("Agent publication exceeds limits.max_matrix_message_bytes; increase the event budget");
-      }
-      this.#outboundOperations += 1;
-      try {
-        return await this.#delivery.sendLive({
-          ...routing,
-          roomId: conversation.identity.roomId,
-          transactionId: `matrix-acp-${kind}-${generation}-${revision++}`,
-          body: rendered.body,
-          formattedBody: rendered.formattedBody as MatrixSafeHtml,
-          ...(targetEventId === undefined ? {} : { targetEventId }),
-        });
-      } finally {
-        this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
-        this.#resolveIdleWaiters();
-        this.#maybeFinalizeStop();
-      }
-    };
+    const queue = new ConversationPublication({
+      maximumPending:
+        this.#config.limits.maxActivityEventsPerMessage + this.#config.limits.maxQueuedTurnsPerConversation,
+      maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
+      routing,
+      onFailure: (reason) => this.#reportRenderingAbandoned("text", reason),
+      publish: async (kind, rendered) => {
+        if (this.#renderingBySession.get(sessionId)?.queue !== queue || conversation.sessionId !== sessionId) return;
+        this.#outboundOperations += 1;
+        try {
+          return await this.#delivery.sendLive({
+            ...routing,
+            roomId: conversation.identity.roomId,
+            transactionId: `matrix-acp-${kind}-${generation}-${revision++}`,
+            body: rendered.body,
+            formattedBody: rendered.formattedBody as MatrixSafeHtml,
+            ...(rendered.targetEventId === undefined ? {} : { targetEventId: rendered.targetEventId }),
+          });
+        } finally {
+          this.#outboundOperations = Math.max(0, this.#outboundOperations - 1);
+          this.#resolveIdleWaiters();
+          this.#maybeFinalizeStop();
+        }
+      },
+    });
     const output = new SessionOutput({
       settings: this.#config.matrix,
       maxOutputBytes: this.#config.limits.maxOutputBytes,
@@ -1256,7 +1250,6 @@ export class BridgeCoordinator {
       queue,
       routing,
       clock: this.#clock,
-      publish: (kind, publication) => publish(kind, publication, publication.targetEventId),
       onAbandoned: (reason) => {
         this.#reportRenderingAbandoned("activity", reason);
         if (reason === "capacity") queue.stop();

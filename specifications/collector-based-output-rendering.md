@@ -1,7 +1,7 @@
 +++
 status = "final"
 created = 2026-10-17
-last_update = 2026-10-17
+last_update = 2026-10-18
 +++
 
 # Collector-based output rendering
@@ -9,9 +9,9 @@ last_update = 2026-10-17
 ## Purpose
 
 Give streamed messages and thoughts the same accumulation and flush behavior,
-keep tool/card state separate from presentation, and make the Matrix sender the
-sole owner of logical-ID-to-Matrix-event mappings. This design is implemented on
-the PR #28 feature branch.
+keep tool/card state separate from presentation, and make ConversationPublication
+the sole owner of queued content and logical-ID-to-Matrix-event mappings. This
+design is implemented on the PR #28 feature branch.
 
 Chad's Agent
 
@@ -36,7 +36,7 @@ remain sequential under the existing adapter contract.
 - Share text accumulation and publication scheduling between messages and thoughts.
 - Accept interleaved thought, message and concurrent tool updates without losing identity.
 - Preserve activity grouping, collapse, late tool updates and bounded resource use.
-- Carry logical IDs through rendering; keep Matrix event IDs only in the sender.
+- Carry logical IDs through rendering; keep Matrix event IDs only in ConversationPublication.
 - Separate progress publication from explicit identity retirement.
 
 ## Non-goals
@@ -49,10 +49,10 @@ remain sequential under the existing adapter contract.
 
 ## Design overview
 
-![Implemented collectors, shared Markdown rendering, activity composition and sender-owned identity](collector-based-output-rendering.svg)
+![Implemented collectors, shared Markdown rendering, activity composition and publication-owned identity](collector-based-output-rendering.svg)
 
 The diagram describes the implementation. Collectors
-hold domain state, renderers produce safe plain-text/HTML payloads, and the sender
+hold domain state, renderers produce safe plain-text/HTML payloads, and the publisher
 owns publication identity. Each emitter subscription has its own ID namespace.
 
 ## Specification
@@ -206,7 +206,7 @@ measurement must include the final card wrappers and Matrix edit/thread envelope
 Output caps and explicit truncation remain enforced. Empty unchanged content must
 not produce duplicate edits or empty placeholder originals.
 
-### Emitter protocol and Matrix sender
+### Emitter protocol and ConversationPublication
 
 Each rendered-output emitter must expose an ordered stream with these conceptual
 records; concrete type/function names are implementation choices:
@@ -219,46 +219,65 @@ finish(id)               # no further content for this ID on this emitter
 These are the only two downstream operations. A snapshot describes the cumulative
 payload of `flush`, not an additional method. Collectors attach their accumulated
 content when emitting a flush; renderers preserve the operation and ID while
-converting its payload. The sender receives rendered content, not a bare request
+converting its payload. The publisher receives rendered content, not a bare request
 to flush state it does not own. On receiving finish, it drains prior flushes and
 releases the mapping; it does not reconstruct or accumulate content.
 
-The Matrix sender must scope mappings to each emitter subscription, not a global
+ConversationPublication must scope mappings to each emitter subscription, not a global
 raw-ID map or a required message/thought discriminator. The subscription binds the
 authorized room/thread and live session generation. Equal IDs on different
 emitters must remain isolated. The message emitter normally has one current ID;
 the card emitter can have multiple IDs still live because older tools/thoughts
 can receive updates.
 
-For each live ID the sender must retain the Matrix original event ID for each
+For each live ID the publisher must retain the Matrix original event ID for each
 continuation part. First publication sends originals; later snapshots edit those
 originals, not the event IDs of previous replacement events. Continuation
 repacking must reuse mappings and clear surplus published parts without creating
 empty originals, as in the existing renderer.
 
-A new ID may rotate a producer's current identity, but the sender must not infer
+A new ID may rotate a producer's current identity, but the publisher must not infer
 that every preceding ID is finished. In particular, a newer card does not retire
 an older card awaiting tool completion. The producer explicitly emits `finish`
 when it knows the ID is closed.
 
 `finish(id)` must be ordered after that ID's final snapshot and any required
-expanded/collapse publication. The sender must release its mapping only after
+expanded/collapse publication. The publisher must release its mapping only after
 those sends/edits finish successfully or an explicit delivery failure is handled.
 Finish is not itself a Matrix event. It must not be coalesced away, overtake a
 final snapshot, or free the mapping while a send is in flight. An emitter must
 not reuse an ID after finishing it during that subscription's lifetime; enforcing
 this must not require an unbounded tombstone/history set.
 
-Use the existing bounded per-conversation publication queue and MatrixDelivery
-retry/serialization policy. Pending snapshots may coalesce by emitter and ID,
-but must preserve identity order and required presentation transitions. Scheduling
+ConversationPublication must expose exactly two bound sinks, `messages` and `cards`,
+for the normal session emitters. Each sink exposes only `flush(id, renderedParts)`
+and `finish(id)`; callers do not manage composite keys or register more emitters.
+The owner receives a fixed publish transport callback, routing, the encoded event
+budget, the existing pending-record capacity and a failure callback at composition.
+The bridge callback retains session-generation guards and outbound accounting.
+MatrixDelivery retains room serialization, retry ownership and SDK/encryption delivery.
+
+The bounded queue must contain explicit data: emitter, logical ID, live mapping
+state, cumulative rendered parts, a finish flag and an initial-view barrier flag.
+It must not store arbitrary async operation closures or expose a generic key-based
+operation replacement API. Resolve original versus replacement at delivery time,
+using the owner's original event IDs. Pending content may replace content for the
+same emitter/ID in place, while finish merges after that final content. A card's
+initial expanded record must stay separate from coalescible later edits. Retire
+only the explicitly finished emitter/ID after delivery; delivery failure or stop
+clears queued content and both namespaces, rejecting late callback results.
+
+Use the existing bounded per-conversation publication limit (pending records plus
+at most one in flight) and MatrixDelivery retry/serialization policy. Pending
+snapshots may coalesce by emitter and ID, but must preserve identity order and
+required presentation transitions. Scheduling
 must not hold the ACP listener waiting for network delivery or let one collector's
 unbounded drain loop bypass pacing and starve other output.
 
 ### Resource, failure and restart behavior
 
 Collectors retain bounded current text, unfinished tools and cards still eligible
-for updates. Sender mappings exist only for live/queued/in-flight output; they are
+for updates. Publisher mappings exist only for live/queued/in-flight output; they are
 not a history cache. Retain state through final delivery or transfer ownership of
 final payloads into the bounded queue before releasing source data. Apply existing
 session/activity/output/queue limits and observable backpressure; capacity failure
@@ -267,7 +286,7 @@ must not masquerade as successful output.
 Reset, deletion, fatal connection failure and shutdown must cancel timers, stop
 subscriptions and reject obsolete callbacks. Dispose of unfinished output under
 the existing abandonment policy, not as successful `finish`. Release collector
-and sender state after cleanup; previously sent Matrix events remain untouched.
+and publisher state after cleanup; previously sent Matrix events remain untouched.
 Diagnostics must exclude private text, tool arguments/results and credentials.
 
 Restart preserves only existing durable routing. Do not persist output snapshots,
@@ -294,7 +313,7 @@ card, or create a new thought group. There is no ID-less compatibility collector
   indication and status-only changes remain observable.
 - A card with a pending thought flush cannot finish early when its last tool ends.
 - An old card continues updating after rollover; it finishes only after its last
-  tool/thought and final collapse. Sender mappings then release, without historical growth.
+  tool/thought and final collapse. Publisher mappings then release, without historical growth.
 - Equal IDs across emitter subscriptions stay isolated; generated card IDs remain
   stable across updates. A newer card does not discard older live mappings.
 - First publication fixes placement; interleaved updates edit existing events
@@ -325,7 +344,7 @@ configuration rename.
 Sharing text collection and flush scheduling is required; a universal collector
 for text, tool patches and card layout is not. Pure rendering helpers should be
 reused without moving card state into renderers or Matrix identity back into
-collectors. Explicit finish makes bounded sender retirement possible without
+collectors. Explicit finish makes bounded publication retirement possible without
 guessing from unrelated output.
 
 ## References

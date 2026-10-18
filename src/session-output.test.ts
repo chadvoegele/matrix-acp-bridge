@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { AcpUpdate } from "./acp-activity-update.js";
 import { ConversationPublication } from "./conversation-publication.js";
-import type { MatrixOutputPublication } from "./matrix-output-sender.js";
+import type { MatrixOutputPublication } from "./conversation-publication.js";
 import { SessionOutput } from "./session-output.js";
 import { FakeClock } from "./test-support/fake-clock.js";
 
@@ -11,9 +11,18 @@ function createFixture(maxRetainedEvents = 20) {
   const clock = new FakeClock();
   const calls: (MatrixOutputPublication & { kind: string })[] = [];
   const failures: string[] = [];
-  const queue = new ConversationPublication(20, (reason) => failures.push(reason));
   // eslint-disable-next-line unicorn/consistent-function-scoping -- Fixture-specific transport gate.
   let send: () => Promise<void> = () => Promise.resolve();
+  const queue = new ConversationPublication({
+    maximumPending: 20,
+    maxMatrixMessageBytes: 4096,
+    onFailure: (reason) => failures.push(reason),
+    publish: async (kind, publication) => {
+      calls.push({ kind, ...publication });
+      await send();
+      return publication.targetEventId ?? `$event-${calls.length}`;
+    },
+  });
   const output = new SessionOutput({
     settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
     maxOutputBytes: 16_384,
@@ -22,11 +31,6 @@ function createFixture(maxRetainedEvents = 20) {
     maxRetainedEvents,
     queue,
     clock,
-    publish: async (kind, publication) => {
-      calls.push({ kind, ...publication });
-      await send();
-      return publication.targetEventId ?? `$event-${calls.length}`;
-    },
     onAbandoned: (reason) => {
       failures.push(reason);
       if (reason === "capacity") queue.stop();
@@ -135,14 +139,16 @@ void test("pending thought prevents card finish when its last tool ends", async 
 void test("parallel old cards receive final updates and expanded/collapse barriers survive blocked sends", async () => {
   const f = createFixture();
   let release!: () => void;
-  f.queue.enqueue(
-    {},
+  f.setSend(
     () =>
       new Promise<void>((resolve) => {
         release = resolve;
       }),
   );
+  f.text("blocker", "blocking");
+  f.clock.advanceBy(100);
   await Promise.resolve();
+  f.setSend(() => Promise.resolve());
   f.tool("first");
   f.text("a", "one");
   f.tool("second");

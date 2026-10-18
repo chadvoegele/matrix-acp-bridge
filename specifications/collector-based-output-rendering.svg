@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1400" viewBox="0 0 1280 1400" role="img" aria-labelledby="title description">
   <title id="title">Implemented collector-based rendering: collection, rendering and Matrix identity</title>
-  <desc id="description">Chad's Agent. Invalid message/thought IDs are dropped before collection, with one content-free warning each at intake. One ACP dispatcher feeds separate message and thought instances of a shared text collector, plus a multi-ID tool collector. Thoughts and tools feed the activity-card collector, which retains older cards for late updates and emits stable card IDs. Message text uses a shared safe Markdown renderer; an activity renderer uses that same converter for thought bodies and composes tool formatting and trusted collapsible HTML. Rendered snapshots and finish signals reach a Matrix sender with emitter-local ID mappings and the existing bounded publication queue. The sender reuses MatrixDelivery and releases mappings after final delivery.</desc>
+  <desc id="description">Chad's Agent. Invalid message/thought IDs are dropped before collection, with one content-free warning each at intake. One ACP dispatcher feeds separate message and thought instances of a shared text collector, plus a multi-ID tool collector. Thoughts and tools feed the activity-card collector, which retains older cards for late updates and emits stable card IDs. Message text uses a shared safe Markdown renderer; an activity renderer uses that same converter for thought bodies and composes tool formatting and trusted collapsible HTML. Rendered snapshots and finish signals reach the fixed messages and cards sinks of ConversationPublication. It owns a bounded explicit-content queue, preserves the initial expanded card view, resolves emitter-local original and continuation event IDs at delivery, and releases mappings after final delivery. MatrixDelivery retains transport retries and encryption.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#334155"/></marker>
     <style>
@@ -21,7 +21,7 @@
   <rect width="1280" height="1400" fill="#ffffff"/>
   <text x="40" y="48" class="title">Collect state, render snapshots, send by logical ID</text>
   <text x="40" y="82" class="subtitle">Implemented in PR #28. First publication fixes placement; later updates edit in place.</text>
-  <rect x="40" y="108" width="21" height="21" rx="4" class="proposed"/><text x="71" y="125" class="small">Collector / renderer / sender</text>
+  <rect x="40" y="108" width="21" height="21" rx="4" class="proposed"/><text x="71" y="125" class="small">Collector / renderer / publisher</text>
   <rect x="450" y="108" width="21" height="21" rx="4" class="reused"/><text x="481" y="125" class="small">Existing boundary reused</text>
   <path d="M 790 119 H 835" class="flow"/><text x="850" y="125" class="small">Data / lifecycle</text>
   <path d="M 1040 119 H 1085" class="uses"/><text x="1100" y="125" class="small">Uses helper</text>
@@ -105,9 +105,9 @@
   <text x="1015" y="962" text-anchor="middle" class="small">Same protocol; separate emitter</text>
 
   <rect x="380" y="1030" width="520" height="120" rx="12" class="proposed"/>
-  <text x="640" y="1063" text-anchor="middle" class="name">MatrixOutputSender × 2</text>
-  <text x="640" y="1095" text-anchor="middle" class="body">Per-emitter: live logical IDs → original event IDs.</text>
-  <text x="640" y="1123" text-anchor="middle" class="body">ConversationPublication → delivery → release ID.</text>
+  <text x="640" y="1063" text-anchor="middle" class="name">ConversationPublication</text>
+  <text x="640" y="1095" text-anchor="middle" class="body">messages / cards: isolated IDs → original events.</text>
+  <text x="640" y="1123" text-anchor="middle" class="body">Content queue · first-view barrier · final retirement.</text>
   <path d="M 640 1150 V 1220" class="flow"/>
   <rect x="450" y="1168" width="380" height="30" fill="#ffffff"/>
   <text x="640" y="1189" text-anchor="middle" class="code">sendLive(MatrixHtmlMessage)</text>

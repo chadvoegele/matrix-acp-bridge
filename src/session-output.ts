@@ -6,7 +6,6 @@ import type { Clock } from "./clock.js";
 import type { AgentTextSettings } from "./config.js";
 import type { ConversationPublication } from "./conversation-publication.js";
 import { matrixHtmlEditContentBytes, type MatrixHtmlBody, type MatrixOutputRouting } from "./matrix-message-content.js";
-import { MatrixOutputSender, type MatrixOutputPublication } from "./matrix-output-sender.js";
 import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
 import { renderOutput } from "./output-sink.js";
 import { TextCollector } from "./text-collector.js";
@@ -21,7 +20,6 @@ interface SessionOutputOptions {
   readonly queue: ConversationPublication;
   readonly routing?: MatrixOutputRouting;
   readonly clock?: Clock;
-  readonly publish: (kind: "text" | "activity", publication: MatrixOutputPublication) => Promise<string | undefined>;
   readonly onAbandoned: (reason: "capacity" | "lifecycle") => void;
 }
 
@@ -43,15 +41,6 @@ export class SessionOutput {
 
   constructor(options: SessionOutputOptions) {
     const measure = (rendered: MatrixHtmlBody) => matrixHtmlEditContentBytes({ ...rendered, ...options.routing });
-    const messageSender = new MatrixOutputSender({
-      ...options,
-      publish: (publication) => options.publish("text", publication),
-    });
-    const cardSender = new MatrixOutputSender({
-      ...options,
-      preserveFirstFlush: true,
-      publish: (publication) => options.publish("activity", publication),
-    });
     this.#cards = new ActivityCardCollector({
       limits: {
         maxEvents: options.maxEventsPerCard,
@@ -61,7 +50,7 @@ export class SessionOutput {
       maxRetainedEvents: options.maxRetainedEvents,
       onCapacity: () => options.onAbandoned("capacity"),
       sink: renderOutput(
-        cardSender,
+        options.queue.cards,
         (card) => [renderActivityCard(card, options.maxMatrixMessageBytes, measure)],
         () => options.queue.fail("delivery"),
       ),
@@ -69,7 +58,7 @@ export class SessionOutput {
     this.#messages = new TextCollector({
       ...options,
       sink: renderOutput(
-        messageSender,
+        options.queue.messages,
         (content) => renderMatrixTextChunks(content.text, options.maxMatrixMessageBytes, measure),
         () => options.queue.fail("delivery"),
       ),

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { TextCollector } from "./text-collector.js";
-import { MatrixOutputSender, type MatrixOutputPublication as AgentTextPublication } from "./matrix-output-sender.js";
+import type { MatrixOutputPublication as AgentTextPublication } from "./conversation-publication.js";
 import { renderOutput } from "./output-sink.js";
 import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
 import { matrixHtmlEditContentBytes } from "./matrix-message-content.js";
@@ -21,13 +21,11 @@ function createTextPublication(options: {
   queue: ConversationPublication;
   routing?: MatrixOutputRouting;
   clock?: Clock;
-  publish: (publication: AgentTextPublication) => Promise<string | undefined>;
 }) {
-  const sender = new MatrixOutputSender(options);
   const collector = new TextCollector({
     ...options,
     sink: renderOutput(
-      sender,
+      options.queue.messages,
       (content) =>
         renderMatrixTextChunks(content.text, options.maxMatrixMessageBytes, (rendered) =>
           matrixHtmlEditContentBytes({ ...rendered, ...options.routing }),
@@ -50,7 +48,17 @@ function createFixture(
   const clock = new FakeClock();
   const calls: AgentTextPublication[] = [];
   const failures: PublicationFailure[] = [];
-  const queue = new ConversationPublication(options.capacity ?? 4, (reason) => failures.push(reason));
+  let send: () => Promise<string | undefined> = async () => `$event-${calls.length}`;
+  const queue = new ConversationPublication({
+    maximumPending: options.capacity ?? 4,
+    maxMatrixMessageBytes: options.maxMatrixMessageBytes ?? 2048,
+    ...(options.routing === undefined ? {} : { routing: options.routing }),
+    onFailure: (reason) => failures.push(reason),
+    publish: async (kind, publication) => {
+      if (kind === "text") calls.push(publication);
+      return send();
+    },
+  });
   const buffer = createTextPublication({
     settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
     maxOutputBytes: options.maxOutputBytes ?? 16_384,
@@ -58,12 +66,28 @@ function createFixture(
     queue,
     clock,
     ...(options.routing === undefined ? {} : { routing: options.routing }),
-    publish: async (publication) => {
-      calls.push(publication);
-      return publication.targetEventId ?? `$event-${calls.length}`;
-    },
   });
-  return { clock, calls, failures, queue, buffer };
+  return {
+    clock,
+    calls,
+    failures,
+    queue,
+    buffer,
+    setSend: (value: typeof send) => {
+      send = value;
+    },
+    blockTransport: async () => {
+      const gate = createGate();
+      send = async () => {
+        await gate.promise;
+        return "$blocker";
+      };
+      queue.cards.flush("blocker", [{ body: "blocking", formattedBody: "<p>blocking</p>" }]);
+      await Promise.resolve();
+      send = async () => `$event-${calls.length}`;
+      return gate;
+    },
+  };
 }
 
 function createGate() {
@@ -134,9 +158,7 @@ void test("transitions and activity preserve order; activity does not retire the
   const { buffer, queue, calls } = createFixture();
   buffer.append("a", "before");
   buffer.flush();
-  queue.enqueue({}, async () => {
-    assert.equal(calls.at(-1)?.body, "before");
-  });
+  queue.cards.flush("tool", [{ body: "activity", formattedBody: "<p>activity</p>" }]);
   await queue.waitForIdle();
   buffer.append("a", " after tool");
   buffer.append("b", "next");
@@ -155,9 +177,8 @@ void test("transitions and activity preserve order; activity does not retire the
 });
 
 void test("slow sends coalesce edits, including final text before an identity transition", async () => {
-  const { buffer, queue, calls } = createFixture();
-  const blocked = createGate();
-  queue.enqueue({}, () => blocked.promise);
+  const { buffer, queue, calls, blockTransport } = createFixture();
+  const blocked = await blockTransport();
   buffer.append("a", "first");
   buffer.flush();
   buffer.append("a", " second");
@@ -172,20 +193,15 @@ void test("slow sends coalesce edits, including final text before an identity tr
 
   const sending = createGate();
   const started = createGate();
-  const slowCalls: AgentTextPublication[] = [];
-  const slow = createTextPublication({
-    settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
-    maxOutputBytes: 4096,
-    maxMatrixMessageBytes: 2048,
-    queue,
-    publish: async (publication) => {
-      slowCalls.push(publication);
-      if (slowCalls.length === 1) {
-        started.release();
-        await sending.promise;
-      }
-      return publication.targetEventId ?? `$slow-${slowCalls.length}`;
-    },
+  const slowFixture = createFixture();
+  const slowCalls = slowFixture.calls;
+  const slow = slowFixture.buffer;
+  slowFixture.setSend(async () => {
+    if (slowCalls.length === 1) {
+      started.release();
+      await sending.promise;
+    }
+    return `$slow-${slowCalls.length}`;
   });
   slow.append("a", "one");
   slow.flush();
@@ -194,7 +210,7 @@ void test("slow sends coalesce edits, including final text before an identity tr
   slow.append("b", "three");
   slow.flush();
   sending.release();
-  await queue.waitForIdle();
+  await slowFixture.queue.waitForIdle();
   assert.deepEqual(
     slowCalls.map(({ body }) => body),
     ["one", "one two", "three"],
@@ -204,10 +220,8 @@ void test("slow sends coalesce edits, including final text before an identity tr
 });
 
 void test("bounded pending work fails explicitly and cancels timers instead of retaining more identities", async () => {
-  const { buffer, queue, clock, calls, failures } = createFixture({ capacity: 2 });
-  const blocked = createGate();
-  queue.enqueue({}, () => blocked.promise);
-  await Promise.resolve();
+  const { buffer, queue, clock, calls, failures, blockTransport } = createFixture({ capacity: 2 });
+  const blocked = await blockTransport();
   buffer.append("a", "a");
   buffer.append("b", "b");
   buffer.append("c", "c");
@@ -260,8 +274,7 @@ void test("safe Markdown is rerendered incrementally and continuation events reu
 void test("reset invalidates queued callbacks and independent sessions keep identical IDs separate", async () => {
   const first = createFixture();
   const second = createFixture();
-  const blocked = createGate();
-  first.queue.enqueue({}, () => blocked.promise);
+  const blocked = await first.blockTransport();
   first.buffer.append("same", "discard");
   first.buffer.flush();
   first.buffer.append("same", " timer");
@@ -276,17 +289,8 @@ void test("reset invalidates queued callbacks and independent sessions keep iden
 });
 
 void test("unrecoverable publication is observable and clears subsequent queued work", async () => {
-  const failures: PublicationFailure[] = [];
-  const queue = new ConversationPublication(4, (reason) => failures.push(reason));
-  const clock = new FakeClock();
-  const buffer = createTextPublication({
-    settings: { agentTextFlushBytes: 256, agentTextQuietMs: 100, agentTextMaxIntervalMs: 250 },
-    maxOutputBytes: 1024,
-    maxMatrixMessageBytes: 2048,
-    queue,
-    clock,
-    publish: async (): Promise<undefined> => {},
-  });
+  const { buffer, queue, clock, failures, setSend } = createFixture();
+  setSend(async (): Promise<undefined> => {});
   buffer.append("a", "failed");
   buffer.flush();
   buffer.append("a", "pending timer");
