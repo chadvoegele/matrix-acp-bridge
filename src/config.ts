@@ -325,10 +325,14 @@ export async function acquireStateLock(stateDir: string): Promise<StateLock> {
       },
     );
 
-    // The child owns its duplicate of the lock descriptor.  Closing this
-    // descriptor does not release the child's flock.
-    await lockFile.close();
-    return await waitForLock(child, lockPath);
+    // Register the child's listeners before yielding: a contending helper can
+    // exit while an asynchronous close is pending, and exit events are not replayed.
+    try {
+      return await waitForLock(child, lockPath);
+    } finally {
+      // The child owns its duplicate; closing ours does not release its flock.
+      await closeFileQuietly(lockFile);
+    }
   } catch (error) {
     await closeFileQuietly(lockFile);
     if (error instanceof ConfigurationError) {
