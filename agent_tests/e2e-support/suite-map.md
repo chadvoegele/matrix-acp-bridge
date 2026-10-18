@@ -4,6 +4,13 @@ Top-level `test_<name>.md` files describe behavior for humans; each has a matchi
 `test_<name>/` support folder. Shared transport, authentication, ownership, locks
 and cleanup helpers live in `e2e-support/`.
 
+Complete the [deployed Pi preflight](README.md#trusted-configuration-and-deployed-pi-preflight)
+before the full suite. Configured-agent normal, steering and real-activity runs
+use the actual `E2E_ACP_COMMAND`; activity, unified-rendering and outage scenarios
+substitute scripted peers that supply IDs. Scripted or automated/crypto passes
+cannot establish real Pi message/thought ID compatibility. Unified-rendering
+runners are documented [separately](../test_unified_rendering/README.md).
+
 | Behavior             | Support folder                                                    | Coverage boundary                                                                                                                                                        |
 | -------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Encrypted message    | [test_encrypted_message](../test_encrypted_message/README.md)     | Crypto bootstrap, real SAS, persistent device keys and encrypted wire events with no plaintext fallback; exchange/restart assertions are shared with plaintext.          |

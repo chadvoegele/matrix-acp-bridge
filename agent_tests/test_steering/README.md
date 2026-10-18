@@ -11,17 +11,22 @@ the shared live lock; manual sequences must hold it through cleanup.
 `live-matrix.mjs` is an opt-in live homeserver test. It launches the built bridge
 CLI and the environment's real ACP command through unchanged NDJSON taps. Use
 only the two documented test accounts and designated test rooms from the ignored
-root `.env`. Check that configuration privately before evaluating any credential
+canonical repository-root `.env`, including in linked worktrees. Follow the
+[deployed Pi preflight](../e2e-support/README.md#trusted-configuration-and-deployed-pi-preflight)
+before the aggregate run. Check configuration privately before evaluating credential
 lookups; retrieve approved test credentials from your secret manager. Never commit or print tokens,
 private Matrix identifiers, or raw wire traces.
 
-Build with `npm ci && npm run build`. Supply an exact pi-acp PR115 build through
-`E2E_ACP_COMMAND`, and an isolated scratch directory through `E2E_ACP_CWD`.
-Record the upstream revision and build digest. A production bridge build is used;
+Build with `npm ci && npm run build`. Supply the reviewed deployed build of Chad's
+Pi ACP fork with message/thought IDs through `E2E_ACP_COMMAND`, and an isolated
+scratch directory through `E2E_ACP_CWD`. Record source/build provenance and inspect
+actual message AND thought observations; a runner pass without thought chunks
+leaves thought-ID compatibility unverified. A production bridge build is used;
 the hosted bridge, Pi session daemon, and pi-web need no restart.
 
-Provision through the existing documented harnesses. Set a distinct ignored
-`STEERING_EVIDENCE_FILE` under `node_modules/` for each invocation. The runner
+Provision through the existing documented harnesses. Set a distinct private
+`STEERING_EVIDENCE_FILE` outside the repository and disposable worktrees for each
+invocation (replace the example `/private/evidence` paths below). The runner
 sets the temporary bridge config to default steering and the selected response
 mode. Existing startup-ready and sender initial-sync gates run before any input. A
 two-second baseline observation requires zero session creation/loading, prompts, or steering requests. Use
@@ -34,20 +39,20 @@ mode. Intentional initialized recovery uses the separate startup probe below.
 
 ```sh
 node agent_tests/test_unencrypted_message/provision.mjs
-STEERING_EVIDENCE_FILE=node_modules/room-wire.json \
+STEERING_EVIDENCE_FILE=/private/evidence/room-wire.json \
   node agent_tests/test_steering/live-matrix.mjs \
   agent_tests/test_unencrypted_message/environment.json plaintext room
 node agent_tests/test_unencrypted_message/cleanup.mjs
 
 node agent_tests/test_thread_sessions/plaintext-provision.mjs
-STEERING_EVIDENCE_FILE=node_modules/thread-wire.json \
+STEERING_EVIDENCE_FILE=/private/evidence/thread-wire.json \
   node agent_tests/test_steering/live-matrix.mjs \
   agent_tests/test_thread_sessions/plaintext-environment.json plaintext thread
 node agent_tests/test_thread_sessions/plaintext-cleanup.mjs
 
 node agent_tests/test_thread_sessions/encrypted-provision.mjs
 node agent_tests/test_thread_sessions/encrypted-verify-sas.mjs
-STEERING_EVIDENCE_FILE=node_modules/encrypted-thread-wire.json \
+STEERING_EVIDENCE_FILE=/private/evidence/encrypted-thread-wire.json \
   node agent_tests/test_steering/live-matrix.mjs \
   agent_tests/test_thread_sessions/encrypted-environment.json encrypted thread
 node agent_tests/test_thread_sessions/encrypted-cleanup.mjs

@@ -12,6 +12,81 @@ process-held lock across the entire sequence, including recovery. Do not set
 `E2E_LIVE_LOCK_HELD=1` unless the parent holds the lock. This flag lets a serial
 controller call shell entry points without taking its own lock twice.
 
+## Trusted configuration and deployed Pi preflight
+
+Run commands from the checkout being tested, but source credentials only from
+the trusted **canonical repository-root** ignored `.env`, never a worktree `.env`.
+For an ordinary checkout with linked worktrees,
+`git rev-parse --path-format=absolute --git-common-dir` identifies the canonical
+checkout's `.git` directory; its parent is the canonical root. Confirm that layout
+before sourcing. For a separate Git directory or other layout, use the operator's
+explicit trusted absolute environment path. A missing worktree `.env` says nothing
+about available credentials. Do not guess secret names, print configuration, or
+copy it into a worktree. See [environment settings](../.env.example).
+
+Complete these stages before the long all-tests run:
+
+1. **Identify the actual command and artifact.** `E2E_ACP_COMMAND` is a JSON argv
+   array and must reach the designated test deployment of
+   [Chad's Pi ACP fork](https://github.com/chadvoegele/pi-acp).
+   Use a reviewed revision containing
+   [`b3c4984bbfac7e480a4aa027630576f042c75971`](https://github.com/chadvoegele/pi-acp/commit/b3c4984bbfac7e480a4aa027630576f042c75971)
+   ([PR #6](https://github.com/chadvoegele/pi-acp/pull/6), merged October 16, 2026),
+   which supplies assistant message and thought IDs. Record privately the exact
+   resolved source commit, build inputs, running container/image identity and
+   installed adapter bundle digest, linking the running artifact to that build.
+   A Compose URL ending in the fork's `#main` does not rebuild an existing image;
+   package version `0.0.34` alone cannot distinguish builds with and without IDs.
+   Unknown source provenance leaves this stage unverified.
+2. **Update only the adapter when needed.** An authorized deployment owner must
+   rebuild/install from the reviewed fork revision and verify the resulting
+   running artifact, rather than trusting a cached build or version label. Confirm
+   the explicit remote Docker host/context and target test service before changes;
+   a local Docker invocation may address a different host. Coordinate under the
+   shared live lock with no active test clients. Preserve original ACP sessions,
+   caches, Matrix device identities, crypto snapshots and completed-event ledgers;
+   retain session IDs and the original ACP command for recovery/cleanup. Restart
+   only the targeted adapter if required, never unrelated services. Deployment
+   requires its own authorization; editing these instructions grants none.
+3. **Observe the real protocol and Matrix delivery.** After `npm ci && npm run build`,
+   source the trusted configuration and use the existing selected real steering
+   case (the runner holds the shared lock through recovery and cleanup):
+
+   ```sh
+   node agent_tests/e2e-support/live-all.mjs plaintext-room-steering
+   ```
+
+   Set `E2E_LIVE_REPORT_DIR` to a new private evidence directory outside worktrees.
+   Inspect that case's `wire.json`, `suite.log` and `result.json`; retain raw frames
+   privately. [Steering](../test_steering/README.md) documents the other profiles
+   and manual runner. Require meaningful, non-notice `agent_message_chunk` **and**
+   `agent_thought_chunk` observations, each with a usable string `messageId`
+   (not empty or whitespace/control-only). Correlate the actual response's ID
+   across text/thought alternation and tool announcements, same-ID continuations
+   and distinct sequential responses; verify corresponding Matrix originals,
+   replacements and conversation routing. Real post-prompt output, when required,
+   must also retain its response identity and route correctly. Do not assume a
+   particular model/provider emits thoughts or unsolicited output: missing
+   observations leave that coverage unverified. A successful runner checks IDs
+   on observed chunks but does not prove that thoughts or every boundary occurred.
+   Artifact metadata or ID-related bundle strings alone are not live proof.
+
+   ID-less assistant text and thoughts are intentionally dropped with content-free
+   `agent-text-missing-id` / `agent-thought-missing-id` warnings. Counts of rejected
+   incoming ACP chunks are not delivered Matrix messages. Do not enable a no-ID
+   fallback, suppress assertions, clear profiles/ledgers, replace devices/crypto,
+   or bypass a rate-limit retry boundary to obtain a pass. For additional real
+   tool metadata, use the existing [real-activity runner and scratch cleanup](../test_unencrypted_message/harness.md#verbose-acp-activity-over-plaintext-matrix);
+   its metadata result alone does not establish thought/boundary coverage.
+
+4. **Run all remaining gates on the frozen bridge revision and adapter build.**
+   Only after provenance and real protocol evidence are complete, run the
+   automated gate, full aggregate and required unified/outage/profile scenarios.
+   The activity, unified and outage peers supply IDs themselves. Their live Matrix
+   passes and automated fixtures, crypto bootstrap or SAS passes cannot certify
+   actual configured Pi compatibility. Keep their results separate from real
+   fork observations; see the [suite map](suite-map.md).
+
 ## Persistent cache (default)
 
 With no explicit authentication settings, `cache` mode stores profiles beneath
@@ -48,8 +123,8 @@ remove an interrupted bootstrap lock after confirming its process has stopped.
 
 ## Separate setup and functional reports
 
-After `npm ci && npm run check`, source the trusted private test configuration and
-run the aggregate serial entry point:
+After the deployed Pi preflight above and `npm ci && npm run check`, run the
+aggregate serial entry point with the trusted private configuration:
 
 ```sh
 node agent_tests/e2e-support/live-all.mjs
@@ -79,6 +154,14 @@ and crypto remain. Failed functional cases require another warm-up before reuse.
 Per-case results are durable even if a later case fails. A prior historical pass
 never counts as verification of the final code. The existing shell entry points
 remain supported for individual scenarios and report their setup errors directly.
+
+Recovery is part of setup. If cached-profile recovery fails before the strict
+scenario, record setup failed/blocked and function skipped, even if provisioning,
+crypto or embedded automated checks succeeded. Successful cleanup is independent
+and does not turn missing functional coverage into a pass. Preserve evidence and
+recover the original profile under the lock; do not infer that an adapter update
+diagnoses or fixes a recovery failure. Merge requires all applicable setup,
+functional, real-adapter compatibility and cleanup gates to complete successfully.
 
 The [final persistent-cache verification report](cache-live-verification-report.md)
 records the tested revision, separate fresh setup, functional results and cleanup.
