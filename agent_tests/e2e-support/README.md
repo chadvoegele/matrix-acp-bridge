@@ -78,6 +78,12 @@ Complete these stages before the long all-tests run:
    on observed chunks but does not prove that thoughts or every boundary occurred.
    Artifact metadata or ID-related bundle strings alone are not live proof.
 
+   The observer classifies one exact message chunk matching the nonempty startup
+   marker advertised by a correlated successful `session/new` response for that
+   session as protocol prelude, as production does. This single-use classification
+   also applies if the prelude races with the first prompt; it never exempts
+   thoughts or other ID-less assistant output.
+
    ID-less assistant text and thoughts are intentionally dropped with content-free
    `agent-text-missing-id` / `agent-thought-missing-id` warnings. Counts of rejected
    incoming ACP chunks are not delivered Matrix messages. Do not enable a no-ID

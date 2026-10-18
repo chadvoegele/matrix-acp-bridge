@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isUsableMessageId } from "../../dist/acp-activity-update.js";
+import { isRecord } from "../../dist/object-validation.js";
 
 export function assertSteeringBaseline(frames) {
   assert.equal(
@@ -66,7 +67,29 @@ export function selectEventsSinceInput(events, input) {
 
 export function collectAgentMessages(frames) {
   const sessions = new Map();
+  const pendingNewSessions = new Set();
+  const startupInfoBySession = new Map();
   for (const { direction, frame } of frames) {
+    if (
+      direction === "out" &&
+      frame.method === "session/new" &&
+      (typeof frame.id === "string" || Number.isFinite(frame.id))
+    ) {
+      pendingNewSessions.add(frame.id);
+    }
+    if (direction === "in" && frame.method === undefined && pendingNewSessions.delete(frame.id)) {
+      const result = frame.result;
+      if (
+        frame.error === undefined &&
+        isRecord(result) &&
+        typeof result.sessionId === "string" &&
+        isRecord(result._meta) &&
+        isRecord(result._meta.piAcp)
+      ) {
+        const text = result._meta.piAcp.startupInfo;
+        if (typeof text === "string" && text.length > 0) startupInfoBySession.set(result.sessionId, text);
+      }
+    }
     const update = frame.params?.update;
     if (
       direction !== "in" ||
@@ -77,9 +100,13 @@ export function collectAgentMessages(frames) {
       continue;
     if (!["agent_message_chunk", "agent_thought_chunk"].includes(update.sessionUpdate)) continue;
     if (update._meta?.piAcp?.notify && typeof update._meta.piAcp.notify === "object") continue;
+    const sessionId = frame.params.sessionId;
+    if (update.sessionUpdate === "agent_message_chunk" && startupInfoBySession.get(sessionId) === update.content.text) {
+      startupInfoBySession.delete(sessionId);
+      continue;
+    }
     assert.ok(isUsableMessageId(update.messageId), "real agent emitted text or thought without a usable response ID");
     if (update.sessionUpdate === "agent_thought_chunk") continue;
-    const sessionId = frame.params.sessionId;
     const messages = sessions.get(sessionId) ?? new Map();
     sessions.set(sessionId, messages);
     const message = messages.get(update.messageId) ?? { sessionId, messageId: update.messageId, text: "" };

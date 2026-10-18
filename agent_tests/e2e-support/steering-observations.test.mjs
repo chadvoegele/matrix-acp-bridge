@@ -10,6 +10,30 @@ import {
   effectiveMatrixReplies,
 } from "./steering-observations.mjs";
 
+function createAgentChunk(sessionId, sessionUpdate, messageId, text) {
+  return {
+    direction: "in",
+    frame: {
+      method: "session/update",
+      params: { sessionId, update: { sessionUpdate, messageId, content: { type: "text", text } } },
+    },
+  };
+}
+
+function createSessionFrames(sessionId = "first", startupInfo = "Synthetic startup\n", id = 1) {
+  return [
+    { direction: "out", frame: { id, method: "session/new", params: { cwd: "/synthetic", mcpServers: [] } } },
+    { direction: "in", frame: { id, result: { sessionId, _meta: { piAcp: { startupInfo } } } } },
+  ];
+}
+
+function createPromptFrames() {
+  return [
+    { direction: "out", frame: { id: 2, method: "session/prompt", params: { sessionId: "first", prompt: [] } } },
+    { direction: "in", frame: { id: 2, result: { stopReason: "end_turn" } } },
+  ];
+}
+
 test("startup guard rejects session creation even before a prompt starts", () => {
   assert.throws(() => assertSteeringBaseline([{ direction: "out", frame: { method: "session/new" } }]));
   assertSteeringBaseline([{ direction: "out", frame: { method: "initialize" } }]);
@@ -117,6 +141,267 @@ test("steering observations accumulate response IDs across tools, thoughts, prom
     for (const id of [undefined, "", "\u0000 ", 4])
       assert.throws(() => collectAgentMessages([chunk("first", kind, id, "private")]), /usable response ID/u);
   }
+});
+
+for (const promptFrames of [[], createPromptFrames().slice(0, 1), createPromptFrames()]) {
+  test(`steering consumes exact advertised startup once with ${promptFrames.length} prompt frames`, () => {
+    const startup = createAgentChunk("first", "agent_message_chunk", undefined, "Synthetic startup\n");
+    const frames = [
+      ...createSessionFrames(),
+      ...promptFrames,
+      startup,
+      createAgentChunk("first", "agent_message_chunk", "answer", "model output"),
+    ];
+    assert.deepEqual(collectAgentMessages(frames), [{ sessionId: "first", messageId: "answer", text: "model output" }]);
+    assert.throws(() => collectAgentMessages([...frames, startup]), /usable response ID/u);
+    assert.throws(() => collectAgentMessages([...frames, createSessionFrames()[1], startup]), /usable response ID/u);
+    assert.deepEqual(
+      collectAgentMessages([
+        ...frames,
+        createAgentChunk("first", "agent_message_chunk", "later", "Synthetic startup\n"),
+      ]),
+      [
+        { sessionId: "first", messageId: "answer", text: "model output" },
+        { sessionId: "first", messageId: "later", text: "Synthetic startup\n" },
+      ],
+    );
+  });
+}
+
+for (const text of [
+  "Synthetic startup",
+  "Synthetic startup\nextra",
+  " Synthetic startup\n",
+  "Synthetic ",
+  "startup\n",
+]) {
+  test(`steering rejects a startup mismatch ${JSON.stringify(text)}`, () => {
+    assert.throws(
+      () =>
+        collectAgentMessages([
+          ...createSessionFrames(),
+          createAgentChunk("first", "agent_message_chunk", undefined, text),
+        ]),
+      /usable response ID/u,
+    );
+  });
+}
+
+test("steering binds startup markers to sessions and correlates interleaved numeric and string RPC IDs", () => {
+  const first = createSessionFrames("first", "shared startup", 1);
+  const second = createSessionFrames("second", "shared startup", "1");
+  const advertised = [first[0], second[0], second[1], first[1]];
+  assert.deepEqual(
+    collectAgentMessages([
+      ...advertised,
+      createAgentChunk("second", "agent_message_chunk", undefined, "shared startup"),
+      createAgentChunk("first", "agent_message_chunk", undefined, "shared startup"),
+    ]),
+    [],
+  );
+  for (const sessionId of ["second", "unknown"]) {
+    assert.throws(
+      () =>
+        collectAgentMessages([
+          ...first,
+          createAgentChunk(sessionId, "agent_message_chunk", undefined, "shared startup"),
+        ]),
+      /usable response ID/u,
+    );
+  }
+  assert.throws(
+    () =>
+      collectAgentMessages([
+        ...advertised,
+        createAgentChunk("first", "agent_message_chunk", undefined, "shared startup"),
+        createAgentChunk("first", "agent_message_chunk", undefined, "shared startup"),
+      ]),
+    /usable response ID/u,
+  );
+});
+
+const [newRequest, newResponse] = createSessionFrames();
+const unrelatedStartupFrames = [
+  ["unmatched reply", [newResponse]],
+  ["reply preceding request", [newResponse, newRequest]],
+  ["reply with different ID", [newRequest, { ...newResponse, frame: { ...newResponse.frame, id: 9 } }]],
+  [
+    "reply with string instead of numeric ID",
+    [newRequest, { ...newResponse, frame: { ...newResponse.frame, id: "1" } }],
+  ],
+  ["outbound reply", [newRequest, { ...newResponse, direction: "out" }]],
+  ["inbound request", [{ ...newRequest, direction: "in" }, newResponse]],
+  [
+    "notification carrying response fields",
+    [newRequest, { ...newResponse, frame: { ...newResponse.frame, method: "session/update" } }],
+  ],
+  ["error reply", [newRequest, { ...newResponse, frame: { ...newResponse.frame, error: { code: -32_603 } } }]],
+  [
+    "replayed reply after error",
+    [newRequest, { direction: "in", frame: { id: 1, error: { code: -32_603 } } }, newResponse],
+  ],
+  [
+    "replayed reply after markerless success",
+    [newRequest, { direction: "in", frame: { id: 1, result: { sessionId: "first" } } }, newResponse],
+  ],
+  ...["session/load", "session/prompt", "initialize"].map((method) => [
+    method,
+    [{ ...newRequest, frame: { ...newRequest.frame, method } }, newResponse],
+  ]),
+  ...[undefined, null, {}, []].map((id, index) => [
+    `invalid RPC ID ${index}`,
+    [
+      { ...newRequest, frame: { ...newRequest.frame, id } },
+      { ...newResponse, frame: { ...newResponse.frame, id } },
+    ],
+  ]),
+];
+for (const [name, frames] of unrelatedStartupFrames) {
+  test(`steering rejects startup metadata from ${name}`, () => {
+    assert.throws(
+      () =>
+        collectAgentMessages([
+          ...frames,
+          createAgentChunk("first", "agent_message_chunk", undefined, "Synthetic startup\n"),
+        ]),
+      /usable response ID/u,
+    );
+  });
+}
+
+const malformedStartupResults = [
+  undefined,
+  null,
+  [],
+  "result",
+  {},
+  { sessionId: 1, _meta: { piAcp: { startupInfo: "Synthetic startup\n" } } },
+  { sessionId: "first", _meta: null },
+  { sessionId: "first", _meta: [] },
+  { sessionId: "first", _meta: { piAcp: null } },
+  { sessionId: "first", _meta: { piAcp: [] } },
+];
+for (const [index, result] of malformedStartupResults.entries()) {
+  test(`steering rejects malformed startup result ${index}`, () => {
+    assert.throws(
+      () =>
+        collectAgentMessages([
+          newRequest,
+          { direction: "in", frame: { id: 1, result } },
+          createAgentChunk("first", "agent_message_chunk", undefined, "Synthetic startup\n"),
+        ]),
+      /usable response ID/u,
+    );
+  });
+}
+
+for (const [index, marker] of [undefined, null, "", 1, false, {}, []].entries()) {
+  test(`steering rejects missing empty or malformed startup marker ${index}`, () => {
+    const frames = createSessionFrames();
+    frames[1].frame.result._meta.piAcp.startupInfo = marker;
+    assert.throws(
+      () =>
+        collectAgentMessages([
+          ...frames,
+          createAgentChunk(
+            "first",
+            "agent_message_chunk",
+            undefined,
+            typeof marker === "string" ? marker : "Synthetic startup\n",
+          ),
+        ]),
+      /usable response ID/u,
+    );
+  });
+}
+
+test("steering compares nonempty startup markers without trimming or normalizing production text", () => {
+  for (const marker of [" \t\n", "\u0000", "  Synthetic startup\r\n"]) {
+    assert.deepEqual(
+      collectAgentMessages([
+        ...createSessionFrames("first", marker),
+        createAgentChunk("first", "agent_message_chunk", "optional-startup-id", marker),
+      ]),
+      [],
+    );
+    assert.throws(
+      () =>
+        collectAgentMessages([
+          ...createSessionFrames("first", marker),
+          createAgentChunk("first", "agent_message_chunk", undefined, marker.slice(0, -1)),
+        ]),
+      /usable response ID/u,
+    );
+  }
+});
+
+test("steering never consumes a startup marker for thought text or tagged notices and tools", () => {
+  const thought = createAgentChunk("first", "agent_thought_chunk", undefined, "Synthetic startup\n");
+  assert.throws(() => collectAgentMessages([...createSessionFrames(), thought]), /usable response ID/u);
+  thought.frame.params.update.messageId = "thought";
+  const notice = createAgentChunk("first", "agent_message_chunk", undefined, "Synthetic startup\n");
+  notice.frame.params.update._meta = { piAcp: { notify: { level: "info" } } };
+  assert.deepEqual(
+    collectAgentMessages([
+      ...createSessionFrames(),
+      thought,
+      notice,
+      {
+        direction: "in",
+        frame: { method: "session/update", params: { sessionId: "first", update: { sessionUpdate: "tool_call" } } },
+      },
+      createAgentChunk("first", "agent_message_chunk", undefined, "Synthetic startup\n"),
+      createAgentChunk("first", "agent_message_chunk", "answer", "model output"),
+    ]),
+    [{ sessionId: "first", messageId: "answer", text: "model output" }],
+  );
+});
+
+for (const kind of ["agent_message_chunk", "agent_thought_chunk"]) {
+  for (const promptFrames of [[], createPromptFrames().slice(0, 1), createPromptFrames()]) {
+    for (const [index, messageId] of [undefined, "", " \t\n", "\u0000\u001B", null, 42, {}, []].entries()) {
+      test(`steering rejects invalid ${kind} ID ${index} with ${promptFrames.length} prompt frames`, () => {
+        for (const sessionId of ["first", "unknown"]) {
+          assert.throws(
+            () =>
+              collectAgentMessages([
+                ...createSessionFrames(),
+                ...promptFrames,
+                createAgentChunk(sessionId, kind, messageId, "synthetic model output"),
+              ]),
+            /usable response ID/u,
+          );
+        }
+      });
+    }
+  }
+}
+
+test("steering preserves unsolicited IDs and same-message continuations before and after prompt completion", () => {
+  const [prompt, completed] = createPromptFrames();
+  assert.deepEqual(
+    collectAgentMessages([
+      ...createSessionFrames(),
+      createAgentChunk("first", "agent_message_chunk", " original ", "unsolicited "),
+      prompt,
+      createAgentChunk("first", "agent_thought_chunk", " original ", "thinking"),
+      createAgentChunk("first", "agent_message_chunk", " original ", "during "),
+      {
+        direction: "in",
+        frame: { method: "session/update", params: { sessionId: "first", update: { sessionUpdate: "tool_call" } } },
+      },
+      createAgentChunk("first", "agent_message_chunk", "next", "new assistant message "),
+      completed,
+      createAgentChunk("first", "agent_message_chunk", " original ", "after"),
+      createAgentChunk("first", "agent_message_chunk", "next", "after"),
+      createAgentChunk("unknown", "agent_message_chunk", "background", "unsolicited session"),
+    ]),
+    [
+      { sessionId: "first", messageId: " original ", text: "unsolicited during after" },
+      { sessionId: "first", messageId: "next", text: "new assistant message after" },
+      { sessionId: "unknown", messageId: "background", text: "unsolicited session" },
+    ],
+  );
 });
 
 test("steering observations assess final replacements while retaining original routing and raw wire events", () => {
