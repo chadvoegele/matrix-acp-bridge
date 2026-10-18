@@ -103,8 +103,7 @@ void test("renders every response kind with exact fallback and status text", () 
   }
 
   const successful = render({
-    kind: "turn",
-    stopReason: "end_turn",
+    kind: "agent",
     text: "answer",
   });
   assert.equal(successful[0]?.responseKind, "agent");
@@ -135,8 +134,7 @@ void test("synthetic descriptors ignore supplied text and reject unknown or inhe
 void test("joins non-end stop status after agent text and keeps status outside the output limit", () => {
   const partial = "partial output";
   const response = render({
-    kind: "turn",
-    stopReason: "max_tokens",
+    kind: "max_tokens",
     text: partial,
   });
   assert.equal(response[0]?.content.body, joinTextAndStatus(partial, RESPONSE_TEXT.max_tokens));
@@ -145,8 +143,7 @@ void test("joins non-end stop status after agent text and keeps status outside t
   const maxOutputBytes = markerBytes + 3;
   const truncated = render(
     {
-      kind: "turn",
-      stopReason: "max_turn_requests",
+      kind: "max_turn_requests",
       text: "aé🙂x".repeat(10),
     },
     { maxOutputBytes, maxMatrixMessageBytes: 128 },

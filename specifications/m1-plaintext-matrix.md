@@ -12,6 +12,15 @@ the current release. The older durable-delivery material below is retained as
 history only and must not be implemented or used to expand the accepted M2
 contract.
 
+> Assistant-text lifetime and compatibility are superseded by
+> [collector-based output rendering](collector-based-output-rendering.md).
+> Every assistant-message chunk without a usable message ID is now dropped eagerly
+> with a content-free warning on each rejection. There is no prompt outcome text,
+> assistant-text fallback, post-prompt drain or closed-ID history. Prompt bookkeeping
+> and non-text statuses remain independent of publication; legacy thoughts and tool
+> patches keep their existing handling. Earlier drain/ID-less text descriptions
+> below document the preceding design rather than the current contract.
+
 ## Goal
 
 Run one local daemon that signs into Matrix as an ordinary account such as
