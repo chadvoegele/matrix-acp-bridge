@@ -43,8 +43,15 @@ Complete these stages before the long all-tests run:
    running artifact, rather than trusting a cached build or version label. Confirm
    the explicit remote Docker host/context and target test service before changes;
    a local Docker invocation may address a different host. Coordinate under the
-   shared live lock with no active test clients. Preserve original ACP sessions,
-   caches, Matrix device identities, crypto snapshots and completed-event ledgers;
+   shared live lock with no active test clients. If the adapter serves other
+   clients, targeting only its container is insufficient: replacing its socket
+   server can close existing ACP streams, causing dependent bridges to exit and
+   Docker's restart policy to restart them without an explicit consumer restart
+   or recreation. Check all active consumers and authorize that impact before
+   updating; if no other service restart is allowed, use a separately isolated
+   test adapter. `--no-deps` does not prevent stream-loss-triggered restarts.
+   Preserve original ACP sessions, caches, Matrix device identities, crypto
+   snapshots and completed-event ledgers;
    retain session IDs and the original ACP command for recovery/cleanup. Restart
    only the targeted adapter if required, never unrelated services. Deployment
    requires its own authorization; editing these instructions grants none.
