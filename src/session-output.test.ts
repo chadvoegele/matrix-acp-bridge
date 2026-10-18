@@ -65,7 +65,12 @@ function createFixture(maxRetainedEvents = 20) {
 void test("leading blank or control-only thoughts reserve no card entry or timer and do not reduce tool capacity", async () => {
   const f = createFixture(2);
   f.thought("a", "\n\n");
-  f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "\u001B[31m\n\n\u001B[0m" });
+  f.output.accept({
+    sessionId: "session",
+    kind: "agent_thought_chunk",
+    messageId: "a",
+    text: "\u001B[31m\n\n\u001B[0m",
+  });
   assert.equal(f.output.retainedEvents, 0);
   assert.equal(f.output.retainedCards, 0);
   assert.equal(f.clock.pendingTimerCount, 0);
@@ -183,18 +188,22 @@ void test("tool message metadata cannot finish either response collector; status
   assert.equal(f.calls.filter((call) => call.kind === "text" && !call.targetEventId).length, 1);
 });
 
-void test("ID-less thoughts retain whitespace and legacy message/tool boundaries", async () => {
-  const f = createFixture();
-  const thought = (text: string) => f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text });
-  thought("**Plan**");
-  thought("\n\n");
-  thought("next");
-  f.text("a", "answer");
-  thought("second");
-  f.tool("tool");
+void test("rejected thoughts cannot reserve entries or interfere with tool boundaries", async () => {
+  const f = createFixture(2);
+  for (const text of ["**private plan**", "\n\n", "\u001B[31m\n\n\u001B[0m"]) {
+    f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text });
+    assert.equal(f.output.retainedEvents, 0);
+    assert.equal(f.output.retainedCards, 0);
+    assert.equal(f.clock.pendingTimerCount, 0);
+  }
+  f.tool("first");
+  f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "private boundary" });
+  f.tool("second");
   await f.queue.waitForIdle();
-  assert.ok(f.calls.some((call) => call.body === "💭 Plan\n\n💭 next"));
-  assert.ok(f.calls.some((call) => call.body.includes("second") && !call.body.includes("Plan")));
+  assert.equal(f.output.retainedEvents, 2);
+  assert.deepEqual(f.failures, []);
+  assert.doesNotMatch(JSON.stringify(f.calls), /private/u);
+  f.queue.stop();
 });
 
 void test("capacity and lifecycle stop cancel timers and prevent obsolete publications", async () => {
@@ -216,7 +225,7 @@ void test("capacity and lifecycle stop cancel timers and prevent obsolete public
   assert.equal(other.clock.pendingTimerCount, 0);
 });
 
-void test("ID-less thought identities cannot collide with adapter-provided thought IDs", async () => {
+void test("rejected thoughts cannot collide with adapter-provided IDs or change their original destination", async () => {
   const f = createFixture();
   f.thought("legacy-thought-0", "identified thought");
   f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text: "legacy thought" });
@@ -224,10 +233,11 @@ void test("ID-less thought identities cannot collide with adapter-provided thoug
   await f.queue.waitForIdle();
   const latest = f.calls.at(-1)!;
   assert.match(latest.body, /identified thought/u);
-  assert.match(latest.body, /legacy thought/u);
+  assert.doesNotMatch(latest.body, /legacy thought/u);
   f.text("legacy-thought-0", "answer");
-  assert.equal(f.output.retainedEvents, 2);
+  assert.equal(f.output.retainedEvents, 1);
   f.thought("legacy-thought-0", " resumed");
+  assert.equal(f.clock.pendingTimerCount > 0, true);
   f.clock.advanceBy(100);
   await f.queue.waitForIdle();
   assert.ok(f.calls.some((call) => call.body.includes("identified thought resumed") && call.targetEventId));
@@ -257,19 +267,21 @@ void test("ID-less tool identities cannot replace or finish an identified tool w
   }
 });
 
-void test("invalid assistant IDs create no collector state, timers or publication", async () => {
+void test("invalid message and thought IDs create no collector state, timers or publication", async () => {
   const f = createFixture();
-  for (const messageId of [undefined, "", " \t\n", null, 42, {}, []]) {
-    f.output.accept({
-      sessionId: "session",
-      kind: "agent_message_chunk",
-      messageId,
-      text: "private rejected",
-    } as AcpUpdate);
-    assert.equal(f.output.retainedEvents, 0);
-    assert.equal(f.output.retainedCards, 0);
-    assert.equal(f.output.hasPendingText, false);
-    assert.equal(f.clock.pendingTimerCount, 0);
+  for (const kind of ["agent_message_chunk", "agent_thought_chunk"] as const) {
+    for (const messageId of [undefined, "", " \t\n", "\u0000\u001B", null, 42, {}, []]) {
+      f.output.accept({
+        sessionId: "session",
+        kind,
+        messageId,
+        text: "private rejected",
+      } as AcpUpdate);
+      assert.equal(f.output.retainedEvents, 0);
+      assert.equal(f.output.retainedCards, 0);
+      assert.equal(f.output.hasPendingText, false);
+      assert.equal(f.clock.pendingTimerCount, 0);
+    }
   }
   f.clock.advanceBy(30_000);
   await f.queue.waitForIdle();
@@ -278,20 +290,20 @@ void test("invalid assistant IDs create no collector state, timers or publicatio
   f.queue.stop();
 });
 
-void test("rejected text neither closes legacy thoughts nor collapses cards or contaminates valid text", async () => {
+void test("rejected text and thoughts leave identified thought and text destinations intact", async () => {
   const f = createFixture();
-  const thought = (text: string) => f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", text });
-  thought("legacy ");
+  f.thought("answer", "identified ");
   const timers = f.clock.pendingTimerCount;
   f.output.accept({ sessionId: "session", kind: "agent_message_chunk", text: "private boundary" });
   assert.equal(f.clock.pendingTimerCount, timers);
   assert.equal(f.calls.length, 0);
   assert.equal(f.output.retainedEvents, 1);
-  thought("thought");
+  f.output.accept({ sessionId: "session", kind: "agent_thought_chunk", messageId: "", text: "private thought" });
+  f.thought("answer", "thought");
   f.clock.advanceBy(100);
   await f.queue.waitForIdle();
   assert.equal(f.calls.length, 1);
-  assert.match(f.calls[0]!.body, /legacy thought/);
+  assert.match(f.calls[0]!.body, /identified thought/);
   assert.doesNotMatch(f.calls[0]!.formattedBody, /Past agent events/);
   f.text("answer", "before ");
   f.output.accept({ sessionId: "session", kind: "agent_message_chunk", messageId: " ", text: "private mixed" });

@@ -1,5 +1,7 @@
 # Unified rendering runners
 
+Chad's Agent
+
 Read [authentication, ownership and recovery](../e2e-support/README.md) in full
 before live runs. Use designated test rooms/accounts/devices and private state.
 The wrapper holds the shared live lock, runs setup/checks, uses the existing
@@ -82,6 +84,12 @@ certificate using `openssl`, trusts only that certificate through
 process group. TLS validation remains enabled. It has no real accounts/devices,
 homeserver, Rust crypto or SAS. OpenSSL is required for these automated tests.
 
+Canonical-client and alternate-client regressions reject every missing, empty,
+whitespace/control-only or non-string message/thought ID before collection.
+They check content-free per-chunk warnings without duplicate client/bridge warnings,
+no rejected card/event/timer reservations, and mixed valid streams retaining their
+original text and thought destinations. No legacy thought identity or collector remains.
+
 The second command covers two rooms or two threads with identical message/tool
 IDs through the production ACP wire parser, coordinator, delivery and SDK adapter,
 in plaintext and modeled encrypted modes. Crypto and SDK I/O are hermetic test
@@ -89,7 +97,7 @@ doubles here. Deterministic buffer/bridge/activity tests cover pacing, slow and
 failed delivery, history/restart, output limits, retention and timer cleanup.
 
 Neither command establishes a live encrypted Matrix pass or Pi adapter support.
-The installed Pi adapter lacks required assistant IDs; implementing and validating
-that prerequisite remains outside this repository. See the
+The Pi adapter must supply required message and thought IDs; implementing and
+validating that prerequisite remains outside this repository. See the
 [collector specification](../../specifications/collector-based-output-rendering.md)
 for the rendering contract and interface diagram.

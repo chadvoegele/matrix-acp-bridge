@@ -6,13 +6,16 @@ last_update = 2026-10-01
 
 # Message delivery: prompts and steering
 
-> Assistant-text lifetime and compatibility are superseded by
+> Current rendering contract — Chad's Agent
+>
+> Message/thought lifetime and compatibility are superseded by
 > [collector-based output rendering](collector-based-output-rendering.md).
-> Every assistant-message chunk without a usable message ID is now dropped eagerly
+> Every assistant-message or thought chunk without a usable message ID is dropped eagerly
 > with a content-free warning on each rejection. There is no prompt outcome text,
 > assistant-text fallback, post-prompt drain or closed-ID history. Prompt bookkeeping
-> and non-text statuses remain independent of publication; legacy thoughts and tool
-> patches keep their existing handling. Earlier drain/ID-less text descriptions
+> and non-text statuses remain independent of publication. There is no legacy
+> thought collector or generated thought identity; tool patches keep their existing
+> handling. Earlier drain/ID-less text and thought descriptions
 > below document the preceding design rather than the current contract.
 
 ## Purpose

@@ -2871,54 +2871,60 @@ void test("post-prompt parallel tools and same-ID text stay isolated across SDK 
   }
 });
 
-void test("canonical ACP rejection warns once per chunk across the bridge boundary and never publishes rejected text", async () => {
-  const diagnostics: Array<{ level: string; event: string; fields: unknown }> = [];
-  const sink: DiagnosticSink = {
-    ...SILENT_DIAGNOSTICS,
-    emit(level, event, fields) {
-      diagnostics.push({ level, event, fields });
-    },
-  };
-  const rig = createRig(CONFIG, { diagnostics: sink });
-  const { run } = await startRig(rig);
-  try {
-    rig.matrixSdk.emitInbound(sdkEvent({ eventId: "$idless", body: "idless regression" }));
-    rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "idless-cursor" });
-    await waitFor(() => rig.peer.prompts.length === 1, "prompt admission");
-    const prompt = rig.peer.prompts[0]!;
-    const rejected = () =>
-      rig.peer.notify(prompt.sessionId, {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "private rejected text" },
-      });
-    const warnings = () => diagnostics.filter((record) => record.event === "agent-text-missing-id");
-    const timers = rig.clock.pendingTimerCount;
-    rejected();
-    rejected();
-    await waitFor(() => warnings().length >= 2, "solicited rejection");
-    assert.equal(warnings().length, 2);
-    assert.equal(rig.clock.pendingTimerCount, timers);
-    assert.equal(rig.matrixSdk.sent.length, 0);
-    prompt.update("before ", "valid");
-    rejected();
-    prompt.update("after", "valid");
-    prompt.respond();
-    await waitFor(
-      () => rig.bridge.unresolvedPromptCount === 0 && !rig.bridge.isRoomActive(ROOM_ONE),
-      "prompt completion",
-    );
-    assert.equal(rig.matrixSdk.sent.length, 0);
-    rejected();
-    rejected();
-    await waitFor(() => warnings().length >= 5, "unsolicited rejection");
-    assert.equal(warnings().length, 5);
-    assert.ok(warnings().every((record) => record.level === "warn" && JSON.stringify(record.fields) === "{}"));
-    rig.clock.advanceBy(750);
-    await waitFor(() => rig.matrixSdk.sent.length === 1, "valid publication");
-    assert.equal(rig.matrixSdk.sent[0]?.content.body, "before after");
-    assert.doesNotMatch(JSON.stringify([diagnostics, rig.matrixSdk.sent]), /private rejected/);
-    assert.equal(rig.lifecycle.fatalError, undefined);
-  } finally {
-    await stopRig(rig, run);
-  }
-});
+for (const kind of ["agent_message_chunk", "agent_thought_chunk"] as const) {
+  void test(`canonical ${kind} rejection warns once per chunk across the bridge boundary and never publishes rejected text`, async () => {
+    const diagnostics: Array<{ level: string; event: string; fields: unknown }> = [];
+    const sink: DiagnosticSink = {
+      ...SILENT_DIAGNOSTICS,
+      emit(level, event, fields) {
+        diagnostics.push({ level, event, fields });
+      },
+    };
+    const rig = createRig(CONFIG, { diagnostics: sink });
+    const { run } = await startRig(rig);
+    try {
+      rig.matrixSdk.emitInbound(sdkEvent({ eventId: `$idless-${kind}`, body: "idless regression" }));
+      rig.matrixSdk.emit("sync", "SYNCING", "PREPARED", { nextSyncToken: "idless-cursor" });
+      await waitFor(() => rig.peer.prompts.length === 1, "prompt admission");
+      const prompt = rig.peer.prompts[0]!;
+      const rejected = () =>
+        rig.peer.notify(prompt.sessionId, {
+          sessionUpdate: kind,
+          content: { type: "text", text: "private rejected text" },
+        });
+      const warnings = () =>
+        diagnostics.filter(
+          (record) =>
+            record.event === (kind === "agent_message_chunk" ? "agent-text-missing-id" : "agent-thought-missing-id"),
+        );
+      const timers = rig.clock.pendingTimerCount;
+      rejected();
+      rejected();
+      await waitFor(() => warnings().length >= 2, "solicited rejection");
+      assert.equal(warnings().length, 2);
+      assert.equal(rig.clock.pendingTimerCount, timers);
+      assert.equal(rig.matrixSdk.sent.length, 0);
+      prompt.update("before ", "valid");
+      rejected();
+      prompt.update("after", "valid");
+      prompt.respond();
+      await waitFor(
+        () => rig.bridge.unresolvedPromptCount === 0 && !rig.bridge.isRoomActive(ROOM_ONE),
+        "prompt completion",
+      );
+      assert.equal(rig.matrixSdk.sent.length, 0);
+      rejected();
+      rejected();
+      await waitFor(() => warnings().length >= 5, "unsolicited rejection");
+      assert.equal(warnings().length, 5);
+      assert.ok(warnings().every((record) => record.level === "warn" && JSON.stringify(record.fields) === "{}"));
+      rig.clock.advanceBy(750);
+      await waitFor(() => rig.matrixSdk.sent.length === 1, "valid publication");
+      assert.equal(rig.matrixSdk.sent[0]?.content.body, "before after");
+      assert.doesNotMatch(JSON.stringify([diagnostics, rig.matrixSdk.sent]), /private rejected/);
+      assert.equal(rig.lifecycle.fatalError, undefined);
+    } finally {
+      await stopRig(rig, run);
+    }
+  });
+}

@@ -1768,12 +1768,14 @@ void test("streamed thought paragraphs stay separate and unbolded through Matrix
   acp.emit({
     sessionId,
     kind: "agent_thought_chunk",
+    messageId: "plan",
     text: "**First heading**",
   });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "plan", text: "\n\n" });
   acp.emit({
     sessionId,
     kind: "agent_thought_chunk",
+    messageId: "plan",
     text: "**Second heading**",
   });
   clock.advanceBy(750);
@@ -1830,7 +1832,7 @@ void test("agent text renders complete Markdown at its own quiet flush", async (
   });
   await flush();
   assert.equal(matrix.html.length, 0);
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "A new thought" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "markdown", text: "A new thought" });
   clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body === `**Wild${continuation}`));
   const latest = matrix.html.find((message) => message.body === `**Wild${continuation}`);
@@ -1879,7 +1881,7 @@ void test("rejected ID-less text leaves tool boundaries and independent identifi
     toolCallId: "missing",
     status: "in_progress",
   });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "after-tool", text: "\n\n" });
   await flush();
   assert.equal(matrix.html.length, 0);
   acp.emit({
@@ -1906,10 +1908,10 @@ void test("rejected ID-less text leaves tool boundaries and independent identifi
     messageId: "after-tool",
     text: "tool",
   });
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "\n\n" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "after-tool", text: "\n\n" });
   await flush();
   assert.equal(matrix.html.filter((message) => message.body === "After tool").length, 0);
-  acp.emit({ sessionId, kind: "agent_thought_chunk", text: "Thinking" });
+  acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "after-tool", text: "Thinking" });
   clock.advanceBy(750);
   await waitFor(() => matrix.html.some((message) => message.body === "After tool"));
   const thoughtIndex = matrix.html.findIndex((message) => message.body.includes("Thinking"));
@@ -2593,7 +2595,7 @@ void test("validated thread routing survives eager text, activity retries and la
     assert.deepEqual(matrix.attempts[0], matrix.attempts[1]);
     transactionIds.push(matrix.attempts[0]!.transactionId);
     acp.emit({ sessionId, kind: "agent_message_chunk", messageId: "answer", text: "<&😀".repeat(200) });
-    acp.emit({ sessionId, kind: "agent_thought_chunk", text: "next thought" });
+    acp.emit({ sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "next thought" });
     clock.advanceBy(750);
     await waitFor(() => matrix.html.some((message) => message.body.startsWith("<&😀")));
     acp.emit({
@@ -5096,18 +5098,18 @@ void test("activity capacity failure reports configuration and recovery steps wi
 
 void test("thought grouping resumes after identified text without whitespace or tool updates flushing text", async () => {
   const f = await createIdentifiedFixture();
-  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "first thought" });
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "first", text: "first thought" });
   f.clock.advanceBy(750);
   await waitFor(() => f.matrix.html.length === 1);
   f.text("answer");
-  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "  " });
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "  " });
   f.acp.emit({ sessionId: f.sessionId, kind: "tool_call_update", toolCallId: "unknown", status: "completed" });
   await flush();
   assert.equal(
     f.matrix.html.some((message) => message.body === "answer"),
     false,
   );
-  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", text: "second thought" });
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "second", text: "second thought" });
   f.clock.advanceBy(750);
   await waitFor(() => f.matrix.html.some((message) => message.body.includes("second thought")));
   const textIndex = f.matrix.html.findIndex((message) => message.body === "answer");
@@ -5268,6 +5270,48 @@ void test("alternate-client invalid IDs warn on each solicited rejection without
   assert.equal(f.matrix.html[0]?.body, "before after");
   assert.equal(f.matrix.html[0]?.targetEventId, undefined);
   assert.doesNotMatch(JSON.stringify([f.matrix.html, f.matrix.sent, f.diagnostics]), /private/);
+  await f.bridge.stop();
+  assert.equal(f.clock.pendingTimerCount, 0);
+});
+
+void test("alternate-client thought rejection warns per chunk without scheduling or changing identified destinations", async () => {
+  const f = await createIdentifiedFixture();
+  const reject = () => {
+    for (const messageId of [undefined, "", " \t\n", "\u0000\u001B", null, 42, {}, []]) {
+      for (const text of ["private rejected thought", "\u001B[31m\n\n\u001B[0m"]) {
+        f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId, text } as AcpUpdate);
+      }
+    }
+  };
+  const warnings = () => f.diagnostics.filter((record) => record.event === "agent-thought-missing-id");
+  const initialTimers = f.clock.pendingTimerCount;
+  reject();
+  assert.equal(warnings().length, 16);
+  assert.equal(f.clock.pendingTimerCount, initialTimers);
+  assert.equal(f.matrix.html.length, 0);
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "plan" });
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.length === 1);
+  const thoughtEvent = "$live-1:example.org";
+  f.text("before ");
+  const pendingTimers = f.clock.pendingTimerCount;
+  reject();
+  assert.equal(f.clock.pendingTimerCount, pendingTimers);
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_message_chunk", text: "private rejected text" });
+  f.text("after");
+  f.acp.emit({ sessionId: f.sessionId, kind: "agent_thought_chunk", messageId: "answer", text: "\n\ncontinued" });
+  f.finish();
+  await f.completion;
+  reject();
+  assert.equal(warnings().length, 48);
+  f.clock.advanceBy(750);
+  await waitFor(() => f.matrix.html.some((message) => message.body.includes("continued")));
+  const thoughts = f.matrix.html.filter((message) => message.body.includes("continued"));
+  assert.ok(thoughts.every((message) => message.targetEventId === thoughtEvent));
+  assert.equal(f.matrix.html.filter((message) => message.body === "before after").length, 1);
+  assert.ok(warnings().every((record) => record.level === "warn" && Object.keys(record.fields).length === 0));
+  assert.doesNotMatch(JSON.stringify([f.diagnostics, f.matrix.html]), /private rejected/u);
+  assert.equal(f.bridge.fatalError, undefined);
   await f.bridge.stop();
   assert.equal(f.clock.pendingTimerCount, 0);
 });

@@ -4,7 +4,7 @@ import { isRecord } from "./object-validation.js";
 export type AcpSessionId = string;
 
 export function isUsableMessageId(value: unknown): value is AcpMessageId {
-  return typeof value === "string" && value.trim().length > 0;
+  return typeof value === "string" && /[^\s\p{Cc}]/u.test(value);
 }
 
 export type AcpMessageId = string;

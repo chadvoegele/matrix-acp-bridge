@@ -25,12 +25,14 @@ for await (const line of createInterface({ input: process.stdin })) {
       const text = frame.params.prompt.find((part) => part.type === "text")?.text ?? "";
       const expected = /^Reply with exactly: (OUTAGE_[A-F0-9_]+)$/u.exec(text)?.[1] ?? "Historical test input handled";
       const sessionId = frame.params.sessionId;
+      const messageId = `outage-response-${frame.id}`;
       send({
         method: "session/update",
         params: {
           sessionId,
           update: {
             sessionUpdate: "agent_thought_chunk",
+            messageId,
             content: { type: "text", text: "Preparing outage test response." },
           },
         },
@@ -40,7 +42,7 @@ for await (const line of createInterface({ input: process.stdin })) {
         method: "session/update",
         params: {
           sessionId,
-          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: expected } },
+          update: { sessionUpdate: "agent_message_chunk", messageId, content: { type: "text", text: expected } },
         },
       });
       send({ id: frame.id, result: { stopReason: "end_turn" } });

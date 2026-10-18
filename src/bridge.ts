@@ -1678,9 +1678,13 @@ export class BridgeCoordinator {
     if (!isRecord(update) || typeof update.sessionId !== "string") return;
     if (this.#loadingSessions.has(update.sessionId)) return;
     if (this.#stopping || this.#fatal !== undefined) return;
-    if (update.kind === "agent_message_chunk") {
+    if (update.kind === "agent_message_chunk" || update.kind === "agent_thought_chunk") {
       if (!isUsableMessageId(update.messageId)) {
-        this.#diagnostic("warn", "agent-text-missing-id", {});
+        this.#diagnostic(
+          "warn",
+          update.kind === "agent_message_chunk" ? "agent-text-missing-id" : "agent-thought-missing-id",
+          {},
+        );
         return;
       }
       if (typeof update.text !== "string") return;

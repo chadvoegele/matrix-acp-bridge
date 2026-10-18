@@ -6,6 +6,8 @@ last_update = 2026-10-17
 
 # Unified solicited and unsolicited message rendering
 
+Chad's Agent
+
 This records the first PR #28 design. Its collection, mapping ownership, thought
 formatting/timing and strict text-before-activity rules are superseded by
 [Collector-based output rendering](collector-based-output-rendering.md).
@@ -48,7 +50,7 @@ Both sources deliver the same identified text chunks. The bridge routes by sessi
 
 ### Adapter prerequisite
 
-Assume pi-acp supplies ACP's optional `messageId` on every assistant text chunk, including unsolicited output. Implementing and validating that support belongs in a separate pi-acp change.
+Assume pi-acp supplies ACP's optional `messageId` on every assistant text and thought chunk, including unsolicited output. Implementing and validating that support belongs in a separate pi-acp change.
 
 All chunks of one logical assistant message must share an ID; distinct messages must have distinct IDs within a session. Chunks are ordered text deltas, not replacement snapshots. IDs must remain unambiguous for as long as a session can continue delivering updates, including after restoration.
 
@@ -147,20 +149,22 @@ On reset, deletion, disconnect, or shutdown, cancel timers and retire rendering 
 
 For messages with IDs, the new path is the sole owner of assistant-text publication. It must not coexist with a second prompt-final renderer that duplicates output.
 
-ACP permits missing message IDs, but this bridge requires a nonempty, non-whitespace
-string ID for every assistant-message chunk. Eagerly reject any chunk without one,
+ACP permits missing message IDs, but this bridge requires a string ID containing
+at least one character other than whitespace or Unicode controls for every
+assistant-message and thought chunk. Eagerly reject any chunk without one,
 during or outside a prompt, and warn on every rejection without text, raw payloads,
 IDs or credentials. Do not retain warning deduplication state, infer an ID, collect
 rejected text or merge it into an identified block. The canonical client rejects
 before listener dispatch after startup/UI filtering; the bridge guards alternate
 clients without duplicate normal warnings. `SessionOutput.accept` remains the type
-dispatcher and rejects invalid assistant IDs before collector/card changes.
+dispatcher and rejects invalid message/thought IDs before collector/card changes.
 
 This decision supersedes the earlier solicited ID-less compatibility path and
 unsolicited warn-once policy. Prompt outcomes carry no text and the bridge has no
 prompt-final fallback, text drain timers or closed-ID history. Successful prompt
-completion emits no assistant-text or empty-response copy. Legacy ID-less thoughts,
-tool patches and non-text error/timeout/stop responses retain their own contracts.
+completion emits no assistant-text or empty-response copy. ID-less thoughts have
+no collector, generated IDs or compatibility grouping. Identified thoughts, tool
+patches and non-text error/timeout/stop responses retain their own contracts.
 
 Do not persist rendering state or change the stored conversation schema. A new Matrix block for a continuing agent message after restart is accepted behavior. Adapters that interleave assistant message IDs are outside this feature's contract; supporting them would require a separate design.
 
@@ -186,8 +190,8 @@ Do not persist rendering state or change the stored conversation schema. A new M
 - Reset, subprocess exit, and transport failure retire incomplete activity through explicit failure/cleanup behavior, without orphan mappings or false successful completion.
 - Markdown split across chunks renders safely throughout; long messages respect encoded size limits and preserve text up to explicit output caps.
 - Unknown/stale sessions and loading-history updates publish nothing. Reset, shutdown, output limits, and delivery failures leave no orphan timers or cross-session sends.
-- Every solicited/unsolicited ID-less assistant chunk is dropped eagerly with a
-  content-free warning. Mixed valid/rejected streams preserve only identified text;
+- Every solicited/unsolicited ID-less message or thought chunk is dropped eagerly with a
+  content-free warning. Mixed valid/rejected streams preserve only identified text/thoughts;
   rejected chunks allocate no collector/timer state or alter thoughts/tools.
   Prompt outcomes contain no text and normal client/bridge flow warns once per rejection.
 

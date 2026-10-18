@@ -8,8 +8,8 @@ import type { ConversationPublication } from "./conversation-publication.js";
 import { matrixHtmlEditContentBytes, type MatrixHtmlBody, type MatrixOutputRouting } from "./matrix-message-content.js";
 import { MatrixOutputSender, type MatrixOutputPublication } from "./matrix-output-sender.js";
 import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
-import { renderOutput, type OutputSink } from "./output-sink.js";
-import { TextCollector, type TextSnapshot } from "./text-collector.js";
+import { renderOutput } from "./output-sink.js";
+import { TextCollector } from "./text-collector.js";
 import { ToolCollector } from "./tool-collector.js";
 
 interface SessionOutputOptions {
@@ -35,15 +35,9 @@ export class SessionOutput {
 
   readonly #tools: ToolCollector;
 
-  readonly #legacyThoughts: TextCollector;
-
   #responseId: string | undefined;
 
   #hasIdentifiedThought = false;
-
-  #legacyId: string | undefined;
-
-  #sequence = 0;
 
   #closed = false;
 
@@ -83,12 +77,10 @@ export class SessionOutput {
     this.#thoughts = new TextCollector({
       ...options,
       maxOutputBytes: Math.min(options.maxOutputBytes, ACTIVITY_RESULT_DETAIL_BYTES),
-      sink: this.#createThoughtSink("identified:"),
-    });
-    this.#legacyThoughts = new TextCollector({
-      ...options,
-      maxOutputBytes: Math.min(options.maxOutputBytes, ACTIVITY_RESULT_DETAIL_BYTES),
-      sink: this.#createThoughtSink("legacy:"),
+      sink: {
+        flush: (id, content) => this.#cards.flushThought(id, content),
+        finish: (id) => this.#cards.finishThought(id),
+      },
     });
     this.#tools = new ToolCollector({
       ...options,
@@ -96,17 +88,11 @@ export class SessionOutput {
       sink: { flush: (id, content) => this.#cards.flushTool(id, content), finish: (id) => this.#cards.finishTool(id) },
     });
     options.queue.onStop(() => {
-      if (
-        this.#tools.activeCount > 0 ||
-        this.#thoughts.hasPendingText ||
-        this.#legacyThoughts.hasPendingText ||
-        options.queue.pendingCount > 0
-      )
+      if (this.#tools.activeCount > 0 || this.#thoughts.hasPendingText || options.queue.pendingCount > 0)
         options.onAbandoned("lifecycle");
       this.#closed = true;
       this.#messages.stop();
       this.#thoughts.stop();
-      this.#legacyThoughts.stop();
       this.#tools.stop();
       this.#cards.close();
     });
@@ -126,14 +112,13 @@ export class SessionOutput {
 
   accept(update: AcpUpdate): void {
     if (this.#closed) return;
-    if (update.kind === "agent_message_chunk" && !isUsableMessageId(update.messageId)) return;
     if (update.kind === "tool_call" || update.kind === "tool_call_update") {
-      this.#finishLegacyThought();
       this.#tools.accept(update);
       return;
     }
     if (update.kind !== "agent_message_chunk" && update.kind !== "agent_thought_chunk") return;
-    if (update.messageId && update.messageId !== this.#responseId) {
+    if (!isUsableMessageId(update.messageId)) return;
+    if (update.messageId !== this.#responseId) {
       this.#messages.finish();
       this.#thoughts.finish();
       this.#hasIdentifiedThought = false;
@@ -141,40 +126,17 @@ export class SessionOutput {
     }
     if (update.kind === "agent_message_chunk") {
       if (update.text.trim()) {
-        this.#finishLegacyThought();
         this.#cards.collapse();
       }
-      if (update.messageId) this.#messages.append(update.messageId, update.text);
+      this.#messages.append(update.messageId, update.text);
       return;
     }
     const text = cleanActivityText(update.text);
-    if (update.messageId) {
-      if (!this.#hasIdentifiedThought && !text.trim()) return;
-      this.#finishLegacyThought();
-      if (!this.#hasIdentifiedThought) {
-        this.#cards.openThought(`identified:${update.messageId}`);
-        this.#hasIdentifiedThought = true;
-      }
-      this.#thoughts.append(update.messageId, text, update.textCut);
-      return;
+    if (!this.#hasIdentifiedThought && !text.trim()) return;
+    if (!this.#hasIdentifiedThought) {
+      this.#cards.openThought(update.messageId);
+      this.#hasIdentifiedThought = true;
     }
-    if (this.#legacyId === undefined) {
-      if (!text.trim()) return;
-      this.#legacyId = `legacy-thought-${this.#sequence++}`;
-      this.#cards.openThought(`legacy:${this.#legacyId}`);
-    }
-    this.#legacyThoughts.append(this.#legacyId, text, update.textCut);
-  }
-
-  #createThoughtSink(prefix: string): OutputSink<TextSnapshot> {
-    return {
-      flush: (id, content) => this.#cards.flushThought(prefix + id, content),
-      finish: (id) => this.#cards.finishThought(prefix + id),
-    };
-  }
-
-  #finishLegacyThought(): void {
-    this.#legacyThoughts.finish();
-    this.#legacyId = undefined;
+    this.#thoughts.append(update.messageId, text, update.textCut);
   }
 }

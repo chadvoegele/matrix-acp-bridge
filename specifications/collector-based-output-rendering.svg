@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1400" viewBox="0 0 1280 1400" role="img" aria-labelledby="title description">
   <title id="title">Implemented collector-based rendering: collection, rendering and Matrix identity</title>
-  <desc id="description">One ACP dispatcher feeds separate message and thought instances of a shared text collector, plus a multi-ID tool collector. Thoughts and tools feed the activity-card collector, which retains older cards for late updates and emits stable card IDs. Message text uses a shared safe Markdown renderer; an activity renderer uses that same converter for thought bodies and composes tool formatting and trusted collapsible HTML. Rendered snapshots and finish signals reach a Matrix sender with emitter-local ID mappings and the existing bounded publication queue. The sender reuses MatrixDelivery and releases mappings after final delivery.</desc>
+  <desc id="description">Chad's Agent. Invalid message/thought IDs are dropped before collection, with one content-free warning each at intake. One ACP dispatcher feeds separate message and thought instances of a shared text collector, plus a multi-ID tool collector. Thoughts and tools feed the activity-card collector, which retains older cards for late updates and emits stable card IDs. Message text uses a shared safe Markdown renderer; an activity renderer uses that same converter for thought bodies and composes tool formatting and trusted collapsible HTML. Rendered snapshots and finish signals reach a Matrix sender with emitter-local ID mappings and the existing bounded publication queue. The sender reuses MatrixDelivery and releases mappings after final delivery.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#334155"/></marker>
     <style>
@@ -27,8 +27,9 @@
   <path d="M 1040 119 H 1085" class="uses"/><text x="1100" y="125" class="small">Uses helper</text>
 
   <rect x="40" y="165" width="1200" height="100" rx="12" class="proposed"/>
-  <text x="640" y="199" text-anchor="middle" class="name">SessionOutput.accept(update)</text>
-  <text x="640" y="233" text-anchor="middle" class="body">Dispatch by update type into session-scoped collectors; keep authorization, replay and lifecycle guards.</text>
+  <text x="640" y="193" text-anchor="middle" class="name">SessionOutput.accept(update)</text>
+  <text x="640" y="223" text-anchor="middle" class="body">Messages and thoughts require IDs; intake drops and warns on every rejection.</text>
+  <text x="640" y="249" text-anchor="middle" class="small">Dispatch into session collectors; preserve authorization, replay and lifecycle guards.</text>
   <path d="M 220 265 V 340" class="flow"/>
   <rect x="75" y="284" width="290" height="30" fill="#ffffff"/>
   <text x="220" y="307" text-anchor="middle" class="code">agent_message_chunk</text>

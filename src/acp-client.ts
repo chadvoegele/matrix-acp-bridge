@@ -919,7 +919,7 @@ export class InheritedStdioAcpClient implements AcpClient {
     if (update === undefined) return;
 
     if (update.kind === "agent_message_chunk") {
-      const { sessionId, text, messageId } = update;
+      const { sessionId, text } = update;
       const metadata: unknown = parameters.update._meta;
       if (isRecord(metadata) && isRecord(metadata.piAcp) && isRecord(metadata.piAcp.notify)) {
         // pi-acp marks extension UI notifications separately from assistant text.
@@ -939,10 +939,17 @@ export class InheritedStdioAcpClient implements AcpClient {
         this.#startupInfoBySession.delete(sessionId);
         return;
       }
-      if (!isUsableMessageId(messageId)) {
-        this.#diagnostic("warn", "agent-text-missing-id", {});
-        return;
-      }
+    }
+    if (
+      (update.kind === "agent_message_chunk" || update.kind === "agent_thought_chunk") &&
+      !isUsableMessageId(update.messageId)
+    ) {
+      this.#diagnostic(
+        "warn",
+        update.kind === "agent_message_chunk" ? "agent-text-missing-id" : "agent-thought-missing-id",
+        {},
+      );
+      return;
     }
 
     this.#notifyUpdate(update);

@@ -587,8 +587,7 @@ void test("client activity remains Unicode-safe and visibly truncated through re
   });
   client.onUpdate((update) => {
     if (update.kind === "tool_call" || update.kind === "tool_call_update") model.accept(update);
-    if (update.kind === "agent_thought_chunk")
-      thoughts.append(update.messageId ?? "thought", update.text, update.textCut);
+    if (update.kind === "agent_thought_chunk") thoughts.append(update.messageId!, update.text, update.textCut);
   });
   const prompt = client.prompt(sessionId, "hello", {
     cancelled: false,
@@ -781,9 +780,10 @@ void test("activity ingestion keeps substantial output and shares one budget acr
       sessionId,
       update: {
         sessionUpdate: "agent_thought_chunk",
+        messageId: "plan",
         content: {
           type: "text",
-          text: "😀".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES / 4),
+          text: "😀".repeat((ACP_ACTIVITY_UPDATE_MAX_BYTES - 4) / 4),
         },
       },
     }),
@@ -794,9 +794,10 @@ void test("activity ingestion keeps substantial output and shares one budget acr
       sessionId,
       update: {
         sessionUpdate: "agent_thought_chunk",
+        messageId: "plan",
         content: {
           type: "text",
-          text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 1)}😀`,
+          text: `${"a".repeat(ACP_ACTIVITY_UPDATE_MAX_BYTES - 5)}😀`,
         },
       },
     }),
@@ -840,9 +841,9 @@ void test("activity ingestion keeps substantial output and shares one budget acr
   );
   assert.equal(raw.activityCut, true);
   assert.doesNotMatch(rawOutput.text, /�/u);
-  assert.equal(Buffer.byteLength(thoughts[0]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES);
+  assert.equal(Buffer.byteLength(thoughts[0]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 4);
   assert.equal(thoughts[0]!.textCut, undefined);
-  assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 1);
+  assert.equal(Buffer.byteLength(thoughts[1]!.text, "utf8"), ACP_ACTIVITY_UPDATE_MAX_BYTES - 5);
   assert.equal(thoughts[1]!.textCut, true);
   assert.doesNotMatch(thoughts[1]!.text, /�/u);
   const model = new AcpToolModel();
@@ -1817,7 +1818,7 @@ void test("independent sessions can have simultaneous steering requests with rev
   await client.close();
 });
 
-void test("eagerly rejects every invalid assistant ID before listeners during and outside prompts", async () => {
+void test("eagerly rejects every invalid message and thought ID before listeners during and outside prompts", async () => {
   const input = createFakeInput();
   const output = createFakeOutput();
   const diagnostics: unknown[] = [];
@@ -1836,23 +1837,25 @@ void test("eagerly rejects every invalid assistant ID before listeners during an
   const updates: unknown[] = [];
   client.onUpdate((update) => updates.push(update));
   const reject = () => {
-    for (const messageId of [undefined, "", " \t\n", null, 42, {}, []]) {
-      input.push(
-        rpcNotification("session/update", {
-          sessionId,
-          update: {
-            sessionUpdate: "agent_message_chunk",
-            messageId,
-            content: { type: "text", text: "private rejected" },
-          },
-        }),
-      );
+    for (const sessionUpdate of ["agent_message_chunk", "agent_thought_chunk"]) {
+      for (const messageId of [undefined, "", " \t\n", "\u0000\u001B", null, 42, {}, []]) {
+        input.push(
+          rpcNotification("session/update", {
+            sessionId,
+            update: {
+              sessionUpdate,
+              messageId,
+              content: { type: "text", text: "private rejected" },
+            },
+          }),
+        );
+      }
     }
   };
   reject();
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(updates, []);
-  assert.equal(diagnostics.length, 7);
+  assert.equal(diagnostics.length, 16);
   assert.equal(clock.pendingTimerCount, 0);
   const prompt = client.prompt(sessionId, "private prompt", createCancellationController().signal);
   const frame = await output.nextFrame();
@@ -1881,7 +1884,10 @@ void test("eagerly rejects every invalid assistant ID before listeners during an
   ]);
   assert.deepEqual(
     diagnostics,
-    Array.from({ length: 28 }, () => ({ level: "warn", event: "agent-text-missing-id", fields: {} })),
+    Array.from({ length: 4 }, () => [
+      ...Array.from({ length: 8 }, () => ({ level: "warn", event: "agent-text-missing-id", fields: {} })),
+      ...Array.from({ length: 8 }, () => ({ level: "warn", event: "agent-thought-missing-id", fields: {} })),
+    ]).flat(),
   );
   assert.equal(clock.pendingTimerCount, 0);
   await client.close();
