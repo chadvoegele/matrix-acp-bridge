@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { matrixHtmlEditContentBytes } from "./matrix-message-content.js";
+import { normalizeAcpUpdateNotification } from "./acp-activity-update.js";
+import { codemodeAcpNotifications } from "./test-support/codemode-acp.js";
 import type { AcpToolCallUpdate } from "./acp-client.js";
-import { AcpToolModel } from "./acp-activity.js";
-import { renderAcpActivity } from "./acp-activity-rendering.js";
+import { ACTIVITY_RESULT_DETAIL_BYTES, AcpToolModel } from "./acp-activity.js";
+import { renderActivityCard, renderAcpActivity } from "./acp-activity-rendering.js";
 
 function tool(overrides: Partial<AcpToolCallUpdate> = {}): AcpToolCallUpdate {
   return {
@@ -495,4 +498,66 @@ void test("pathological short diff lines fit the HTML message limit by shrinking
   const tiny = renderAcpActivity(firstTool(model), 2048);
   assert.ok(Buffer.byteLength(tiny.formattedBody, "utf8") <= 2048);
   assert.match(tiny.body, /truncated/);
+});
+
+void test("captured codemode source survives running, completed, failed and result-only updates", () => {
+  const model = new AcpToolModel();
+  for (const notification of codemodeAcpNotifications) {
+    const normalized = normalizeAcpUpdateNotification(notification);
+    assert.ok(normalized?.kind === "tool_call" || normalized?.kind === "tool_call_update");
+    model.accept(normalized);
+    const rendered = renderAcpActivity(firstTool(model));
+    assert.match(rendered.body, /Codemode\(const tag = '<sample>'; return/);
+    assert.match(rendered.body, /Script:\nconst tag = '<sample>';\nreturn/);
+    assert.match(rendered.formattedBody, /<details><summary>.*Codemode\(/);
+    assert.match(rendered.formattedBody, /<pre><code>const tag = &#39;&lt;sample&gt;&#39;;&#10;return/);
+    assert.doesNotMatch(rendered.formattedBody, /<sample>/);
+  }
+  const id = codemodeAcpNotifications[0].update.toolCallId;
+  model.accept(
+    update({ toolCallId: id, status: "failed", rawInput: {}, content: [{ type: "content", text: "<error>" }] }),
+  );
+  const failed = renderAcpActivity(firstTool(model));
+  assert.match(failed.body, /^\[failed\].*Codemode/);
+  assert.match(failed.body, /Script:\nconst tag = '<sample>';\nreturn.*\n<error>$/);
+  assert.match(failed.formattedBody, /#C00000.*Codemode/);
+  assert.match(failed.formattedBody, /<\/details>\n<blockquote><pre><code>&lt;error&gt;<\/code><\/pre><\/blockquote>$/);
+  model.accept(update({ toolCallId: id, content: [{ type: "content", text: "late result" }] }));
+  assert.match(renderAcpActivity(firstTool(model)).body, /Script:\n.*\nreturn.*\nlate result$/);
+});
+
+void test("codemode bounds Unicode source, marks truncation and fits Matrix edit envelopes", () => {
+  const model = new AcpToolModel();
+  const normalized = normalizeAcpUpdateNotification({
+    ...codemodeAcpNotifications[0],
+    update: { ...codemodeAcpNotifications[0].update, rawInput: { code: "const tag = '<😀>';\n".repeat(10_000) } },
+  });
+  assert.ok(normalized?.kind === "tool_call");
+  model.accept(normalized);
+  assert.ok(Buffer.byteLength(firstTool(model).script!.text, "utf8") <= ACTIVITY_RESULT_DETAIL_BYTES);
+  assert.equal(firstTool(model).script!.cut, true);
+  for (const maxMessageBytes of [1024, 4096, 32_768]) {
+    const rendered = renderActivityCard(
+      { events: model.events, collapsed: false },
+      maxMessageBytes,
+      matrixHtmlEditContentBytes,
+    );
+    assert.match(rendered.body, /truncated/);
+    assert.doesNotMatch(rendered.body, /�/);
+    assert.ok(matrixHtmlEditContentBytes(rendered) <= maxMessageBytes);
+  }
+});
+
+void test("only exact script tool names with string code enable source disclosure", () => {
+  for (const title of ["read", "other", "Codemode", "mcp__codemode", "codemode(extra)"]) {
+    const model = new AcpToolModel();
+    model.accept(tool({ title, toolKind: "other", rawInput: { code: "private source" } }));
+    assert.equal(firstTool(model).script, undefined);
+    assert.doesNotMatch(renderAcpActivity(firstTool(model)).body, /private source|Script:/);
+  }
+  for (const rawInput of ["return 5;", { code: 5 }, { script: "return 5;" }, {}]) {
+    const model = new AcpToolModel();
+    model.accept(tool({ title: "codemode", toolKind: "other", rawInput }));
+    assert.equal(firstTool(model).script, undefined);
+  }
 });

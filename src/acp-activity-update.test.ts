@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { codemodeAcpNotifications } from "./test-support/codemode-acp.js";
 import {
   ACP_ACTIVITY_UPDATE_MAX_BYTES,
   isAcpUpdateNotification,
@@ -284,4 +285,29 @@ void test("thought identities remain verbatim and distinct beyond the text budge
     assert.equal(result.text, "plan");
     assert.equal(result.textCut, undefined);
   }
+});
+
+void test("normalizes captured Pi codemode source and separate results", () => {
+  const updates = codemodeAcpNotifications.map((notification) => normalizeAcpUpdateNotification(notification));
+  const first = updates[0];
+  assert.ok(first?.kind === "tool_call");
+  assert.equal(first.title, "codemode");
+  assert.equal(first.toolKind, "other");
+  assert.deepEqual(first.rawInput, codemodeAcpNotifications[0].update.rawInput);
+  const completed = updates[2];
+  assert.ok(completed?.kind === "tool_call_update");
+  assert.equal(completed.rawInput, undefined);
+  assert.deepEqual(completed.content, [
+    { type: "content", text: 'Script completed\nWall time 0.0 seconds\nOutput:\n{"tag":"<sample>","answer":5}' },
+  ]);
+
+  const oversized = normalizeAcpUpdateNotification({
+    ...codemodeAcpNotifications[0],
+    update: { ...codemodeAcpNotifications[0].update, rawInput: { code: "😀<&\n".repeat(100_000) } },
+  });
+  assert.ok(oversized?.kind === "tool_call");
+  assert.ok(oversized.activityCut);
+  assert.ok(oversized.rawInput && typeof oversized.rawInput === "object" && "code" in oversized.rawInput);
+  assert.equal(typeof oversized.rawInput.code, "string");
+  assert.ok(Buffer.byteLength(oversized.rawInput.code as string, "utf8") <= ACP_ACTIVITY_UPDATE_MAX_BYTES);
 });
