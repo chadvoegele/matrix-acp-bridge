@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { normalizeAcpUpdateNotification } from "./acp-activity-update.js";
+import { codemodeAcpNotifications } from "./test-fixtures/codemode-acp.js";
 import { createInboundAuthorizer } from "./authorization.js";
 import { createAcpClient } from "./acp-client.js";
 import { InMemorySessionStore } from "./session-store.js";
@@ -5398,3 +5400,42 @@ void test("reset prevents retrying a retired session's output", { timeout: 2000 
   }
   assert.equal(f.clock.pendingTimerCount, 0);
 });
+
+for (const terminalStatus of ["completed", "failed"]) {
+  void test(`captured codemode ACP source persists through Matrix sends and ${terminalStatus} replacements`, async () => {
+    const clock = new FakeClock();
+    const acp = new FakeAcp();
+    const matrix = new FakeLiveMatrix();
+    let resolvePrompt!: (outcome: AcpOutcome) => void;
+    acp.promptImpl = () =>
+      new Promise((resolve) => {
+        resolvePrompt = resolve;
+      });
+    const bridge = new BridgeCoordinator({ config: config(), acp, matrix, clock });
+    const completion = bridge.handleTimelineEvent(event("$codemode-live:example.org"));
+    await waitFor(() => acp.promptCalls.length === 1);
+    const sessionId = acp.promptCalls[0]!.sessionId;
+    for (const [index, notification] of codemodeAcpNotifications.entries()) {
+      const normalized = normalizeAcpUpdateNotification({
+        ...notification,
+        sessionId,
+        update: index === 2 ? { ...notification.update, status: terminalStatus } : notification.update,
+      });
+      assert.ok(normalized);
+      acp.emit(normalized);
+      clock.advanceBy(750);
+      await waitFor(() => matrix.html.length > index);
+      const message = matrix.html.at(-1)!;
+      assert.match(message.body, /Script:\nconst tag = '<sample>';\nreturn \{ tag, answer: 2 \+ 3 \};/);
+      assert.match(message.formattedBody, /<details><summary>.*Codemode\(/);
+      assert.match(message.formattedBody, /<pre><code>const tag = &#39;&lt;sample&gt;&#39;;&#10;return/);
+      assert.equal(message.targetEventId === undefined, index === 0);
+      assert.ok(matrixHtmlContentBytes(message, message.targetEventId) <= config().limits.maxMatrixMessageBytes);
+    }
+    assert.match(matrix.html.at(-1)!.formattedBody, /<\/details>\n<blockquote><pre><code>Script completed/);
+    assert.ok(matrix.html.at(-1)!.body.startsWith(`[${terminalStatus}]`));
+    resolvePrompt({ kind: "turn", stopReason: "end_turn" });
+    await completion;
+    await bridge.stop();
+  });
+}

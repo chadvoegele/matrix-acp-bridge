@@ -187,7 +187,7 @@ export class AcpToolModel {
         event.isWrite = true;
       const operation = mcpOperation(update.rawInput);
       if (operation !== undefined) event.mcpOperation = operation;
-      if (event.title === "mcpScript") {
+      if (event.title === "mcpScript" || event.title === "codemode") {
         const script = stringProperty(update.rawInput, "code");
         if (script !== undefined) event.script = takeBytes(cleanActivityText(script), ACTIVITY_RESULT_DETAIL_BYTES);
       }

@@ -235,7 +235,7 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     }
   }
   const fullTitle = toolTitle(event);
-  const isScript = event.title === "mcpScript" && event.script !== undefined;
+  const isScript = (event.title === "mcpScript" || event.title === "codemode") && event.script !== undefined;
   const command = isScript
     ? event.script!.text
     : toolName(event) === "Execute"
@@ -247,7 +247,7 @@ export function renderAcpActivity(event: AcpActivity, maxHtmlBytes = 32_768): Re
     ? `${takeBytes(previewSource, ACTIVITY_TITLE_PREVIEW_BYTES - Buffer.byteLength("…", "utf8")).text}…`
     : boundedPreview.text;
   const title = isScript
-    ? `MCP Script(${previewCommand})`
+    ? `${event.title === "codemode" ? "Codemode" : "MCP Script"}(${previewCommand})`
     : toolName(event) === "Execute"
       ? `Execute(${previewCommand})`
       : previewCommand;
