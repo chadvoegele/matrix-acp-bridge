@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { normalizeAcpUpdateNotification } from "./acp-activity-update.js";
-import { codemodeAcpNotifications } from "./test-support/codemode-acp.js";
+import { codemodeAcpNotifications } from "./test-fixtures/codemode-acp.js";
 import { createInboundAuthorizer } from "./authorization.js";
 import { createAcpClient } from "./acp-client.js";
 import { InMemorySessionStore } from "./session-store.js";

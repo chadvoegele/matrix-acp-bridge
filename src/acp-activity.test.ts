@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { matrixHtmlEditContentBytes } from "./matrix-message-content.js";
 import { normalizeAcpUpdateNotification } from "./acp-activity-update.js";
-import { codemodeAcpNotifications } from "./test-support/codemode-acp.js";
+import { codemodeAcpNotifications } from "./test-fixtures/codemode-acp.js";
 import type { AcpToolCallUpdate } from "./acp-client.js";
 import { ACTIVITY_RESULT_DETAIL_BYTES, AcpToolModel } from "./acp-activity.js";
 import { renderActivityCard, renderAcpActivity } from "./acp-activity-rendering.js";

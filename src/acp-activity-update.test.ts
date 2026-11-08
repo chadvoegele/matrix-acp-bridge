@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { codemodeAcpNotifications } from "./test-support/codemode-acp.js";
+import { codemodeAcpNotifications } from "./test-fixtures/codemode-acp.js";
 import {
   ACP_ACTIVITY_UPDATE_MAX_BYTES,
   isAcpUpdateNotification,
