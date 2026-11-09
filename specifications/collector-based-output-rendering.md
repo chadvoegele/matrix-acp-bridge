@@ -1,7 +1,7 @@
 +++
 status = "final"
 created = 2026-10-17
-last_update = 2026-10-18
+last_update = 2026-11-09
 +++
 
 # Collector-based output rendering
@@ -10,8 +10,7 @@ last_update = 2026-10-18
 
 Give streamed messages and thoughts the same accumulation and flush behavior,
 keep tool/card state separate from presentation, and make ConversationPublication
-the sole owner of queued content and logical-ID-to-Matrix-event mappings. This
-design is implemented on the PR #28 feature branch.
+the sole owner of queued content and logical-ID-to-Matrix-event mappings. The collector design originated in PR #28; outbound shedding extends its publication boundary.
 
 Chad's Agent
 
@@ -299,6 +298,54 @@ flowchart LR
   Queue --> Diagnostics[Privacy-safe episode diagnostics]
 ```
 
+Each zoom keeps the same input → bounded owner → output/diagnostics shape. Arrows
+represent calls or data flow, not additional workers. Atomic renderers, sinks and
+clocks are leaves; they do not hide another scheduler or persistence layer.
+
+SessionOutput zoom (six components):
+
+```mermaid
+flowchart LR
+  Input[Normalized ACP updates] --> Dispatch[ID and type dispatch]
+  Dispatch --> Text[Message and thought text collectors]
+  Dispatch --> Tools[Tool collector]
+  Text --> Sinks[Rendered output sinks]
+  Text --> Cards[Activity card collector]
+  Tools --> Cards
+  Cards --> Sinks
+```
+
+ConversationPublication zoom (seven components):
+
+```mermaid
+flowchart LR
+  Sink[flush and finish sinks] --> Admission[Admission and safe coalescing]
+  Admission --> Pending[Bounded accepted FIFO]
+  Admission --> Episode[Coalesced capacity episode]
+  Pending --> Worker[Single drain worker]
+  Episode --> Worker
+  Worker --> Mappings[Live original and edit mappings]
+  Mappings --> Worker
+  Worker --> Publish[Guarded Matrix publication callback]
+```
+
+MatrixDelivery zoom (five components, unchanged transport contract):
+
+```mermaid
+flowchart LR
+  Input[Guarded publication] --> Room[Per-room promise tail]
+  Room --> Retry[Cancellation and retry policy]
+  Retry --> SDK[Matrix SDK send]
+  SDK --> Result[Event ID or classified failure]
+  Result --> Retry
+```
+
+Within collectors, the same flow is update → bounded domain state → scheduled
+snapshot → renderer → sink. Within a renderer it is content → normalization →
+escaping/Markdown → byte-budget splitting → immutable parts. These are logical
+steps, not proposed extra abstractions. The self-similarity is a design judgment,
+not a claim that every function needs five artificial children.
+
 The existing pending-record limit defaults to 26 plus one in flight, shared by
 text and activity. At capacity, safe coalescing of accepted snapshots continues;
 otherwise the incoming snapshot is dropped, not previously queued records.
@@ -381,9 +428,11 @@ card, or create a new thought group. There is no ID-less compatibility collector
 - Split Markdown in messages and thoughts stays safe. Thought markers/normalization,
   tool formatting, collapsible HTML and plain-text fallbacks remain readable.
   Untrusted raw HTML cannot escape into card wrappers.
-- Slow/failing sends, finish during an in-flight original/edit, continuation
-  growth/shrinkage and queue exhaustion preserve final payloads, ordering,
-  bounded retention and explicit failure reporting.
+- Slow/failing sends, finish during an in-flight original/edit and continuation
+  growth/shrinkage preserve accepted payloads, ordering and bounded retention.
+  Queue exhaustion drops excess snapshots with a bounded notice; delivery failures
+  remain explicit failures. Test admission during notice delivery and worker handoff,
+  notice failure, and encoded thread-event budgets.
 - Reset/shutdown/loading replay and restart leave no timers, mappings, accidental
   cross-session sends, history reads, crypto resets or duplicate output.
 - Integration tests cover room/thread isolation and the existing encrypted delivery

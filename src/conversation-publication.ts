@@ -12,11 +12,6 @@ import type { OutputSink } from "./output-sink.js";
 
 export type PublicationFailure = "delivery";
 
-export const OUTPUT_CAPACITY_NOTICE =
-  "Agent output exceeded capacity. Dropping messages to Matrix until capacity is available.";
-
-const CAPACITY_NOTICE_INTERVAL_MS = 30_000;
-
 type Emitter = "text" | "activity";
 
 interface PublishedPart {
@@ -34,7 +29,7 @@ interface Publication {
   readonly id: string;
   readonly state: LiveOutput;
   readonly initial: boolean;
-  parts: readonly MatrixHtmlBody[];
+  readonly parts: readonly MatrixHtmlBody[];
 }
 
 export interface MatrixOutputPublication extends MatrixHtmlBody {
@@ -53,7 +48,6 @@ interface ConversationPublicationOptions {
   readonly onCapacity?: (phase: "dropping" | "recovered", dropped: number, maximumPending: number) => void;
 }
 
-/** Publishes one conversation's content; MatrixDelivery owns transport retries. */
 export class ConversationPublication {
   readonly #options: ConversationPublicationOptions;
 
@@ -65,9 +59,9 @@ export class ConversationPublication {
 
   #stopped = false;
 
-  #active: Publication | undefined;
+  #active: LiveOutput | undefined;
 
-  #episode: { recoveredAt?: number; dropped: number; notified: boolean } | undefined;
+  #episode: { recoveredAt: number | undefined; dropped: number; notified: boolean } | undefined;
 
   readonly #stopListeners = new Set<() => void>();
 
@@ -75,7 +69,6 @@ export class ConversationPublication {
 
   readonly cards: OutputSink<readonly MatrixHtmlBody[]>;
 
-  /** The existing conversation limit bounds pending records, plus one in flight. */
   constructor(options: ConversationPublicationOptions) {
     if (!Number.isSafeInteger(options.maximumPending) || options.maximumPending < 1)
       throw new RangeError("maximumPending must be a positive integer");
@@ -117,7 +110,7 @@ export class ConversationPublication {
         return;
       }
     }
-    if (state.finishing) throw new Error("cannot flush finished output");
+    if (state.finishing) throw new Error(`cannot flush finished ${emitter} output before accepted content drains`);
     this.#enqueue({ emitter, id, state, parts, initial: false });
   }
 
@@ -130,17 +123,13 @@ export class ConversationPublication {
   }
 
   #enqueue(publication: Publication): void {
-    const existing = this.#pending.find((pending) => pending.state === publication.state && !pending.initial);
-    if (!publication.initial && existing !== undefined) {
-      existing.parts = publication.parts;
+    const existingIndex = this.#pending.findIndex((pending) => pending.state === publication.state && !pending.initial);
+    if (!publication.initial && existingIndex !== -1) {
+      this.#pending[existingIndex] = publication;
       return;
     }
     if (this.#pending.length >= this.#options.maximumPending) {
-      if (
-        publication.state.parts.length === 0 &&
-        this.#active?.state !== publication.state &&
-        !this.#pending.some((pending) => pending.state === publication.state)
-      )
+      if (publication.state.parts.length === 0 && !this.#hasAcceptedOutput(publication.state))
         this.#live[publication.emitter].delete(publication.id);
       this.shed();
       return;
@@ -149,20 +138,24 @@ export class ConversationPublication {
     this.#start();
   }
 
+  #hasAcceptedOutput(state: LiveOutput): boolean {
+    return this.#active === state || this.#pending.some((pending) => pending.state === state);
+  }
+
   #releaseFinished(emitter: Emitter, id: string, state: LiveOutput): void {
-    if (state.finishing && this.#active?.state !== state && !this.#pending.some((pending) => pending.state === state))
-      this.#live[emitter].delete(id);
+    if (state.finishing && !this.#hasAcceptedOutput(state)) this.#live[emitter].delete(id);
   }
 
   /** Retained collector pressure shares the same bounded notice episode. */
   shed(): void {
     if (this.#stopped) return;
+    const noticeCooldownMs = 30_000;
     const now = (this.#options.clock ?? systemClock).now();
     if (
       this.#episode === undefined ||
-      (this.#episode.recoveredAt !== undefined && now - this.#episode.recoveredAt >= CAPACITY_NOTICE_INTERVAL_MS)
+      (this.#episode.recoveredAt !== undefined && now - this.#episode.recoveredAt >= noticeCooldownMs)
     ) {
-      this.#episode = { dropped: 0, notified: false };
+      this.#episode = { recoveredAt: undefined, dropped: 0, notified: false };
       this.#options.onCapacity?.("dropping", 1, this.#options.maximumPending);
     }
     this.#episode.dropped = Math.min(Number.MAX_SAFE_INTEGER, this.#episode.dropped + 1);
@@ -197,39 +190,57 @@ export class ConversationPublication {
     if (this.#running !== undefined) return;
     this.#running = Promise.resolve().then(async () => {
       try {
-        while (!this.#stopped) {
-          const publication = this.#pending.shift();
-          if (publication === undefined) {
-            const episode = this.#episode;
-            if (episode === undefined || episode.notified) break;
-            episode.notified = true;
-            await this.#deliver({
-              emitter: "text",
-              id: "capacity-notice",
-              initial: false,
-              state: { parts: [], finishing: true },
-              parts: renderMatrixTextChunks(OUTPUT_CAPACITY_NOTICE, this.#options.maxMatrixMessageBytes, (part) =>
-                matrixHtmlEditContentBytes({ ...part, ...this.#options.routing }),
-              ),
-            });
-            continue;
-          }
-          this.#active = publication;
-          await this.#deliver(publication);
-          this.#active = undefined;
-          this.#releaseFinished(publication.emitter, publication.id, publication.state);
-        }
+        await this.#drain();
+        this.#reportRecovery();
       } catch {
         this.fail("delivery");
       } finally {
-        const episode = this.#episode;
-        if (!this.#stopped && episode !== undefined && episode.recoveredAt === undefined) {
-          episode.recoveredAt = (this.#options.clock ?? systemClock).now();
-          this.#options.onCapacity?.("recovered", episode.dropped, this.#options.maximumPending);
-        }
         this.#running = undefined;
+        if (!this.#stopped && (this.#pending.length > 0 || this.#episode?.notified === false)) this.#start();
       }
     });
+  }
+
+  async #drain(): Promise<void> {
+    while (!this.#stopped) {
+      const publication = this.#pending.shift();
+      if (publication === undefined) {
+        const episode = this.#episode;
+        if (episode === undefined || episode.notified) return;
+        episode.notified = true;
+        await this.#deliver(this.#createCapacityNotice());
+        continue;
+      }
+      this.#active = publication.state;
+      await this.#deliver(publication);
+      this.#active = undefined;
+      this.#releaseFinished(publication.emitter, publication.id, publication.state);
+    }
+  }
+
+  #createCapacityNotice(): Publication {
+    const notice = "Agent output exceeded capacity. Dropping messages to Matrix until capacity is available.";
+    return {
+      emitter: "text",
+      id: "capacity-notice",
+      initial: false,
+      state: { parts: [], finishing: true },
+      parts: renderMatrixTextChunks(notice, this.#options.maxMatrixMessageBytes, (part) =>
+        matrixHtmlEditContentBytes({ ...part, ...this.#options.routing }),
+      ),
+    };
+  }
+
+  #reportRecovery(): void {
+    if (
+      this.#stopped ||
+      this.#pending.length > 0 ||
+      this.#episode === undefined ||
+      this.#episode.recoveredAt !== undefined
+    )
+      return;
+    this.#episode.recoveredAt = (this.#options.clock ?? systemClock).now();
+    this.#options.onCapacity?.("recovered", this.#episode.dropped, this.#options.maximumPending);
   }
 
   async #deliver({ emitter, id, state, parts }: Publication): Promise<void> {
