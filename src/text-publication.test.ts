@@ -219,19 +219,26 @@ void test("slow sends coalesce edits, including final text before an identity tr
   slow.stop();
 });
 
-void test("bounded pending work fails explicitly and cancels timers instead of retaining more identities", async () => {
+void test("bounded pending work sheds excess identities and recovers without stopping", async () => {
   const { buffer, queue, clock, calls, failures, blockTransport } = createFixture({ capacity: 2 });
   const blocked = await blockTransport();
   buffer.append("a", "a");
   buffer.append("b", "b");
   buffer.append("c", "c");
-  assert.equal(buffer.append("d", "d"), false);
-  assert.deepEqual(failures, ["capacity"]);
+  assert.equal(buffer.append("d", "d"), true);
+  buffer.finish();
+  assert.deepEqual(failures, []);
   assert.equal(clock.pendingTimerCount, 0);
   blocked.release();
   await queue.waitForIdle();
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 3);
+  queue.cards.finish("blocker");
   assert.equal(queue.pendingCount, 0);
+  assert.equal(queue.liveCount, 0);
+  buffer.append("fresh", "fresh");
+  buffer.finish();
+  await queue.waitForIdle();
+  assert.equal(calls.at(-1)?.body, "fresh");
 });
 
 void test("output remains bounded with an explicit marker and excess deltas produce no more work", async () => {

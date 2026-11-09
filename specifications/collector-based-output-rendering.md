@@ -258,11 +258,12 @@ The bridge callback retains session-generation guards and outbound accounting.
 MatrixDelivery retains room serialization, retry ownership and SDK/encryption delivery.
 
 The bounded queue must contain explicit data: emitter, logical ID, live mapping
-state, cumulative rendered parts, a finish flag and an initial-view barrier flag.
+state, cumulative rendered parts and an initial-view barrier flag. Finish is a flag
+on live mapping state, not an additional pending record.
 It must not store arbitrary async operation closures or expose a generic key-based
 operation replacement API. Resolve original versus replacement at delivery time,
 using the owner's original event IDs. Pending content may replace content for the
-same emitter/ID in place, while finish merges after that final content. A card's
+same emitter/ID in place, while finish releases state after all accepted content drains. A card's
 initial expanded record must stay separate from coalescible later edits. Retire
 only the explicitly finished emitter/ID after delivery; delivery failure or stop
 clears queued content and both namespaces, rejecting late callback results.
@@ -280,8 +281,65 @@ Collectors retain bounded current text, unfinished tools and cards still eligibl
 for updates. Publisher mappings exist only for live/queued/in-flight output; they are
 not a history cache. Retain state through final delivery or transfer ownership of
 final payloads into the bounded queue before releasing source data. Apply existing
-session/activity/output/queue limits and observable backpressure; capacity failure
-must not masquerade as successful output.
+session/activity/output/queue limits and observable lossy shedding. Capacity pressure
+must not terminate the bridge, cancel agents, throttle inbound messages, or require
+restart/reset/resend. Unrelated delivery and lifecycle failures retain their existing semantics.
+
+### Outbound capacity shedding
+
+```mermaid
+flowchart LR
+  ACP[ACP updates] --> Session[SessionOutput]
+  Session --> Text[TextCollector]
+  Session --> Activity[Tool and activity collectors]
+  Text --> Queue[Bounded conversation publication]
+  Activity --> Queue
+  Queue --> Delivery[MatrixDelivery room serialization and retries]
+  Delivery --> Matrix[Matrix thread events]
+  Queue --> Diagnostics[Privacy-safe episode diagnostics]
+```
+
+The existing pending-record limit defaults to 26 plus one in flight, shared by
+text and activity. At capacity, safe coalescing of accepted snapshots continues;
+otherwise the incoming snapshot is dropped, not previously queued records.
+Retained-tool/card limits similarly reject excess entries but keep existing entries
+updatable and finishable. There is no dropped-ID history or replay buffer.
+
+Dropping an initial snapshot releases its otherwise unused publication mapping.
+Later cumulative snapshots for that ID may start a fresh original, including the
+latest retained content; they must never edit a nonexistent event. Dropped updates
+(including new continuation parts) do not change existing event mappings. Finish
+never consumes a pending slot: it releases the mapping after all accepted pending
+and in-flight parts drain, even if the final snapshot was dropped. A retained card's
+accepted expanded initial barrier remains intact if its collapsed update is dropped.
+Source collectors still apply their normal bounded text and retained-entry limits;
+capacity rejection does not stop their pacing timers or falsely finish tools.
+
+The first rejection starts a per-conversation overflow episode. One coalesced notice
+waits until accepted queued output drains, then uses the same publication worker,
+thread routing, Matrix event budget, cancellation guard and per-room delivery
+serialization/retries as ordinary output:
+
+> Agent output exceeded capacity. Dropping messages to Matrix until capacity is available.
+
+The notice is not recursively enqueued and holds no live-ID mapping. It may wait
+behind slow/retrying sends from other threads in the same DM. There is no separate
+room scheduler, background publisher, notice timer, or unbounded notice state.
+Stopping the subscription discards a waiting notice. A delivery failure while
+sending a notice is still a delivery failure, not capacity pressure.
+
+Output acceptance resumes as soon as a pending slot opens, even before the notice
+is delivered. Drain completion (including the notice) records recovery. Further
+rejections are coalesced into that same episode until at least 30 seconds after
+recovery; only a rejection after that cooldown starts another episode. Recovery
+here means publication drain, not that all unfinished retained tools have finished.
+Those entries release capacity through their normal terminal/collapse paths. No timer
+is needed to end the cooldown. Each episode emits one dropping diagnostic and one
+recovery diagnostic with a saturated dropped-snapshot count and pending limit,
+without text, event/session/room/tool IDs or credentials. The recovery count covers
+rejections through the first drain; cooldown rejections remain coalesced without
+additional logs. Lost snapshots are not durable and are never automatically resent.
+This policy does not establish the cause of any particular congestion incident.
 
 Reset, deletion, fatal connection failure and shutdown must cancel timers, stop
 subscriptions and reject obsolete callbacks. Dispose of unfinished output under

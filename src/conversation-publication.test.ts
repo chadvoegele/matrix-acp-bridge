@@ -208,31 +208,24 @@ void test(
   },
 );
 
-void test(
-  "capacity and explicit delivery failure discard mappings and pending content",
-  { timeout: 1000 },
-  async () => {
-    for (const failure of ["delivery", "capacity"]) {
-      const { queue, failures, setTransport, calls } = createFixture(1);
-      const blocked = createGate();
-      setTransport(async (): Promise<undefined> => {
-        await blocked.promise;
-      });
-      queue.messages.flush("a", [createPart("a")]);
-      await Promise.resolve();
-      queue.messages.flush("b", [createPart("b")]);
-      if (failure === "capacity") queue.messages.flush("c", [createPart("c")]);
-      blocked.release();
-      await queue.waitForIdle();
-      queue.messages.flush("late", [createPart("late")]);
-      queue.messages.finish("a");
-      assert.deepEqual(failures, [failure]);
-      assert.equal(queue.liveCount, 0);
-      assert.equal(queue.pendingCount, 0);
-      assert.equal(calls.length, 1);
-    }
-  },
-);
+void test("explicit delivery failure discards mappings and pending content", { timeout: 1000 }, async () => {
+  const { queue, failures, setTransport, calls } = createFixture(1);
+  const blocked = createGate();
+  setTransport(async (): Promise<undefined> => {
+    await blocked.promise;
+  });
+  queue.messages.flush("a", [createPart("a")]);
+  await Promise.resolve();
+  queue.messages.flush("b", [createPart("b")]);
+  blocked.release();
+  await queue.waitForIdle();
+  queue.messages.flush("late", [createPart("late")]);
+  queue.messages.finish("a");
+  assert.deepEqual(failures, ["delivery"]);
+  assert.equal(queue.liveCount, 0);
+  assert.equal(queue.pendingCount, 0);
+  assert.equal(calls.length, 1);
+});
 
 void test("transport exceptions notify once and idle settles after cleanup", { timeout: 1000 }, async () => {
   const { queue, failures, setTransport, calls } = createFixture();

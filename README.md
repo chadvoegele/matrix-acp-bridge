@@ -98,6 +98,15 @@ max_catchup_age_seconds = 900
 max_catchup_events_per_room = 4
 ```
 
+## Outbound Capacity
+
+Agent output to Matrix is bounded per conversation (26 pending records plus one
+in flight by default). Excess output is dropped while accepted output drains;
+new output is accepted automatically when space opens. The bridge and agent keep
+running. One coalesced capacity notice waits for normal delivery, with a
+30-second cooldown after drain; it stays in the affected session thread. Lost
+output is not resent. See the [output specification](specifications/collector-based-output-rendering.md#outbound-capacity-shedding).
+
 ## Encryption Setup
 
 Stop the daemon and then run:

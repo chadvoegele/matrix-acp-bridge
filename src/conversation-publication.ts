@@ -1,9 +1,21 @@
+import { systemClock, type Clock } from "./clock.js";
 import type { MatrixEventId } from "./matrix-client.js";
 import { matrixHtml } from "./matrix-html.js";
-import { matrixHtmlContentBytes, type MatrixHtmlBody, type MatrixOutputRouting } from "./matrix-message-content.js";
+import {
+  matrixHtmlContentBytes,
+  matrixHtmlEditContentBytes,
+  type MatrixHtmlBody,
+  type MatrixOutputRouting,
+} from "./matrix-message-content.js";
+import { renderMatrixTextChunks } from "./matrix-text-rendering.js";
 import type { OutputSink } from "./output-sink.js";
 
-export type PublicationFailure = "capacity" | "delivery";
+export type PublicationFailure = "delivery";
+
+export const OUTPUT_CAPACITY_NOTICE =
+  "Agent output exceeded capacity. Dropping messages to Matrix until capacity is available.";
+
+const CAPACITY_NOTICE_INTERVAL_MS = 30_000;
 
 type Emitter = "text" | "activity";
 
@@ -22,8 +34,7 @@ interface Publication {
   readonly id: string;
   readonly state: LiveOutput;
   readonly initial: boolean;
-  parts: readonly MatrixHtmlBody[] | undefined;
-  finish: boolean;
+  parts: readonly MatrixHtmlBody[];
 }
 
 export interface MatrixOutputPublication extends MatrixHtmlBody {
@@ -38,6 +49,8 @@ interface ConversationPublicationOptions {
   readonly routing?: MatrixOutputRouting;
   readonly publish: (emitter: Emitter, publication: MatrixOutputPublication) => Promise<MatrixEventId | undefined>;
   readonly onFailure: (reason: PublicationFailure) => void;
+  readonly clock?: Clock;
+  readonly onCapacity?: (phase: "dropping" | "recovered", dropped: number, maximumPending: number) => void;
 }
 
 /** Publishes one conversation's content; MatrixDelivery owns transport retries. */
@@ -51,6 +64,10 @@ export class ConversationPublication {
   #running: Promise<void> | undefined;
 
   #stopped = false;
+
+  #active: Publication | undefined;
+
+  #episode: { recoveredAt?: number; dropped: number; notified: boolean } | undefined;
 
   readonly #stopListeners = new Set<() => void>();
 
@@ -96,12 +113,12 @@ export class ConversationPublication {
       state = { parts: [], finishing: false };
       this.#live[emitter].set(id, state);
       if (emitter === "activity") {
-        this.#enqueue({ emitter, id, state, parts, initial: true, finish: false });
+        this.#enqueue({ emitter, id, state, parts, initial: true });
         return;
       }
     }
     if (state.finishing) throw new Error("cannot flush finished output");
-    this.#enqueue({ emitter, id, state, parts, initial: false, finish: false });
+    this.#enqueue({ emitter, id, state, parts, initial: false });
   }
 
   #finish(emitter: Emitter, id: string): void {
@@ -109,21 +126,46 @@ export class ConversationPublication {
     const state = this.#live[emitter].get(id);
     if (state === undefined || state.finishing) return;
     state.finishing = true;
-    this.#enqueue({ emitter, id, state, parts: undefined, initial: false, finish: true });
+    this.#releaseFinished(emitter, id, state);
   }
 
   #enqueue(publication: Publication): void {
     const existing = this.#pending.find((pending) => pending.state === publication.state && !pending.initial);
     if (!publication.initial && existing !== undefined) {
-      if (publication.parts !== undefined) existing.parts = publication.parts;
-      existing.finish ||= publication.finish;
+      existing.parts = publication.parts;
       return;
     }
     if (this.#pending.length >= this.#options.maximumPending) {
-      this.fail("capacity");
+      if (
+        publication.state.parts.length === 0 &&
+        this.#active?.state !== publication.state &&
+        !this.#pending.some((pending) => pending.state === publication.state)
+      )
+        this.#live[publication.emitter].delete(publication.id);
+      this.shed();
       return;
     }
     this.#pending.push(publication);
+    this.#start();
+  }
+
+  #releaseFinished(emitter: Emitter, id: string, state: LiveOutput): void {
+    if (state.finishing && this.#active?.state !== state && !this.#pending.some((pending) => pending.state === state))
+      this.#live[emitter].delete(id);
+  }
+
+  /** Retained collector pressure shares the same bounded notice episode. */
+  shed(): void {
+    if (this.#stopped) return;
+    const now = (this.#options.clock ?? systemClock).now();
+    if (
+      this.#episode === undefined ||
+      (this.#episode.recoveredAt !== undefined && now - this.#episode.recoveredAt >= CAPACITY_NOTICE_INTERVAL_MS)
+    ) {
+      this.#episode = { dropped: 0, notified: false };
+      this.#options.onCapacity?.("dropping", 1, this.#options.maximumPending);
+    }
+    this.#episode.dropped = Math.min(Number.MAX_SAFE_INTEGER, this.#episode.dropped + 1);
     this.#start();
   }
 
@@ -139,6 +181,8 @@ export class ConversationPublication {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#pending.length = 0;
+    this.#episode = undefined;
+    this.#active = undefined;
     this.#live.text.clear();
     this.#live.activity.clear();
     for (const listener of this.#stopListeners) listener();
@@ -155,19 +199,40 @@ export class ConversationPublication {
       try {
         while (!this.#stopped) {
           const publication = this.#pending.shift();
-          if (publication === undefined) break;
-          if (publication.parts !== undefined) await this.#deliver(publication);
-          if (publication.finish) this.#live[publication.emitter].delete(publication.id);
+          if (publication === undefined) {
+            const episode = this.#episode;
+            if (episode === undefined || episode.notified) break;
+            episode.notified = true;
+            await this.#deliver({
+              emitter: "text",
+              id: "capacity-notice",
+              initial: false,
+              state: { parts: [], finishing: true },
+              parts: renderMatrixTextChunks(OUTPUT_CAPACITY_NOTICE, this.#options.maxMatrixMessageBytes, (part) =>
+                matrixHtmlEditContentBytes({ ...part, ...this.#options.routing }),
+              ),
+            });
+            continue;
+          }
+          this.#active = publication;
+          await this.#deliver(publication);
+          this.#active = undefined;
+          this.#releaseFinished(publication.emitter, publication.id, publication.state);
         }
       } catch {
         this.fail("delivery");
       } finally {
+        const episode = this.#episode;
+        if (!this.#stopped && episode !== undefined && episode.recoveredAt === undefined) {
+          episode.recoveredAt = (this.#options.clock ?? systemClock).now();
+          this.#options.onCapacity?.("recovered", episode.dropped, this.#options.maximumPending);
+        }
         this.#running = undefined;
       }
     });
   }
 
-  async #deliver({ emitter, id, state, parts = [] }: Publication): Promise<void> {
+  async #deliver({ emitter, id, state, parts }: Publication): Promise<void> {
     const routing = this.#options.routing ?? {};
     const count = Math.max(parts.length, state.parts.length);
     for (let index = 0; index < count; index++) {

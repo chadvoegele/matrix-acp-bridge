@@ -5037,14 +5037,15 @@ void test("ID-less unsolicited chunks warn on every rejection and never attach t
   await f.bridge.stop();
 });
 
-void test("identified queue capacity failure stops intake observably and cancels timers", async () => {
+void test("identified queue capacity drops output without fatal error or stopping intake", async () => {
   const matrix = new FakeLiveMatrix();
   let release!: () => void;
   matrix.htmlSend = async () => {
-    await new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    return "$in-flight";
+    if (matrix.attempts.length === 1)
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    return `$sent-${matrix.attempts.length}`;
   };
   const f = await createIdentifiedFixture(config({ maxActivityEventsPerMessage: 1 }), matrix);
   f.text("first");
@@ -5055,23 +5056,25 @@ void test("identified queue capacity failure stops intake observably and cancels
   f.text("second", "second");
   f.text("third", "third");
   f.text("fourth", "fourth");
-  assert.equal(f.bridge.fatalError?.code, "matrix_transport");
-  assert.match(
-    f.bridge.fatalError?.message ?? "",
-    /Reduce concurrent agent output.*limits\.max_activity_events_per_message.*restart/u,
-  );
-  const failure = f.diagnostics.find(
-    (record) => record.event === "agent-text-abandoned" && record.fields.kind === "capacity",
-  );
-  assert.equal(failure?.fields.maxActivityEventsPerMessage, 1);
-  assert.equal(failure?.fields.maxQueuedTurnsPerConversation, 1);
+  f.text("fifth", "fifth");
+  assert.equal(f.bridge.fatalError, undefined);
+  assert.ok(f.diagnostics.some((record) => record.event === "agent-output-dropping"));
   release();
+  await waitFor(() => matrix.attempts.some((message) => message.body.startsWith("Agent output exceeded")));
+  const next = f.bridge.handleTimelineEvent(event("$after-capacity"));
+  await waitFor(() => f.acp.promptCalls.length === 2);
+  f.text("fresh", "fresh");
+  f.finish();
+  await next;
+  f.clock.advanceBy(750);
+  await waitFor(() => matrix.attempts.some((message) => message.body === "fresh"));
+  assert.equal(f.bridge.fatalError, undefined);
+  assert.deepEqual(f.acp.cancelCalls, []);
   await f.bridge.stop();
   assert.equal(f.clock.pendingTimerCount, 0);
-  assert.equal(matrix.attempts.length, 1);
 });
 
-void test("activity capacity failure reports configuration and recovery steps without retaining tools", async () => {
+void test("activity capacity sheds excess tools without a bridge fatal", async () => {
   const f = await createIdentifiedFixture(config({ maxActivityEventsPerMessage: 1 }));
   f.text("answer");
   f.finish();
@@ -5086,13 +5089,9 @@ void test("activity capacity failure reports configuration and recovery steps wi
     });
     await flush();
   }
-  assert.equal(f.bridge.fatalError?.code, "matrix_transport");
-  assert.match(f.bridge.fatalError?.message ?? "", /Agent activity capacity exceeded.*restart/u);
-  const failure = f.diagnostics.find(
-    (record) => record.event === "agent-activity-abandoned" && record.fields.kind === "capacity",
-  );
-  assert.equal(failure?.fields.maxActivityEventsPerMessage, 1);
-  assert.equal(failure?.fields.maxQueuedTurnsPerConversation, 1);
+  assert.equal(f.bridge.fatalError, undefined);
+  assert.ok(f.diagnostics.some((record) => record.event === "agent-output-dropping"));
+  assert.equal(f.matrix.html.filter((message) => message.body.startsWith("Agent output exceeded")).length, 1);
   assert.doesNotMatch(JSON.stringify(f.diagnostics), /private tool/u);
   await f.bridge.stop();
   assert.equal(f.clock.pendingTimerCount, 0);
