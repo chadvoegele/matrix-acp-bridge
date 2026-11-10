@@ -156,6 +156,7 @@ try {
     );
     await until(() => find(notice).length === 1, "capacity notice");
     await pause(2500);
+    await fresh(threads[0].sessionId, threads[0].root, `RECOVER_${marker}`);
     const delivered = Array.from({ length: 24 }, (_, index) => index).filter(
       (index) => find(`${marker}_${index}`).length > 0,
     );
@@ -171,7 +172,6 @@ try {
     for (let index = 0; index < 24; index++) {
       if (!delivered.includes(index)) absentBodies.push(`${marker}_${index}`);
     }
-    await fresh(threads[0].sessionId, threads[0].root, `RECOVER_${marker}`);
     await fresh(threads[1].sessionId, threads[1].root, `OTHER_${marker}`);
     report.bursts.push({
       identities: 24,

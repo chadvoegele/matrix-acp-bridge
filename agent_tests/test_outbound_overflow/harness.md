@@ -74,8 +74,10 @@ the last identity. There is no artificial send delay, proxy or production hook.
 Assertions retain accepted output, require some distinct IDs to be absent, and
 recheck absence after bounded 2.5-second observations. The first burst waits for
 recovery diagnostics; inside cooldown the next burst waits for its first accepted
-output, not the sentinel (which may legitimately be dropped). Subsequent fresh
-output assertions establish recovered admission, not sentinel delivery. The exact capacity notice
+output, not the sentinel (which may legitimately be dropped). The same-thread
+fresh output is an ordered publication barrier before counting absent IDs, so
+slow observer sync cannot misclassify accepted output as dropped. Fresh output
+also establishes recovered admission, not sentinel delivery. The exact capacity notice
 appears once in the congested thread across two bursts inside cooldown. Fresh
 outputs in both that thread and a second thread must route to their own roots;
 two prompts/sessions, one initialization and zero cancellations establish no
