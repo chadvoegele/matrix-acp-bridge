@@ -16,9 +16,9 @@ test("each behavior description has a matching support folder and vice versa", a
       assert(folder.isDirectory(), entry.name);
     } else if (entry.isDirectory()) {
       const description = await stat(join(root, `${entry.name}.md`));
-      const instructions = await stat(join(root, entry.name, "README.md"));
+      const files = await readdir(join(root, entry.name));
       assert(description.isFile(), entry.name);
-      assert(instructions.isFile(), entry.name);
+      assert(files.includes("README.md") || files.includes("harness.md"), entry.name);
     }
   }
 });

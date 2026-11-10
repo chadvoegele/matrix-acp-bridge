@@ -1,7 +1,7 @@
 +++
 status = "final"
 created = 2026-10-17
-last_update = 2026-10-18
+last_update = 2026-11-09
 +++
 
 # Collector-based output rendering
@@ -10,8 +10,7 @@ last_update = 2026-10-18
 
 Give streamed messages and thoughts the same accumulation and flush behavior,
 keep tool/card state separate from presentation, and make ConversationPublication
-the sole owner of queued content and logical-ID-to-Matrix-event mappings. This
-design is implemented on the PR #28 feature branch.
+the sole owner of queued content and logical-ID-to-Matrix-event mappings. The collector design originated in PR #28; outbound shedding extends its publication boundary.
 
 Chad's Agent
 
@@ -258,11 +257,12 @@ The bridge callback retains session-generation guards and outbound accounting.
 MatrixDelivery retains room serialization, retry ownership and SDK/encryption delivery.
 
 The bounded queue must contain explicit data: emitter, logical ID, live mapping
-state, cumulative rendered parts, a finish flag and an initial-view barrier flag.
+state, cumulative rendered parts and an initial-view barrier flag. Finish is a flag
+on live mapping state, not an additional pending record.
 It must not store arbitrary async operation closures or expose a generic key-based
 operation replacement API. Resolve original versus replacement at delivery time,
 using the owner's original event IDs. Pending content may replace content for the
-same emitter/ID in place, while finish merges after that final content. A card's
+same emitter/ID in place, while finish releases state after all accepted content drains. A card's
 initial expanded record must stay separate from coalescible later edits. Retire
 only the explicitly finished emitter/ID after delivery; delivery failure or stop
 clears queued content and both namespaces, rejecting late callback results.
@@ -280,8 +280,113 @@ Collectors retain bounded current text, unfinished tools and cards still eligibl
 for updates. Publisher mappings exist only for live/queued/in-flight output; they are
 not a history cache. Retain state through final delivery or transfer ownership of
 final payloads into the bounded queue before releasing source data. Apply existing
-session/activity/output/queue limits and observable backpressure; capacity failure
-must not masquerade as successful output.
+session/activity/output/queue limits and observable lossy shedding. Capacity pressure
+must not terminate the bridge, cancel agents, throttle inbound messages, or require
+restart/reset/resend. Unrelated delivery and lifecycle failures retain their existing semantics.
+
+### Outbound capacity shedding
+
+```mermaid
+flowchart LR
+  ACP[ACP updates] --> Session[SessionOutput]
+  Session --> Text[TextCollector]
+  Session --> Activity[Tool and activity collectors]
+  Text --> Queue[Bounded conversation publication]
+  Activity --> Queue
+  Queue --> Delivery[MatrixDelivery room serialization and retries]
+  Delivery --> Matrix[Matrix thread events]
+  Queue --> Diagnostics[Privacy-safe episode diagnostics]
+```
+
+Each zoom keeps the same input → bounded owner → output/diagnostics shape. Arrows
+represent calls or data flow, not additional workers. Atomic renderers, sinks and
+clocks are leaves; they do not hide another scheduler or persistence layer.
+
+SessionOutput zoom (six components):
+
+```mermaid
+flowchart LR
+  Input[Normalized ACP updates] --> Dispatch[ID and type dispatch]
+  Dispatch --> Text[Message and thought text collectors]
+  Dispatch --> Tools[Tool collector]
+  Text --> Sinks[Rendered output sinks]
+  Text --> Cards[Activity card collector]
+  Tools --> Cards
+  Cards --> Sinks
+```
+
+ConversationPublication zoom (seven components):
+
+```mermaid
+flowchart LR
+  Sink[flush and finish sinks] --> Admission[Admission and safe coalescing]
+  Admission --> Pending[Bounded accepted FIFO]
+  Admission --> Episode[Coalesced capacity episode]
+  Pending --> Worker[Single drain worker]
+  Episode --> Worker
+  Worker --> Mappings[Live original and edit mappings]
+  Mappings --> Worker
+  Worker --> Publish[Guarded Matrix publication callback]
+```
+
+MatrixDelivery zoom (five components, unchanged transport contract):
+
+```mermaid
+flowchart LR
+  Input[Guarded publication] --> Room[Per-room promise tail]
+  Room --> Retry[Cancellation and retry policy]
+  Retry --> SDK[Matrix SDK send]
+  SDK --> Result[Event ID or classified failure]
+  Result --> Retry
+```
+
+Within collectors, the same flow is update → bounded domain state → scheduled
+snapshot → renderer → sink. Within a renderer it is content → normalization →
+escaping/Markdown → byte-budget splitting → immutable parts. These are logical
+steps, not proposed extra abstractions. The self-similarity is a design judgment,
+not a claim that every function needs five artificial children.
+
+The existing pending-record limit defaults to 26 plus one in flight, shared by
+text and activity. At capacity, safe coalescing of accepted snapshots continues;
+otherwise the incoming snapshot is dropped, not previously queued records.
+Retained-tool/card limits similarly reject excess entries but keep existing entries
+updatable and finishable. There is no dropped-ID history or replay buffer.
+
+Dropping an initial snapshot releases its otherwise unused publication mapping.
+Later cumulative snapshots for that ID may start a fresh original, including the
+latest retained content; they must never edit a nonexistent event. Dropped updates
+(including new continuation parts) do not change existing event mappings. Finish
+never consumes a pending slot: it releases the mapping after all accepted pending
+and in-flight parts drain, even if the final snapshot was dropped. A retained card's
+accepted expanded initial barrier remains intact if its collapsed update is dropped.
+Source collectors still apply their normal bounded text and retained-entry limits;
+capacity rejection does not stop their pacing timers or falsely finish tools.
+
+The first rejection starts a per-conversation overflow episode. One coalesced notice
+waits until accepted queued output drains, then uses the same publication worker,
+thread routing, Matrix event budget, cancellation guard and per-room delivery
+serialization/retries as ordinary output:
+
+> Agent output exceeded capacity. Dropping messages to Matrix until capacity is available.
+
+The notice is not recursively enqueued and holds no live-ID mapping. It may wait
+behind slow/retrying sends from other threads in the same DM. There is no separate
+room scheduler, background publisher, notice timer, or unbounded notice state.
+Stopping the subscription discards a waiting notice. A delivery failure while
+sending a notice is still a delivery failure, not capacity pressure.
+
+Output acceptance resumes as soon as a pending slot opens, even before the notice
+is delivered. Drain completion (including the notice) records recovery. Further
+rejections are coalesced into that same episode until at least 30 seconds after
+recovery; only a rejection after that cooldown starts another episode. Recovery
+here means publication drain, not that all unfinished retained tools have finished.
+Those entries release capacity through their normal terminal/collapse paths. No timer
+is needed to end the cooldown. Each episode emits one dropping diagnostic and one
+recovery diagnostic with a saturated dropped-snapshot count and pending limit,
+without text, event/session/room/tool IDs or credentials. The recovery count covers
+rejections through the first drain; cooldown rejections remain coalesced without
+additional logs. Lost snapshots are not durable and are never automatically resent.
+This policy does not establish the cause of any particular congestion incident.
 
 Reset, deletion, fatal connection failure and shutdown must cancel timers, stop
 subscriptions and reject obsolete callbacks. Dispose of unfinished output under
@@ -323,9 +428,11 @@ card, or create a new thought group. There is no ID-less compatibility collector
 - Split Markdown in messages and thoughts stays safe. Thought markers/normalization,
   tool formatting, collapsible HTML and plain-text fallbacks remain readable.
   Untrusted raw HTML cannot escape into card wrappers.
-- Slow/failing sends, finish during an in-flight original/edit, continuation
-  growth/shrinkage and queue exhaustion preserve final payloads, ordering,
-  bounded retention and explicit failure reporting.
+- Slow/failing sends, finish during an in-flight original/edit and continuation
+  growth/shrinkage preserve accepted payloads, ordering and bounded retention.
+  Queue exhaustion drops excess snapshots with a bounded notice; delivery failures
+  remain explicit failures. Test admission during notice delivery and worker handoff,
+  notice failure, and encoded thread-event budgets.
 - Reset/shutdown/loading replay and restart leave no timers, mappings, accidental
   cross-session sends, history reads, crypto resets or duplicate output.
 - Integration tests cover room/thread isolation and the existing encrypted delivery

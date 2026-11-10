@@ -1222,6 +1222,9 @@ export class BridgeCoordinator {
       maxMatrixMessageBytes: this.#config.limits.maxMatrixMessageBytes,
       routing,
       onFailure: (reason) => this.#reportRenderingAbandoned("text", reason),
+      clock: this.#clock,
+      onCapacity: (phase, dropped, maximumPending) =>
+        this.#diagnostic("warn", `agent-output-${phase}`, { dropped, maximumPending }),
       publish: async (kind, rendered) => {
         if (this.#renderingBySession.get(sessionId)?.queue !== queue || conversation.sessionId !== sessionId) return;
         this.#outboundOperations += 1;
@@ -1255,33 +1258,15 @@ export class BridgeCoordinator {
       queue,
       routing,
       clock: this.#clock,
-      onAbandoned: (reason) => {
-        this.#reportRenderingAbandoned("activity", reason);
-        if (reason === "capacity") queue.stop();
-      },
+      onAbandoned: (reason) => this.#reportRenderingAbandoned("activity", reason),
     });
     const rendering = { output, queue };
     this.#renderingBySession.set(sessionId, rendering);
     return rendering;
   }
 
-  #reportRenderingAbandoned(component: "text" | "activity", reason: "capacity" | "delivery" | "lifecycle"): void {
-    this.#diagnostic("warn", `agent-${component}-abandoned`, {
-      kind: reason,
-      ...(reason === "capacity"
-        ? {
-            maxActivityEventsPerMessage: this.#config.limits.maxActivityEventsPerMessage,
-            maxQueuedTurnsPerConversation: this.#config.limits.maxQueuedTurnsPerConversation,
-          }
-        : {}),
-    });
-    if (reason !== "capacity") return;
-    this.#triggerFatal({
-      code: "matrix_transport",
-      message:
-        `Agent ${component} capacity exceeded. Reduce concurrent agent output or increase ` +
-        "limits.max_activity_events_per_message and limits.max_queued_turns_per_conversation, then restart the bridge.",
-    });
+  #reportRenderingAbandoned(component: "text" | "activity", reason: "delivery" | "lifecycle"): void {
+    this.#diagnostic("warn", `agent-${component}-abandoned`, { kind: reason });
   }
 
   #retireSessionRendering(sessionId: AcpSessionId): void {

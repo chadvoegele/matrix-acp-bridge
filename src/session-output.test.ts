@@ -33,7 +33,6 @@ function createFixture(maxRetainedEvents = 20) {
     clock,
     onAbandoned: (reason) => {
       failures.push(reason);
-      if (reason === "capacity") queue.stop();
     },
   });
   const text = (id: string, value: string) =>
@@ -212,14 +211,26 @@ void test("rejected thoughts cannot reserve entries or interfere with tool bound
   f.queue.stop();
 });
 
-void test("capacity and lifecycle stop cancel timers and prevent obsolete publications", async () => {
+void test("capacity sheds tools without stopping; lifecycle stop cancels timers", async () => {
   const f = createFixture(2);
   f.tool("one");
   f.tool("two");
-  f.tool("three");
+  for (let index = 0; index < 1000; index++) f.tool(`excess-${index}`);
   await f.queue.waitForIdle();
-  assert.ok(f.failures.includes("capacity"));
+  assert.deepEqual(f.failures, []);
+  assert.equal(f.queue.stopped, false);
+  assert.equal(f.output.retainedEvents, 2);
+  assert.equal(f.calls.filter((call) => call.id === "capacity-notice").length, 1);
+  f.terminal("one");
+  f.terminal("two");
+  f.text("answer", "answer");
+  f.clock.advanceBy(100);
+  await f.queue.waitForIdle();
   assert.equal(f.output.retainedEvents, 0);
+  f.tool("fresh");
+  await f.queue.waitForIdle();
+  assert.equal(f.output.retainedEvents, 1);
+  f.queue.stop();
   assert.equal(f.clock.pendingTimerCount, 0);
   const other = createFixture();
   other.thought("a", "buffered");

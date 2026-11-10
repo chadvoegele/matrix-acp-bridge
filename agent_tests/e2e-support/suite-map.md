@@ -6,7 +6,7 @@ and cleanup helpers live in `e2e-support/`.
 
 Complete the [deployed Pi preflight](README.md#trusted-configuration-and-deployed-pi-preflight)
 before the full suite. Configured-agent normal, steering and real-activity runs
-use the actual `E2E_ACP_COMMAND`; activity, unified-rendering and outage scenarios
+use the actual `E2E_ACP_COMMAND`; activity, unified-rendering, overflow and outage scenarios
 substitute scripted peers that supply IDs. Scripted or automated/crypto passes
 cannot establish real Pi message/thought ID compatibility. Unified-rendering
 runners are documented [separately](../test_unified_rendering/README.md).
@@ -19,6 +19,7 @@ runners are documented [separately](../test_unified_rendering/README.md).
 | Reset                | [test_reset](../test_reset/README.md)                             | Room control behavior; thread tests additionally verify reset isolation, steering tests verify reset barriers.                                                           |
 | Steering             | [test_steering](../test_steering/README.md)                       | Startup, restart and reset checks protect steering selection and fallback, not a second general persistence suite.                                                       |
 | Thread conversations | [test_thread_sessions](../test_thread_sessions/README.md)         | Routing and session isolation; encrypted coverage checks relations, while full restart/reset coverage currently uses plaintext.                                          |
+| Outbound overflow    | [test_outbound_overflow](../test_outbound_overflow/harness.md)    | Explicit-only serial plaintext/encrypted thread cases; finite scripted pressure, drop/notice/recovery and two-thread routing, not real Pi compatibility.                 |
 | Agent activity       | [test_activity](../test_activity/README.md)                       | Rendering across four transport/response profiles; thread/encrypted wrappers add relation/wire assertions. Real metadata coverage remains separate from scripted output. |
 
 Profile-specific provisioning, senders, cleanup and activity wrappers live with

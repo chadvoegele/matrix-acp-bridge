@@ -20,7 +20,7 @@ interface SessionOutputOptions {
   readonly queue: ConversationPublication;
   readonly routing?: MatrixOutputRouting;
   readonly clock?: Clock;
-  readonly onAbandoned: (reason: "capacity" | "lifecycle") => void;
+  readonly onAbandoned: (reason: "lifecycle") => void;
 }
 
 /** Dispatches one live session's normalized ACP stream to focused domain owners. */
@@ -48,7 +48,7 @@ export class SessionOutput {
         measure: (card) => measure(renderActivityCard(card, Number.MAX_SAFE_INTEGER, measure)),
       },
       maxRetainedEvents: options.maxRetainedEvents,
-      onCapacity: () => options.onAbandoned("capacity"),
+      onCapacity: () => options.queue.shed(),
       sink: renderOutput(
         options.queue.cards,
         (card) => [renderActivityCard(card, options.maxMatrixMessageBytes, measure)],
@@ -73,7 +73,7 @@ export class SessionOutput {
     });
     this.#tools = new ToolCollector({
       ...options,
-      onCapacity: () => options.onAbandoned("capacity"),
+      onCapacity: () => options.queue.shed(),
       sink: { flush: (id, content) => this.#cards.flushTool(id, content), finish: (id) => this.#cards.finishTool(id) },
     });
     options.queue.onStop(() => {
