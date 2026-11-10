@@ -5,10 +5,9 @@ import { randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
-import { startBridgePair, stopBridgePair, waitFor, parseDiagnostics } from "./acp.mjs";
-import { ThreadSessionMonitor, assertThreadResponse } from "./thread-sessions.mjs";
-import { getEffectiveContent } from "./unified-observations.mjs";
-import { warmProfile } from "./warm-profile.mjs";
+import { startBridgePair, stopBridgePair, waitFor, parseDiagnostics } from "../e2e-support/acp.mjs";
+import { ThreadSessionMonitor, assertThreadResponse } from "../e2e-support/thread-sessions.mjs";
+import { getEffectiveContent } from "../e2e-support/unified-observations.mjs";
 import { installLiveDecryptionFailureHandler } from "../test_encrypted_message/decryption-failure-gate.mjs";
 import { createAdapter as createEncryptedAdapter } from "../test_encrypted_message/lib.mjs";
 import { readEnvironment, readToken } from "../test_unencrypted_message/lib.mjs";
@@ -99,8 +98,6 @@ async function fresh(sessionId, root, marker) {
 }
 
 try {
-  if (environment.bridge.ownership === "reusable")
-    await warmProfile(environment, join(environment.privateRoot, "overflow-recovery.json"));
   // Change only the generated private test configuration, never production source/config.
   const config = await readFile(environment.bridge.configFile, "utf8");
   await writeFile(

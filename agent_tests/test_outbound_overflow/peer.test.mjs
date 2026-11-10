@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 test("overflow peer produces finite distinct identities in one session and fresh output in another", async () => {
-  const child = spawn(process.execPath, [fileURLToPath(new URL("scripted-overflow-acp.mjs", import.meta.url))]);
+  const child = spawn(process.execPath, [fileURLToPath(new URL("peer.mjs", import.meta.url))]);
   const frames = [];
   const lines = createInterface({ input: child.stdout });
   lines.on("line", (line) => frames.push(JSON.parse(line)));
