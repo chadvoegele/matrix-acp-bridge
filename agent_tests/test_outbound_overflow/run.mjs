@@ -13,6 +13,7 @@ import { createAdapter as createEncryptedAdapter } from "../test_encrypted_messa
 import { readEnvironment, readToken } from "../test_unencrypted_message/lib.mjs";
 import { createMatrixClientAdapter } from "../../dist/matrix-client.js";
 import { renderMatrixText } from "../../dist/matrix-text-rendering.js";
+import { hasBurstProgress } from "./observations.mjs";
 
 const environment = await readEnvironment(process.argv[2]);
 const encrypted = environment.transport === "encrypted";
@@ -145,9 +146,13 @@ try {
     command("test/overflow", { sessionId: threads[0].sessionId, marker, count: 24 });
     await until(
       () =>
-        diagnostics().filter((entry) => JSON.stringify(entry).includes("agent-output-recovered")).length > before ||
-        (burst === 1 && find(`${marker}_SENTINEL`).length > 0),
-      "capacity drain",
+        hasBurstProgress(
+          burst,
+          before,
+          diagnostics().filter((entry) => JSON.stringify(entry).includes("agent-output-recovered")).length,
+          find(`${marker}_0`).length === 1,
+        ),
+      "accepted burst progress",
     );
     await until(() => find(notice).length === 1, "capacity notice");
     await pause(2500);
