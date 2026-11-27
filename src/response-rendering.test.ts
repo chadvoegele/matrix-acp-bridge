@@ -122,6 +122,14 @@ void test("renders every response kind with exact fallback and status text", () 
   assert.equal(methodError[0]?.content.body, RESPONSE_TEXT.error);
 });
 
+void test("renders server prompt errors literally and falls back for blank messages", () => {
+  const error = { kind: "method_error", operation: "session_prompt", fatal: false } as const;
+  const [part] = render({ ...error, message: "Try <again> **later**." });
+  assert.equal(part?.content.body, "Try <again> **later**.");
+  assert.equal(part?.formattedBody, "<pre>Try &lt;again&gt; **later**.</pre>");
+  assert.equal(render({ ...error, message: "  " })[0]?.content.body, RESPONSE_TEXT.error);
+});
+
 void test("synthetic descriptors ignore supplied text and reject unknown or inherited response kinds", () => {
   for (const kind of ["empty", "busy", "oversized", "reset", "unknown_thread", "thread_reset_guidance"] as const) {
     assert.equal(render({ kind, text: "must not replace guidance" })[0]?.content.body, RESPONSE_TEXT[kind]);
