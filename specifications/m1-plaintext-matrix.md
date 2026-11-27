@@ -344,17 +344,17 @@ Every user-facing response is one or more ordinary top-level
 `m.in_reply_to`, or `m.thread`, and do not include a quoted reply fallback.
 Use these exact texts and stable response kinds:
 
-| Outcome                       | Response kind       | Exact text when no agent text exists       |
-| ----------------------------- | ------------------- | ------------------------------------------ |
-| Successful empty turn         | `empty`             | `The agent returned no text.`              |
-| Queue full                    | `busy`              | `The room queue is full. Try again later.` |
-| Oversized input               | `oversized`         | `Your message is too large.`               |
-| Timeout                       | `timeout`           | `[agent timed out]`                        |
-| Token limit                   | `max_tokens`        | `[agent reached its token limit]`          |
-| Turn-request limit            | `max_turn_requests` | `[agent reached its turn-request limit]`   |
-| Refusal                       | `refusal`           | `[agent refused the request]`              |
-| Cancelled                     | `cancelled`         | `[agent cancelled the request]`            |
-| Nonfatal agent/protocol error | `error`             | `[agent error]`                            |
+| Outcome               | Response kind       | Exact text when no agent text exists            |
+| --------------------- | ------------------- | ----------------------------------------------- |
+| Successful empty turn | `empty`             | `The agent returned no text.`                   |
+| Queue full            | `busy`              | `The room queue is full. Try again later.`      |
+| Oversized input       | `oversized`         | `Your message is too large.`                    |
+| Timeout               | `timeout`           | `[agent timed out]`                             |
+| Token limit           | `max_tokens`        | `[agent reached its token limit]`               |
+| Turn-request limit    | `max_turn_requests` | `[agent reached its turn-request limit]`        |
+| Refusal               | `refusal`           | `[agent refused the request]`                   |
+| Cancelled             | `cancelled`         | `[agent cancelled the request]`                 |
+| Nonfatal prompt error | `error`             | ACP error message, or `[agent error]` if absent |
 
 Successful nonempty `end_turn` output uses response kind `agent`. For other
 stop reasons, join collected text and the exact status with `\n\n`; status text
@@ -427,8 +427,11 @@ exactly-once delivery, or automatic history pagination.
 ## Failure and shutdown behavior
 
 The Matrix SDK owns homeserver reconnect and backoff. A healthy-transport
-`session/prompt` JSON-RPC or agent error produces the generic response and does
-not poison later turns. Unknown stop reasons do the same. ACP stdio EOF,
+`session/prompt` JSON-RPC error displays the ACP server’s `error.message` as
+plain text in the conversation, subject to output limits. A missing or blank
+message and unknown stop reasons produce `[agent error]`. These errors do not
+poison later turns. ACP servers should send user-facing messages; error data
+and messages from other methods are not published. ACP stdio EOF,
 malformed NDJSON or JSON-RPC, read or write failure, connection failure, or any
 `session/new` error is fatal. The bridge cannot reconnect inherited stdio.
 

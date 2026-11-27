@@ -6,7 +6,7 @@ import { matrixHtmlContentBytes, matrixTextContent, type MatrixOutputRouting } f
 import { renderMatrixMultipartText, renderMatrixText } from "./matrix-text-rendering.js";
 import { packMarkdownText } from "./markdown-packing.js";
 import { markdownReferences } from "./matrix-markdown.js";
-import type { MatrixSafeHtml } from "./matrix-html.js";
+import { matrixHtml, type MatrixSafeHtml } from "./matrix-html.js";
 import type { ThreadRoutingMetadata } from "./conversation-identity.js";
 import { utf8ByteLength } from "./text-utils.js";
 
@@ -420,7 +420,16 @@ function descriptorFromOutcome(outcome: RenderableResponse): {
   };
 }
 
+function promptErrorMessage(outcome: RenderableResponse): string | undefined {
+  if (outcome.kind !== "method_error" || outcome.operation !== "session_prompt") return undefined;
+  const message = outcome.message?.trim();
+  return message || undefined;
+}
+
 function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: number): NormalizedResponseText {
+  const message = promptErrorMessage(outcome);
+  if (message !== undefined) return { responseKind: "error", text: truncateAgentText(message, maxOutputBytes) };
+
   const descriptor = descriptorFromOutcome(outcome);
   const { responseKind, agentText } = descriptor;
 
@@ -453,6 +462,10 @@ function normalizeResponseText(outcome: RenderableResponse, maxOutputBytes: numb
   };
 }
 
+function renderPlain(body: string) {
+  return { body, formattedBody: matrixHtml`<pre>${body}</pre>` };
+}
+
 function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrixPart[] {
   if (typeof request.roomId !== "string" || typeof request.inboundEventId !== "string") {
     throw new TypeError("responses require string room and inbound event IDs");
@@ -467,10 +480,11 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
   };
   // Room mode keeps its established body budget and wire shape. Thread parts
   // include Markdown HTML and relations in their full serialized payload budget.
-  const references = request.threadRootEventId === undefined ? {} : markdownReferences(normalized.text);
   const threaded = request.threadRootEventId !== undefined;
-  const render = (body: string) => renderMatrixText(body, references);
-  const renderPart = (body: string) => renderMatrixMultipartText(body, references);
+  const plainError = promptErrorMessage(request.outcome) !== undefined;
+  const references = threaded && !plainError ? markdownReferences(normalized.text) : {};
+  const render = plainError ? renderPlain : (body: string) => renderMatrixText(body, references);
+  const renderPart = plainError ? renderPlain : (body: string) => renderMatrixMultipartText(body, references);
   const measure = threaded
     ? (body: string): number => matrixHtmlContentBytes({ ...render(body), ...routing })
     : utf8ByteLength;
@@ -497,7 +511,7 @@ function renderFromRequest(request: RenderMatrixResponseRequest): RenderedMatrix
         ...(routing.threadRootEventId === undefined ? {} : { threadRootEventId: routing.threadRootEventId }),
       }),
       content: matrixTextContent(body, routing),
-      ...(threaded
+      ...(threaded || plainError
         ? { formattedBody: (partCount > 1 ? renderPart(body) : render(body)).formattedBody as MatrixSafeHtml }
         : {}),
     };

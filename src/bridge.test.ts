@@ -383,6 +383,7 @@ void test("buffers startup events within active-plus-waiting capacity and recove
     kind: "method_error",
     operation: "session_prompt",
     fatal: false,
+    message: "Try again later.",
   });
   await flush();
   assert.equal(acp.promptCalls.length, 2);
@@ -392,7 +393,7 @@ void test("buffers startup events within active-plus-waiting capacity and recove
   await flush();
   await Promise.all([first, second]);
   assert.equal(
-    matrix.sent.some((part) => part.content.body === "[agent error]"),
+    matrix.sent.some((part) => part.content.body === "Try again later."),
     true,
   );
   assert.equal(

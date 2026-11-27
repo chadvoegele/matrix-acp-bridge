@@ -1170,12 +1170,13 @@ void test("returns healthy-transport prompt errors without poisoning the connect
   input.push({
     jsonrpc: "2.0",
     id: failedFrame.id,
-    error: { code: -32_000, message: "agent secret must not escape" },
+    error: { code: -32_000, message: "Try again later." },
   });
   assert.deepEqual(await failedPrompt, {
     kind: "method_error",
     operation: "session_prompt",
     fatal: false,
+    message: "Try again later.",
   });
   assert.equal(fatal.errors.length, 0);
 

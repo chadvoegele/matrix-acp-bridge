@@ -1175,11 +1175,7 @@ export class BridgeCoordinator {
         return;
       }
 
-      const response: RenderableResponse = prompt.timedOut
-        ? { kind: "timeout" }
-        : outcome.kind === "method_error"
-          ? { kind: "error" }
-          : outcome;
+      const response: RenderableResponse = prompt.timedOut ? { kind: "timeout" } : outcome;
       if (!prompt.timedOut && outcome.kind === "turn" && outcome.stopReason === "end_turn") {
         this.#stopTyping(run);
         await this.#completeTerminal(run.entry.terminalCompletion);

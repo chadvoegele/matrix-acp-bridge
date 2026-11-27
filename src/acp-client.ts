@@ -55,10 +55,10 @@ export type AcpStopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "r
 export type AcpMethodErrorKind =
   "session_new" | "session_load" | "session_prompt" | "session_steering" | "session_cancel" | "permission" | "other";
 
-/** A method error is safe to surface to the coordinator, not to the user. */
 export interface AcpMethodError {
   readonly kind: "method_error";
   readonly operation: AcpMethodErrorKind;
+  readonly message?: string;
   readonly fatal: false;
 }
 
@@ -224,8 +224,8 @@ function isNormalizedOutcome(value: unknown): value is AcpFailure {
   return value.kind === "method_error" || value.kind === "transport_error" || value.kind === "protocol_error";
 }
 
-function methodError(operation: AcpMethodError["operation"]): AcpMethodError {
-  return { kind: "method_error", operation, fatal: false };
+function methodError(operation: AcpMethodError["operation"], message?: string): AcpMethodError {
+  return { kind: "method_error", operation, fatal: false, ...(message === undefined ? {} : { message }) };
 }
 
 function transportError(operation: RequestOperation): AcpTransportError {
@@ -835,6 +835,7 @@ export class InheritedStdioAcpClient implements AcpClient {
           operation === "session_prompt" || operation === "session_cancel" || operation === "session_load"
             ? operation
             : "other",
+          operation === "session_prompt" ? error.message : undefined,
         );
       }
       this.#reportFatal("protocol", operation);
